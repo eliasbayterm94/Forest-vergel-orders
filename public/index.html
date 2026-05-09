@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b3d2e" />
+    <title>Forest ↔ El Vergel</title>
+
+    <!-- Tailwind via CDN (MVP — switch to CLI build before scaling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              forest: { DEFAULT: '#0b3d2e', dark: '#072a1f', light: '#1f6b52' },
+              cherry: { DEFAULT: '#9a2025' },
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      html, body { font-family: 'Inter', system-ui, sans-serif; height: 100%; background: #f5f7f6; }
+      body { -webkit-tap-highlight-color: transparent; }
+      [data-view] { min-height: 100%; }
+      dialog::backdrop { background: rgba(7,42,31,0.65); }
+      dialog { border: none; border-radius: 1rem; padding: 0; max-width: 92vw; }
+      .urgency-past   { background: #fee2e2; color: #991b1b; }
+      .urgency-red    { background: #fecaca; color: #7f1d1d; }
+      .urgency-yellow { background: #fef3c7; color: #92400e; }
+      .urgency-normal { background: #dcfce7; color: #166534; }
+      .skeleton { background: linear-gradient(90deg,#e5e7eb 0%,#f3f4f6 50%,#e5e7eb 100%); background-size: 200% 100%; animation: sk 1.2s linear infinite; }
+      @keyframes sk { 0% {background-position: 0 0;} 100% {background-position: -200% 0;} }
+    </style>
+  </head>
+  <body class="text-slate-800">
+    <div id="app" class="min-h-full"></div>
+
+    <!-- Toast region -->
+    <div id="toasts" class="fixed bottom-4 inset-x-0 flex flex-col items-center gap-2 z-50 px-4 pointer-events-none"></div>
+
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>
