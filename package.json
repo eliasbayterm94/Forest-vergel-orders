@@ -1,0 +1,10 @@
+{
+  "name": "forest-production-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Forest ↔ El Vergel Production Coordination System",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

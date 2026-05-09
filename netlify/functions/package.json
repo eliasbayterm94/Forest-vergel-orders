@@ -1,0 +1,12 @@
+{
+  "name": "forest-production-bridge-functions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Netlify Functions for Forest Production Bridge",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "bcryptjs": "^2.4.3",
+    "googleapis": "^144.0.0"
+  }
+}
