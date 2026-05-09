@@ -46,9 +46,8 @@ netlify.toml            Build, redirects, security headers
 ## Local development
 
 ```bash
-npm install                                # root devDeps (bcryptjs for hash script)
-( cd netlify/functions && npm install )    # function deps
-npm test                                   # 45 unit tests
+npm install     # all runtime + tooling deps live in the root package.json
+npm test        # 45 unit tests
 ```
 
 For full local stack with Functions, install Netlify CLI and run `netlify dev`.
