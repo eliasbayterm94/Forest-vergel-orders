@@ -14,6 +14,15 @@ import { chrome, pageTitle } from './_chrome.js';
 const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
 const CHERRY_PER_GREEN = 7.65;
 
+// Dried→green divisors. Must mirror process_lead_times.dried_to_green_divisor
+// in the DB; the server is authoritative — these are UI hints only.
+const DRIED_TO_GREEN_DIVISORS = { Natural: 3.40, Honey: 1.50, Lavado: 1.34 };
+const DRIED_LABELS = {
+  Natural: 'Cereza seca',
+  Honey:   'Pergamino seco (honey)',
+  Lavado:  'Pergamino seco (lavado)',
+};
+
 const NEXT_STATUS = {
   InFermentation: 'Drying',
   Drying:         'Resting',
@@ -79,8 +88,9 @@ export async function fincaLotsView() {
         ]),
       ]),
       el('div', { class: 'flex flex-wrap text-xs text-slate-600 gap-x-4 gap-y-1' }, [
-        el('span', {}, [`Cereza: `, el('strong', { text: fmtKg(l.kg_cherry_input) })]),
+        el('span', {}, [`Cereza fresca: `, el('strong', { text: fmtKg(l.kg_cherry_input) })]),
         el('span', {}, [`Verde esperado: `, el('strong', { text: fmtKg(l.kg_green_expected) })]),
+        l.kg_dried_output != null ? el('span', {}, [`${DRIED_LABELS[l.process_type] || 'Peso seco'}: `, el('strong', { text: fmtKg(l.kg_dried_output) })]) : null,
         l.kg_green_actual != null ? el('span', {}, [`Verde real: `, el('strong', { text: fmtKg(l.kg_green_actual) })]) : null,
         el('span', {}, [`Inicio: `, el('strong', { text: fmtDate(l.start_date) })]),
         l.drying_start_date ? el('span', {}, [`Drying: `, el('strong', { text: fmtDate(l.drying_start_date) })]) : null,
@@ -119,17 +129,20 @@ export async function fincaLotsView() {
   }
 
   async function advanceStatus(lot, target) {
-    let kg_green_actual = null;
+    let yieldValues = null;
     if (target === 'Ready' || target === 'Delivered') {
-      kg_green_actual = await promptKgActual(lot, target);
-      if (kg_green_actual === undefined) return; // cancelled
+      yieldValues = await promptYield(lot, target);
+      if (yieldValues === undefined) return; // cancelled
     } else {
       const ok = await confirmModal(`Avanzar ${lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
     }
     try {
       const payload = { lot_id: lot.id, status: target };
-      if (kg_green_actual != null) payload.kg_green_actual = kg_green_actual;
+      if (yieldValues) {
+        if (yieldValues.kg_dried_output != null) payload.kg_dried_output = yieldValues.kg_dried_output;
+        if (yieldValues.kg_green_actual != null) payload.kg_green_actual = yieldValues.kg_green_actual;
+      }
       const r = await api.lotUpdateStatus(payload);
       toast(`${lot.lot_code} → ${statusLabel(target)}`, 'success');
       if (r.completions && r.completions.length > 0) {
@@ -139,29 +152,56 @@ export async function fincaLotsView() {
     } catch (e) { toast(e.message, 'error'); }
   }
 
-  function promptKgActual(lot, target) {
+  function promptYield(lot, target) {
+    const divisor = DRIED_TO_GREEN_DIVISORS[lot.process_type] || 1;
+    const driedLabel = DRIED_LABELS[lot.process_type] || 'Peso seco';
+
     return openModal(({ close }) => {
-      const input = el('input', {
+      const driedInput = el('input', {
         type: 'number', step: '0.01', min: '0',
-        value: String(lot.kg_green_actual ?? lot.kg_green_expected),
+        value: lot.kg_dried_output != null ? String(lot.kg_dried_output) : '',
+        placeholder: 'Ej: 350',
         class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
       });
+      const greenInput = el('input', {
+        type: 'number', step: '0.01', min: '0',
+        value: lot.kg_green_actual != null ? String(lot.kg_green_actual) : '',
+        placeholder: 'Auto desde peso seco',
+        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+      });
+      const formula = el('p', { class: 'text-xs text-slate-500' }, [
+        `Conversión: ${driedLabel} ÷ ${divisor.toFixed(2)} = kg verde`,
+      ]);
+      let greenManuallyEdited = lot.kg_green_actual != null;
+      const recompute = () => {
+        if (greenManuallyEdited) return;
+        const v = Number(driedInput.value || 0);
+        greenInput.value = v > 0 ? (Math.round((v / divisor) * 100) / 100).toString() : '';
+      };
+      driedInput.addEventListener('input', recompute);
+      greenInput.addEventListener('input', () => { greenManuallyEdited = greenInput.value !== ''; });
+
       return el('div', { class: 'space-y-3' }, [
         el('p', { class: 'text-sm text-slate-700' }, [
           `Avanzando ${lot.lot_code} a `, el('strong', { text: statusLabel(target) }),
-          '. Confirma o ajusta los kg verde reales.',
+          '. Registra peso seco y verde real (verde se calcula automáticamente).',
         ]),
-        el('label', { class: 'block text-sm font-medium text-slate-700' }, ['kg verde reales']),
-        input,
+        el('label', { class: 'block text-sm font-medium text-slate-700', text: `${driedLabel} (kg)` }),
+        driedInput,
+        formula,
+        el('label', { class: 'block text-sm font-medium text-slate-700 mt-2', text: 'kg verde reales' }),
+        greenInput,
         el('div', { class: 'flex justify-end gap-2 pt-2' }, [
           el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
           el('button', {
             class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
             type: 'button',
             onClick: () => {
-              const v = Number(input.value);
-              if (!(v >= 0)) { toast('Valor inválido', 'warning'); return; }
-              close(v);
+              const dried = driedInput.value === '' ? null : Number(driedInput.value);
+              const green = greenInput.value === '' ? null : Number(greenInput.value);
+              if (dried != null && !(dried >= 0)) { toast('Peso seco inválido', 'warning'); return; }
+              if (green != null && !(green >= 0)) { toast('kg verde inválido', 'warning'); return; }
+              close({ kg_dried_output: dried, kg_green_actual: green });
             },
           }, ['Confirmar']),
         ]),
