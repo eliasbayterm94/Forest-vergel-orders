@@ -5,6 +5,11 @@
 [functions]
   node_bundler = "esbuild"
 
+# Scheduled function: weekly digest.
+# Schedule is registered via schedule() in netlify/functions/weekly-digest.js
+# at "0 2 * * 1" UTC = Monday 02:00 UTC = Sunday 21:00 America/Bogota.
+# Excluded from public HTTP routing — Netlify still allows scheduled invocations.
+
 [dev]
   publish = "public"
   functions = "netlify/functions"

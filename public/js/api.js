@@ -74,4 +74,6 @@ export const api = {
   assignmentsDelete: (payload) => request('POST', '/api/lot-assignments-delete', { body: payload }),
 
   capacity: (payload) => request('POST', '/api/capacity-calculate', { body: payload }),
+
+  digestTrigger: () => request('POST', '/api/weekly-digest-trigger'),
 };

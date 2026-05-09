@@ -2,6 +2,9 @@
 import { el } from '../ui/el.js';
 import { getSession, logout } from '../auth.js';
 import { navigate, currentPath, setSession } from '../router.js';
+import { api } from '../api.js';
+import { toast } from '../ui/toast.js';
+import { confirmModal } from '../ui/modal.js';
 
 const FOREST_NAV = [
   { path: '/forest/dashboard', label: 'Tablero' },
@@ -45,6 +48,10 @@ export function chrome(content) {
         ]),
         el('div', { class: 'flex items-center gap-2 text-xs' }, [
           el('span', { class: 'px-2 py-0.5 rounded bg-white/15' }, [session?.role || '']),
+          session?.role === 'admin' ? el('button', {
+            class: 'px-2 py-1 rounded bg-white/15 hover:bg-white/25',
+            onClick: () => triggerDigest(),
+          }, ['Resumen ahora']) : null,
           el('button', {
             class: 'px-2 py-1 hover:underline',
             onClick: async () => { await logout(); setSession(null); navigate('/login'); },
@@ -59,6 +66,19 @@ export function chrome(content) {
     header,
     el('main', { class: 'max-w-5xl mx-auto px-4 py-4' }, [content]),
   ]);
+}
+
+async function triggerDigest() {
+  const ok = await confirmModal(
+    'Se enviará el resumen semanal ahora a todos los destinatarios configurados (o se registrará como dry-run).',
+    { title: 'Enviar resumen ahora', confirmText: 'Enviar' },
+  );
+  if (!ok) return;
+  try {
+    const r = await api.digestTrigger();
+    const dr = r.dispatch?.dryRun ? ' (dry-run)' : '';
+    toast(`Resumen enviado${dr}`, 'success', 4500);
+  } catch (e) { toast(e.message || 'Error', 'error'); }
 }
 
 export function pageTitle(title, subtitle) {
