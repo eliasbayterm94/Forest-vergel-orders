@@ -489,7 +489,6 @@ function funnelChart(t) {
 
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, children);
 }
-}
 
 function pipelineBar(p) {
   const total = p.InFermentation + p.Drying + p.Ready;
