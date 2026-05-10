@@ -101,6 +101,7 @@ const VIEW_CASES = [
   { file: 'finca-lots.js',         fn: 'fincaLotsView',        session: SESSIONS.finca },
   { file: 'finca-despachos.js',    fn: 'fincaDespachosView',   session: SESSIONS.finca },
   { file: 'finca-monitoreo.js',    fn: 'fincaMonitoreoView',   session: SESSIONS.finca },
+  { file: 'finca-cola.js',         fn: 'fincaColaView',        session: SESSIONS.finca },
   { file: 'admin-dashboard.js',    fn: 'adminDashboardView',   session: SESSIONS.admin },
 ];
 

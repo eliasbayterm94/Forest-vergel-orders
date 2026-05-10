@@ -47,6 +47,7 @@ const FOREST_NAV = [
 const FINCA_NAV = [
   { path: '/finca/dashboard', label: 'Tablero',           icon: 'dashboard' },
   { path: '/finca/inbox',     label: 'Pedidos entrantes', icon: 'inbox' },
+  { path: '/finca/cola',      label: 'Cola de pedidos',   icon: 'calendar' },
   { path: '/finca/lots',      label: 'Producción',        icon: 'box' },
   { path: '/finca/despachos', label: 'Despachos',         icon: 'truck' },
   { path: '/finca/monitoreo', label: 'Monitoreo',         icon: 'chart' },

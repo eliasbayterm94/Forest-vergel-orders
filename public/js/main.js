@@ -13,6 +13,7 @@ import { fincaInboxView }           from './views/finca-inbox.js';
 import { fincaLotsView }            from './views/finca-lots.js';
 import { fincaDespachosView }       from './views/finca-despachos.js';
 import { fincaMonitoreoView }       from './views/finca-monitoreo.js';
+import { fincaColaView }            from './views/finca-cola.js';
 import { adminDashboardView }       from './views/admin-dashboard.js';
 
 const FOREST_OR_ADMIN = ['forest', 'admin'];
@@ -28,6 +29,7 @@ defineRoute('/calendar',           { roles: ['forest', 'finca', 'admin'], view: 
 
 defineRoute('/finca/dashboard',    { roles: FINCA_OR_ADMIN,  view: fincaDashboardView });
 defineRoute('/finca/inbox',        { roles: FINCA_OR_ADMIN,  view: fincaInboxView });
+defineRoute('/finca/cola',         { roles: FINCA_OR_ADMIN,  view: fincaColaView });
 defineRoute('/finca/lots',         { roles: FINCA_OR_ADMIN,  view: fincaLotsView });
 defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
 defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitoreoView });

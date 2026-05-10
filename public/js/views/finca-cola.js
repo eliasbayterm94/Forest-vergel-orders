@@ -1,0 +1,264 @@
+// Cola de pedidos para finca — vista cronológica + mini-timeline por
+// pedido mostrando "hoy", "drying-start max" y "entrega".
+//
+// El timeline es indicativo: ayuda a decidir cual procesar primero.
+// Se ordena por latest_drying_start_date asc (los mas urgentes arriba)
+// y muestra coverage por lotes para que se vea de un vistazo cuanto
+// kg verde ya esta en producción y cuanto falta.
+
+import { el } from '../ui/el.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind, relDate } from '../ui/format.js';
+import { api } from '../api.js';
+import { chrome, pageTitle } from './_chrome.js';
+import { navigate } from '../router.js';
+import { emptyStateCard } from '../ui/empty.js';
+
+const FILTERS = [
+  { key: 'all',         label: 'Todos' },
+  { key: 'no-lot',      label: 'Sin lote' },
+  { key: 'partial-lot', label: 'Cobertura parcial' },
+  { key: 'overdue',     label: 'Vencidos' },
+];
+
+export async function fincaColaView() {
+  const [ordersRes, lotsRes] = await Promise.all([
+    api.ordersList({}),
+    api.lotsList({ active_only: 'true' }),
+  ]);
+  const today      = ordersRes.today;
+  const allOrders  = ordersRes.orders || [];
+  const activeLots = lotsRes.lots || [];
+
+  // Coverage por pedido: suma de kg verde asignado desde lotes activos.
+  const allocByOrder = new Map();
+  for (const lot of activeLots) {
+    for (const a of lot.assignments || []) {
+      allocByOrder.set(a.demand_order_id,
+        (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
+    }
+  }
+
+  const inFlight = allOrders
+    .filter((o) => ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status))
+    .map((o) => {
+      const accepted  = Number(o.kg_green_accepted || 0);
+      const allocated = allocByOrder.get(o.id) || 0;
+      const pending   = Math.max(0, accepted - allocated);
+      return { ...o, allocated_kg: allocated, pending_kg: pending };
+    })
+    .sort((a, b) => (a.latest_drying_start_date || '').localeCompare(b.latest_drying_start_date || ''));
+
+  // Escala global para el timeline (today → maxDelivery)
+  const earliest = today;
+  const latest = inFlight.reduce(
+    (max, o) => (o.max_delivery_date || '') > max ? o.max_delivery_date : max,
+    today,
+  );
+
+  let currentFilter = 'all';
+
+  const filterChips = el('div', { class: 'flex flex-wrap gap-2 mb-4' });
+  const list = el('div', { class: 'space-y-2' });
+  function redraw() {
+    filterChips.innerHTML = '';
+    for (const f of FILTERS) {
+      const count = inFlight.filter((o) => matches(o, f.key, today)).length;
+      filterChips.append(el('button', {
+        type: 'button',
+        class: currentFilter === f.key
+          ? 'ctrm-btn ctrm-btn-primary ctrm-btn-sm'
+          : 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+        onClick: () => { currentFilter = f.key; redraw(); },
+      }, [`${f.label}${count > 0 ? ` · ${count}` : ''}`]));
+    }
+    list.innerHTML = '';
+    const shown = inFlight.filter((o) => matches(o, currentFilter, today));
+    if (shown.length === 0) {
+      list.append(emptyStateCard({
+        title: currentFilter === 'all' ? 'Sin pedidos en curso' : 'No hay pedidos en este filtro',
+        description: currentFilter === 'all'
+          ? 'Cuando Forest acepte pedidos aparecerán aquí.'
+          : 'Cambia el filtro o limpia para ver todos.',
+      }));
+      return;
+    }
+    for (const o of shown) list.append(queueRow(o, today, earliest, latest));
+  }
+  redraw();
+
+  return chrome(el('div', {}, [
+    pageTitle('Cola de pedidos', `Hoy: ${today} · ordenado por fecha máxima de inicio de drying`),
+    filterChips,
+    timelineLegend(),
+    list,
+  ]));
+}
+
+// ─── Filtros ────────────────────────────────────────────────────────
+function matches(o, filter, today) {
+  const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
+  const noLot     = (o.allocated_kg || 0) <= 0.001;
+  const partial   = (o.allocated_kg || 0) > 0.001
+    && (o.pending_kg || 0) > 0.001;
+
+  switch (filter) {
+    case 'no-lot':      return noLot;
+    case 'partial-lot': return partial;
+    case 'overdue':     return isOverdue;
+    case 'all':
+    default:            return true;
+  }
+}
+
+// ─── Row + timeline ─────────────────────────────────────────────────
+function queueRow(o, today, earliest, latest) {
+  const accepted  = Number(o.kg_green_accepted || 0);
+  const allocated = Number(o.allocated_kg || 0);
+  const pending   = Number(o.pending_kg || 0);
+  const coverPct  = accepted > 0 ? Math.min(100, (allocated / accepted) * 100) : 0;
+  const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
+  const dryingPos = posOn(earliest, latest, o.latest_drying_start_date);
+  const delivPos  = posOn(earliest, latest, o.max_delivery_date);
+
+  // Status del timeline. Rojo si pasó drying-start; warn si <5d.
+  const dryDelta = daysBetween(today, o.latest_drying_start_date);
+  const dryColor = isOverdue ? '#c45a4f'
+                  : (dryDelta != null && dryDelta < 5) ? '#8a5100'
+                  : '#7e9ec1';
+
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+    // Header
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
+        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
+        isOverdue ? el('span', { class: 'ctrm-pill urgency-red', text: 'Drying vencido' }) : null,
+      ]),
+      noLotOrPartialButton(o, allocated, pending),
+    ]),
+
+    // Meta
+    el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-4 gap-y-0.5 font-mono mb-2' }, [
+      meta('Verde aceptado', fmtKg(accepted)),
+      meta('Asignado',       fmtKg(allocated)),
+      meta('Pendiente',      fmtKg(pending)),
+      meta('Proceso',        o.process_type),
+      o.client_name ? meta('Cliente', o.client_name) : null,
+    ]),
+
+    // Coverage bar
+    el('div', { class: 'h-1.5 rounded-full bg-sand overflow-hidden mb-3' }, [
+      el('div', { class: 'h-full bg-forest', style: `width:${coverPct}%;` }),
+    ]),
+
+    // Timeline
+    timeline(today, earliest, latest, dryingPos, delivPos, dryColor, o),
+  ]);
+}
+
+function noLotOrPartialButton(o, allocated, pending) {
+  if (pending > 0.001) {
+    return el('button', {
+      class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm shrink-0',
+      onClick: () => navigate('/finca/lots'),
+    }, [allocated > 0.001 ? 'Asignar más' : 'Asignar lote']);
+  }
+  return el('span', { class: 'ctrm-pill ok text-[10px]', text: 'Cubierto' });
+}
+
+function timeline(today, earliest, latest, dryingPos, delivPos, dryColor, o) {
+  return el('div', {}, [
+    el('div', { class: 'relative h-7' }, [
+      // Track
+      el('div', { class: 'absolute inset-y-3 left-0 right-0 h-px bg-sand' }),
+      // Today marker — siempre en posición 0
+      markerEl(0, '#1b203d', 'Hoy'),
+      // Drying-start marker
+      o.latest_drying_start_date
+        ? markerEl(dryingPos, dryColor,
+            `Drying-start ${fmtDate(o.latest_drying_start_date)} (${relDate(o.latest_drying_start_date)})`)
+        : null,
+      // Delivery marker
+      o.max_delivery_date
+        ? markerEl(delivPos, '#5d8b66',
+            `Entrega ${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})`)
+        : null,
+    ]),
+    el('div', { class: 'flex justify-between text-[10px] text-ink-300 font-mono mt-0.5' }, [
+      el('span', { text: 'Hoy' }),
+      o.latest_drying_start_date
+        ? el('span', {}, [
+            `Drying-start: `,
+            el('strong', {
+              style: `color:${dryColor};`,
+              text: `${fmtDate(o.latest_drying_start_date)} (${relDate(o.latest_drying_start_date)})`,
+            }),
+          ])
+        : null,
+      o.max_delivery_date
+        ? el('span', {}, [
+            `Entrega: `,
+            el('strong', { class: 'text-ink-700', text: `${fmtDate(o.max_delivery_date)}` }),
+          ])
+        : null,
+    ]),
+  ]);
+}
+
+function markerEl(pct, color, title) {
+  return el('div', {
+    class: 'absolute top-1.5',
+    style: `left:${pct}%;transform:translateX(-50%);`,
+    title,
+  }, [
+    el('div', {
+      class: 'w-3 h-3 rounded-full border-2 border-white',
+      style: `background:${color};box-shadow:0 0 0 1px ${color};`,
+    }),
+  ]);
+}
+
+function timelineLegend() {
+  return el('div', { class: 'flex items-center gap-4 text-[10px] text-ink-500 font-mono mb-3 px-2' }, [
+    legendDot('#1b203d', 'Hoy'),
+    legendDot('#7e9ec1', 'Drying-start'),
+    legendDot('#5d8b66', 'Entrega'),
+    el('span', { class: 'text-ink-300', text: '· Rojo = vencido · Naranja = <5d' }),
+  ]);
+}
+
+function legendDot(color, text) {
+  return el('span', { class: 'inline-flex items-center gap-1' }, [
+    el('span', {
+      class: 'inline-block w-2.5 h-2.5 rounded-full border border-white',
+      style: `background:${color};box-shadow:0 0 0 1px ${color};`,
+    }),
+    text,
+  ]);
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────
+function posOn(start, end, target) {
+  if (!target) return 0;
+  const a = new Date(start + 'T12:00:00Z').getTime();
+  const b = new Date(end   + 'T12:00:00Z').getTime();
+  const t = new Date(target + 'T12:00:00Z').getTime();
+  if (b <= a) return 100;
+  const pct = ((t - a) / (b - a)) * 100;
+  return Math.max(0, Math.min(100, pct));
+}
+
+function daysBetween(fromIso, toIso) {
+  if (!fromIso || !toIso) return null;
+  const a = new Date(fromIso + 'T00:00:00Z').getTime();
+  const b = new Date(toIso   + 'T00:00:00Z').getTime();
+  return Math.floor((b - a) / 86400000);
+}
+
+function meta(label, value) {
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { class: 'text-ink-700 font-mono', text: String(value) }),
+  ]);
+}
