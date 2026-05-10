@@ -285,20 +285,17 @@ function computeMetrics({ orders, lots, shipments, today, leadByProcess, range }
   const creadosDelta = creadosMesPrev > 0
     ? ((creadosMes - creadosMesPrev) / creadosMesPrev) * 100 : null;
 
-  // Trend chart: usa el rango activo
-  const trendMonthly = months.map((mes) => {
-    const created = orders.filter((o) => (o.created_at || '').slice(0, 7) === mes);
-    const accepted = orders.filter((o) => (o.accepted_at || '').slice(0, 7) === mes);
-    return {
-      mes,
-      solicitado: sum(created,  (o) => o.kg_green_required),
-      aceptado:   sum(accepted, (o) => o.kg_green_accepted),
-      despachado: sum(
-        shipments.filter((s) => (s.shipment_date || '').slice(0, 7) === mes),
-        (s) => s.totals?.kg_green || 0,
-      ),
-    };
-  });
+  // Funnel acumulado del rango: solicitado → aceptado → despachado
+  const createdInRange = orders.filter((o) => inRange(o.created_at));
+  const acceptedInRange = orders.filter((o) => inRange(o.accepted_at));
+  const funnelTotals = {
+    solicitado: sum(createdInRange,  (o) => o.kg_green_required),
+    aceptado:   sum(acceptedInRange, (o) => o.kg_green_accepted),
+    despachado: sum(shipsInRange,    (s) => s.totals?.kg_green || 0),
+    creadosCount:    createdInRange.length,
+    aceptadosCount:  acceptedInRange.length,
+    despachosCount:  shipsInRange.length,
+  };
 
   const pipelineKg = {
     InFermentation: sum(activeLots.filter((l) => l.status === 'InFermentation'),
@@ -336,7 +333,7 @@ function computeMetrics({ orders, lots, shipments, today, leadByProcess, range }
     cycleAvg, cycleCount: completedAllRange.length,
     respuestaAvg, respuestaCount: respondidos.length,
     lotsDeliveredMes, creadosMes, creadosDelta,
-    trendMonthly, pipelineKg, kgByProcessRange, recentShipments,
+    funnelTotals, pipelineKg, kgByProcessRange, recentShipments,
   };
 }
 
@@ -391,8 +388,8 @@ function renderSections(m, state) {
       stat('Pedidos creados mes', String(m.creadosMes), momHint(m.creadosDelta)),
     ]),
 
-    section(`Trend · kg verde por mes (últimos ${m.rangeMonths} meses)`,
-      trendChart(m.trendMonthly)),
+    section(`Embudo · Solicitado → Aceptado → Despachado (${m.rangeLabel})`,
+      funnelChart(m.funnelTotals)),
 
     section('Pipeline · kg verde por etapa', pipelineBar(m.pipelineKg)),
 
@@ -405,95 +402,93 @@ function renderSections(m, state) {
 }
 
 // ─── Charts ─────────────────────────────────────────────────────────
-function trendChart(rows) {
-  // SVG line chart con 3 series. Mejor que barras agrupadas cuando un
-  // mes domina y los demas se ven casi planos.
-  const W = 700, H = 240;
-  const padL = 50, padR = 16, padT = 12, padB = 36;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-  const n = rows.length;
-  const maxKg = Math.max(1, ...rows.flatMap((r) => [r.solicitado, r.aceptado, r.despachado]));
+function funnelChart(t) {
+  // Embudo cuantitativo del rango. La barra de cada etapa se mide
+  // contra la siguiente etapa hacia atras (Solicitado=100%, Aceptado=
+  // % del solicitado, Despachado=% del aceptado). Entre etapas se
+  // muestra el "drop-off" en kg y porcentaje.
+  const stages = [
+    { key: 'solicitado', label: 'Solicitado', value: t.solicitado, count: t.creadosCount,
+      sub: 'Pedidos creados',  color: TREND_COLORS.solicitado },
+    { key: 'aceptado',   label: 'Aceptado',   value: t.aceptado,   count: t.aceptadosCount,
+      sub: 'Pedidos aceptados', color: TREND_COLORS.aceptado },
+    { key: 'despachado', label: 'Despachado', value: t.despachado, count: t.despachosCount,
+      sub: 'Despachos creados', color: TREND_COLORS.despachado },
+  ];
+  const max = Math.max(t.solicitado, 1);
 
-  const x = (i) => padL + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
-  const y = (v) => padT + innerH - (v / maxKg) * innerH;
-
-  // Grid + y-axis labels (5 niveles)
-  const ticks = 4;
-  const gridLines = [];
-  const yLabels = [];
-  for (let t = 0; t <= ticks; t++) {
-    const v = (maxKg * t) / ticks;
-    const yy = y(v);
-    gridLines.push(svg('line', {
-      x1: padL, x2: padL + innerW, y1: yy, y2: yy,
-      stroke: '#e8e8e2', 'stroke-width': '1',
-    }));
-    yLabels.push(svg('text', {
-      x: padL - 6, y: yy + 4,
-      'text-anchor': 'end',
-      'font-size': '10', 'font-family': 'monospace', fill: '#9aa3ae',
-    }, [fmtKgShort(v)]));
+  if (t.solicitado === 0 && t.aceptado === 0 && t.despachado === 0) {
+    return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+      el('p', { class: 'text-[12px] text-ink-300 italic text-center py-4',
+        text: 'Sin actividad en este rango.' }),
+    ]);
   }
 
-  // X labels (mes) — uno cada N pasos para no saturar
-  const labelEvery = n <= 8 ? 1 : n <= 14 ? 2 : 3;
-  const xLabels = rows.map((r, i) => {
-    if (i % labelEvery !== 0 && i !== n - 1) return null;
-    return svg('text', {
-      x: x(i), y: H - padB + 16,
-      'text-anchor': 'middle',
-      'font-size': '10', 'font-family': 'monospace', fill: '#9aa3ae',
-    }, [r.mes.slice(2)]);
-  }).filter(Boolean);
+  const children = [];
+  for (let i = 0; i < stages.length; i++) {
+    const s = stages[i];
+    const pctOfMax = max > 0 ? (s.value / max) * 100 : 0;
+    const prev = i > 0 ? stages[i - 1] : null;
+    const conv = prev && prev.value > 0 ? (s.value / prev.value) * 100 : null;
 
-  // Lineas + puntos
-  const lineFor = (key) => {
-    const d = rows.map((r, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(r[key])}`).join(' ');
-    return svg('path', {
-      d, fill: 'none',
-      stroke: TREND_COLORS[key], 'stroke-width': '2',
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-    });
-  };
-  const dotsFor = (key) => rows.map((r, i) => svg('circle', {
-    cx: x(i), cy: y(r[key]), r: '3',
-    fill: TREND_COLORS[key], stroke: '#fff', 'stroke-width': '1',
-  }, [
-    svg('title', {}, [`${r.mes} · ${labelOf(key)}: ${fmtKg(r[key])}`]),
-  ]));
+    if (i > 0) {
+      const dropKg = Math.max(0, prev.value - s.value);
+      const dropPct = prev.value > 0 ? (dropKg / prev.value) * 100 : 0;
+      children.push(el('div', {
+        class: 'flex items-center gap-2 pl-3 my-1 text-[11px] font-mono text-ink-300',
+      }, [
+        el('span', { text: '↓' }),
+        dropKg > 0.001
+          ? el('span', { class: 'text-warn' }, [
+              `−${fmtKg(dropKg)}`,
+              el('span', { class: 'text-ink-300', text: ` (${dropPct.toFixed(0)}% drop)` }),
+            ])
+          : el('span', { class: 'text-ok', text: 'sin drop' }),
+      ]));
+    }
 
-  const chart = svg('svg', {
-    viewBox: `0 0 ${W} ${H}`,
-    preserveAspectRatio: 'xMidYMid meet',
-    style: 'width:100%;height:auto;display:block;',
-  }, [
-    ...gridLines, ...yLabels, ...xLabels,
-    lineFor('solicitado'),
-    lineFor('aceptado'),
-    lineFor('despachado'),
-    ...dotsFor('solicitado'),
-    ...dotsFor('aceptado'),
-    ...dotsFor('despachado'),
-  ]);
+    children.push(el('div', { class: 'space-y-1' }, [
+      el('div', { class: 'flex items-baseline justify-between gap-2 flex-wrap' }, [
+        el('div', { class: 'flex items-baseline gap-2' }, [
+          el('span', { class: 'inline-block w-2 h-2 rounded-sm', style: `background:${s.color};` }),
+          el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: s.label }),
+          el('span', { class: 'text-[10px] text-ink-300 uppercase tracking-loose', text: s.sub }),
+        ]),
+        el('div', { class: 'flex items-baseline gap-2' }, [
+          el('strong', { class: 'font-mono text-ink-700', text: fmtKg(s.value) }),
+          el('span', { class: 'text-[10px] text-ink-300 font-mono', text: `${s.count} pedido(s)` }),
+          conv != null
+            ? el('span', { class: 'text-[11px] font-mono text-ink-500',
+                text: `${conv.toFixed(0)}% del anterior` })
+            : el('span', { class: 'text-[11px] font-mono text-ok', text: '100%' }),
+        ]),
+      ]),
+      el('div', { class: 'h-5 rounded-md bg-sand overflow-hidden' }, [
+        el('div', {
+          class: 'h-full',
+          style: `width:${pctOfMax}%;background:${s.color};`,
+          title: `${s.label}: ${fmtKg(s.value)}`,
+        }),
+      ]),
+    ]));
+  }
 
-  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
-    chart,
-    el('div', { class: 'flex items-center justify-center gap-3 mt-3 text-[10px] text-ink-500' }, [
-      legendDot(TREND_COLORS.solicitado, 'Solicitado'),
-      legendDot(TREND_COLORS.aceptado,   'Aceptado'),
-      legendDot(TREND_COLORS.despachado, 'Despachado'),
-    ]),
-  ]);
+  // Conversión total (despachado / solicitado)
+  const totalConv = t.solicitado > 0 ? (t.despachado / t.solicitado) * 100 : null;
+  if (totalConv != null) {
+    children.push(el('div', {
+      class: 'mt-3 pt-3 border-t border-sand flex items-center justify-between text-[12px]',
+    }, [
+      el('span', { class: 'eyebrow', text: 'Conversión total' }),
+      el('strong', {
+        class: `font-mono ${totalConv >= 70 ? 'text-ok' : totalConv >= 40 ? 'text-warn' : 'text-crit'}`,
+        text: `${totalConv.toFixed(0)}%`,
+      }),
+    ]));
+  }
+
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, children);
 }
-
-function labelOf(key) {
-  return { solicitado: 'Solicitado', aceptado: 'Aceptado', despachado: 'Despachado' }[key] || key;
-}
-
-function fmtKgShort(v) {
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
-  return Math.round(v).toString();
 }
 
 function pipelineBar(p) {
@@ -672,21 +667,6 @@ function legendDot(color, label) {
 function momHint(deltaPct) {
   if (deltaPct == null) return 'sin datos previos';
   return `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(0)}% vs mes prev.`;
-}
-
-// ─── SVG helper ─────────────────────────────────────────────────────
-function svg(tag, attrs = {}, children = []) {
-  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v == null) continue;
-    node.setAttribute(k, String(v));
-  }
-  for (const c of children) {
-    if (c == null) continue;
-    if (c instanceof Node) node.appendChild(c);
-    else node.appendChild(document.createTextNode(String(c)));
-  }
-  return node;
 }
 
 // ─── Pure helpers ───────────────────────────────────────────────────
