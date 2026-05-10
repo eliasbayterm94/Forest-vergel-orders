@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Forest ↔ El Vergel Production Coordination System",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node scripts/check-esm.js && node --test tests/*.test.js",
     "check-esm": "node scripts/check-esm.js",
@@ -15,5 +17,8 @@
     "@supabase/supabase-js": "^2.45.0",
     "bcryptjs": "^2.4.3",
     "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
   }
 }
