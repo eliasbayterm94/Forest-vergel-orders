@@ -7,14 +7,16 @@ import { renderCapacityPayload } from './_capacity-panel.js';
 import { navigate } from '../router.js';
 
 export async function fincaDashboardView() {
-  const [ordersRes, lotsAllRes] = await Promise.all([
+  const [ordersRes, lotsAllRes, shipsRes] = await Promise.all([
     api.ordersList({}),
     api.lotsList({}),
+    api.shipmentsList(),
   ]);
 
   const today = ordersRes.today;
   const orders = ordersRes.orders;
   const lots   = lotsAllRes.lots;
+  const shipments = shipsRes.shipments || [];
 
   const buckets = {
     pending:        orders.filter((o) => o.status === 'Pending'),
@@ -52,14 +54,62 @@ export async function fincaDashboardView() {
     b.orders.push(o);
   }
 
+  // ── Second-row metrics (production-focused) ─────────────────────
+  // 1) Cereza pendiente de procesar = sum of (kg_green_accepted - allocations
+  //    from non-Delivered lots) across in-flight orders, × 7.65.
+  const allocByOrder = new Map();
+  for (const lot of lots) {
+    if (lot.status === 'Delivered') continue;
+    for (const a of lot.assignments || []) {
+      allocByOrder.set(a.demand_order_id, (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
+    }
+  }
+  const kgGreenPending = inFlight.reduce((s, o) => {
+    const accepted = Number(o.kg_green_accepted || 0);
+    const allocated = allocByOrder.get(o.id) || 0;
+    return s + Math.max(0, accepted - allocated);
+  }, 0);
+  const kgCherryPending = kgGreenPending * 7.65;
+
+  // 2) Listos sin despachar = Ready lots not in any shipment.
+  const shippedLotIds = new Set();
+  shipments.forEach((s) => (s.lots || []).forEach((l) => shippedLotIds.add(l.id)));
+  const readyUnshipped = lots.filter((l) => l.status === 'Ready' && !shippedLotIds.has(l.id));
+
+  // 3) kg verde despachado este mes (current calendar month, Bogota).
+  const mesKey = today.slice(0, 7);
+  const verdeDespachadoMes = shipments
+    .filter((s) => (s.shipment_date || '').slice(0, 7) === mesKey)
+    .reduce((s, x) => s + Number(x.totals?.kg_green || 0), 0);
+
+  // 4) Factor promedio de los últimos 30 días.
+  const thirtyDaysAgo = isoDateNDaysAgo(today, 30);
+  const recentDelivered = lots.filter((l) =>
+    l.status === 'Delivered'
+    && (l.delivered_date || '') >= thirtyDaysAgo
+    && l.factor_rendimiento != null
+  );
+  const factorPromedio = recentDelivered.length > 0
+    ? recentDelivered.reduce((s, l) => s + Number(l.factor_rendimiento || 0), 0) / recentDelivered.length
+    : null;
+
   return chrome(el('div', {}, [
     pageTitle('Tablero El Vergel', `Hoy: ${today}`),
 
+    // Row 1: status counts (existing)
     statRow([
       stat('Pendientes',     buckets.pending.length,      'Por aceptar', () => navigate('/finca/inbox')),
       stat('Aceptados',      buckets.accepted.length,     'Sin lote aún', () => navigate('/finca/lots')),
       stat('En producción',  buckets.inProduction.length, 'Con lote asignado', () => navigate('/finca/lots'), { kind: 'roll' }),
       stat('Listos / entregados', `${buckets.ready.length} / ${buckets.delivered.length}`, 'Lotes', () => navigate('/finca/lots'), { kind: 'ok' }),
+    ]),
+
+    // Row 2: production metrics
+    statRow([
+      stat('Cereza por procesar', fmtKg(kgCherryPending), `${fmtKg(kgGreenPending)} verde sin asignar`, null, { kind: kgCherryPending > 0 ? 'warn' : 'ok' }),
+      stat('Listos sin despachar', readyUnshipped.length, readyUnshipped.length > 0 ? 'Crear despacho' : 'Al día', () => navigate('/finca/despachos'), { kind: readyUnshipped.length > 0 ? 'warn' : 'ok' }),
+      stat('Despachado este mes',  fmtKg(verdeDespachadoMes), `${shipments.filter((s) => (s.shipment_date||'').slice(0,7) === mesKey).length} despacho(s)`, () => navigate('/finca/despachos')),
+      stat('Factor promedio (30d)', factorPromedio != null ? factorPromedio.toFixed(2) : '—', `${recentDelivered.length} lote(s) recientes`, null),
     ]),
 
     section('Urgencias',
@@ -90,14 +140,29 @@ function statRow(items) {
 
 function stat(label, value, hint, onClick, opts = {}) {
   const valClass = opts.kind ? `stat-val ${opts.kind}` : 'stat-val';
+  if (!onClick) {
+    return el('div', { class: 'stat-card' }, [
+      el('p', { class: 'stat-label', text: label }),
+      el('p', { class: valClass, text: String(value) }),
+      el('p', { class: 'stat-sub', text: hint }),
+    ]);
+  }
   return el('button', {
     class: 'stat-card is-clickable text-left',
-    type: 'button', onClick: onClick || (() => {}),
+    type: 'button', onClick,
   }, [
     el('p', { class: 'stat-label', text: label }),
     el('p', { class: valClass, text: String(value) }),
     el('p', { class: 'stat-sub', text: hint }),
   ]);
+}
+
+// Returns the YYYY-MM-DD that is `days` calendar days before `today`.
+function isoDateNDaysAgo(today, days) {
+  const [y, m, d] = today.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - days);
+  return dt.toISOString().slice(0, 10);
 }
 
 function section(title, children) {

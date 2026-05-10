@@ -22,6 +22,7 @@ const ICONS = {
   more:      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>',
   mail:      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>',
   logout:    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+  chart:     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="20" x2="21" y2="20"/><rect x="5" y="12" width="3" height="7"/><rect x="10.5" y="7" width="3" height="12"/><rect x="16" y="14" width="3" height="5"/></svg>',
 };
 
 function iconEl(name) {
@@ -37,6 +38,7 @@ const FOREST_NAV = [
   { path: '/forest/demand',     label: 'Nuevo pedido', icon: 'plus' },
   { path: '/forest/external',   label: 'Externos',     icon: 'external' },
   { path: '/forest/references', label: 'Referencias',  icon: 'book' },
+  { path: '/reports',           label: 'Reportes',     icon: 'chart' },
 ];
 
 const FINCA_NAV = [
@@ -44,6 +46,7 @@ const FINCA_NAV = [
   { path: '/finca/inbox',     label: 'Pedidos entrantes', icon: 'inbox' },
   { path: '/finca/lots',      label: 'Producción',        icon: 'box' },
   { path: '/finca/despachos', label: 'Despachos',         icon: 'truck' },
+  { path: '/reports',         label: 'Reportes',          icon: 'chart' },
 ];
 
 function navSections(role) {

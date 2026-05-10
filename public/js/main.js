@@ -5,6 +5,7 @@ import { forestDashboardView }      from './views/forest-dashboard.js';
 import { forestDemandFormView }     from './views/forest-demand-form.js';
 import { forestReferencesView }     from './views/forest-references.js';
 import { forestExternalPosView }    from './views/forest-external-pos.js';
+import { reportsView }              from './views/reports.js';
 import { fincaDashboardView }       from './views/finca-dashboard.js';
 import { fincaInboxView }           from './views/finca-inbox.js';
 import { fincaLotsView }            from './views/finca-lots.js';
@@ -18,6 +19,7 @@ defineRoute('/forest/dashboard',   { roles: FOREST_OR_ADMIN, view: forestDashboa
 defineRoute('/forest/demand',      { roles: FOREST_OR_ADMIN, view: forestDemandFormView });
 defineRoute('/forest/references',  { roles: FOREST_OR_ADMIN, view: forestReferencesView });
 defineRoute('/forest/external',    { roles: FOREST_OR_ADMIN, view: forestExternalPosView });
+defineRoute('/reports',            { roles: ['forest', 'finca', 'admin'], view: reportsView });
 
 defineRoute('/finca/dashboard',    { roles: FINCA_OR_ADMIN,  view: fincaDashboardView });
 defineRoute('/finca/inbox',        { roles: FINCA_OR_ADMIN,  view: fincaInboxView });
