@@ -49,10 +49,18 @@ exports.handler = requireAuth(async (event) => {
   if (includeActive) {
     const { data: lots, error: lErr } = await sb
       .from('production_lots')
-      .select('id, lot_code, status, kg_cherry_input, drying_start_date, start_date')
+      .select(`
+        id, lot_code, bache_code, status,
+        kg_cherry_input, kg_green_expected, kg_green_actual,
+        drying_start_date, start_date,
+        lot_partials ( id, kg_green_yield, rejected_at )
+      `)
       .in('status', ['InFermentation', 'Drying', 'Resting']);
     if (lErr) return serverErr('Active lot load failed', lErr.message);
-    activeLots = lots || [];
+    activeLots = (lots || []).map((l) => ({
+      ...l,
+      partials: l.lot_partials || [],
+    }));
   }
 
   let dryingDaysByProcess;

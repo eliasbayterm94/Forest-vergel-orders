@@ -87,6 +87,8 @@ function weekRow(w, maxVal) {
   const selPct = (sel / maxVal) * 100;
   const actPct = (act / maxVal) * 100;
   const total  = sel + act;
+  const lostKgGreen   = Number(w.active_queue_kg_green_lost_to_rejection || 0);
+  const rejectedCount = Number(w.active_queue_rejected_partial_count || 0);
 
   return el('div', { class: 'flex items-center gap-2 text-[12px]' }, [
     el('div', { class: 'w-20 shrink-0 font-mono text-[11px] text-ink-500' }, [w.iso_week_key]),
@@ -103,6 +105,13 @@ function weekRow(w, maxVal) {
       }),
     ]),
     el('div', { class: 'w-24 shrink-0 text-right font-mono font-medium text-navy text-[11px]' }, [fmtKg(total)]),
+    rejectedCount > 0
+      ? el('span', {
+          class: 'shrink-0 ctrm-pill urgency-red text-[10px]',
+          title: `${rejectedCount} parcial(es) rechazado(s) en esta semana — ${fmtKg(lostKgGreen)} verde no se va a producir`,
+          text: `−${fmtKg(lostKgGreen)} v`,
+        })
+      : null,
   ]);
 }
 

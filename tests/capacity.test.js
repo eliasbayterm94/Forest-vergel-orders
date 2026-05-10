@@ -94,6 +94,41 @@ test('Delivered/Ready lots are excluded from active overlay', () => {
   assert.equal(w21.active_queue_kg_cherry, 0);
 });
 
+test('rejected partials in active lot bubble up as kg verde lost', () => {
+  const r = computeCapacity({
+    orders: [],
+    activeLots: [{
+      id: 'L1', lot_code: 'B-23', status: 'Drying',
+      kg_cherry_input: 1000, drying_start_date: '2026-05-10',
+      partials: [
+        { id: 'p1', kg_green_yield: 50, rejected_at: null },
+        { id: 'p2', kg_green_yield: 30, rejected_at: '2026-05-12T00:00:00Z' },
+        { id: 'p3', kg_green_yield: 25, rejected_at: '2026-05-13T00:00:00Z' },
+      ],
+    }],
+    dryingDaysByProcess: LEAD, todayYmd: '2026-05-09',
+  });
+  const bucket = r.weekly_load.find((w) => w.active_queue_lot_codes.includes('B-23'));
+  assert.ok(bucket, 'expected a bucket for B-23');
+  assert.equal(bucket.active_queue_kg_cherry, 1000);
+  assert.equal(bucket.active_queue_kg_green_lost_to_rejection, 55);
+  assert.equal(bucket.active_queue_rejected_partial_count, 2);
+});
+
+test('lot without partials does not get loss fields populated', () => {
+  const r = computeCapacity({
+    orders: [],
+    activeLots: [{
+      id: 'L1', lot_code: 'X', status: 'Drying',
+      kg_cherry_input: 500, drying_start_date: '2026-05-10',
+    }],
+    dryingDaysByProcess: LEAD, todayYmd: '2026-05-09',
+  });
+  const bucket = r.weekly_load.find((w) => w.active_queue_lot_codes.includes('X'));
+  assert.equal(bucket.active_queue_kg_green_lost_to_rejection, 0);
+  assert.equal(bucket.active_queue_rejected_partial_count, 0);
+});
+
 test('urgency past — order with delivery already missed', () => {
   const r = computeCapacity({
     orders: [{

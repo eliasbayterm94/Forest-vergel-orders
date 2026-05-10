@@ -111,6 +111,8 @@ function computeCapacity({
         selected_order_codes: [],
         active_queue_kg_cherry: 0,
         active_queue_lot_codes: [],
+        active_queue_kg_green_lost_to_rejection: 0,
+        active_queue_rejected_partial_count: 0,
       });
     }
     return buckets.get(key);
@@ -129,7 +131,19 @@ function computeCapacity({
     if (!proxy) continue;
     const b = ensureBucket(proxy);
     b.active_queue_kg_cherry = round2(b.active_queue_kg_cherry + Number(lot.kg_cherry_input || 0));
-    b.active_queue_lot_codes.push(lot.lot_code);
+    b.active_queue_lot_codes.push(lot.bache_code || lot.lot_code);
+
+    // Aporte de partials rechazados: kg verde que NO se va a producir
+    // por mucho que el cereza original ya este en proceso.
+    const partials = Array.isArray(lot.partials) ? lot.partials : [];
+    const rejected = partials.filter((p) => p && p.rejected_at);
+    if (rejected.length > 0) {
+      const lostKgGreen = rejected.reduce(
+        (s, p) => s + Number(p.kg_green_yield || 0), 0);
+      b.active_queue_kg_green_lost_to_rejection = round2(
+        b.active_queue_kg_green_lost_to_rejection + lostKgGreen);
+      b.active_queue_rejected_partial_count += rejected.length;
+    }
   }
 
   const weekly_load = Array.from(buckets.values())
