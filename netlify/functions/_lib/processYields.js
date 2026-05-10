@@ -65,6 +65,33 @@ function inputToGreen(kgInput, stage) {
 
 function inputStageLabel(stage) { return INPUT_STAGE_LABELS[stage] || stage; }
 
+// ── Per-lot yield factor (Colombian "factor de rendimiento") ────────
+//
+// Per-lot factor expressing how many kg of dried parchment are needed
+// to produce one 70-kg saco of green. Replaces the per-process divisor
+// at the Ready transition — every lot gets its own factor measured at
+// the dry-mill.
+//
+//   kg_green = (kg_dried_output / factor_rendimiento) * KG_PER_SACO
+//
+// Example: 1000 kg seco / 145 * 70 = 482.76 kg verde.
+const KG_PER_SACO = 70;
+
+/**
+ * @param {number} kgDried
+ * @param {number} factor   factor de rendimiento (>0)
+ * @returns {number} kg green, rounded to 2 decimals.
+ */
+function factorYield(kgDried, factor) {
+  if (typeof kgDried !== 'number' || !Number.isFinite(kgDried) || kgDried < 0) {
+    throw new TypeError(`factorYield: kgDried must be a non-negative finite number, got ${kgDried}`);
+  }
+  if (typeof factor !== 'number' || !Number.isFinite(factor) || factor <= 0) {
+    throw new Error(`factorYield: factor must be a positive number, got ${factor}`);
+  }
+  return round2((kgDried / factor) * KG_PER_SACO);
+}
+
 // ── B) Dried-to-green per-process divisors ──────────────────────────
 /** Default divisors — must be kept in sync with migration 0006_dried_yield.sql. */
 const DRIED_TO_GREEN_DIVISORS = Object.freeze({
@@ -117,6 +144,8 @@ module.exports = {
   INPUT_STAGE_LABELS,
   inputToGreen,
   inputStageLabel,
+  KG_PER_SACO,
+  factorYield,
   DRIED_TO_GREEN_DIVISORS,
   driedToGreen,
   greenToDried,

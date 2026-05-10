@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   DRIED_TO_GREEN_DIVISORS, driedToGreen, greenToDried, driedOutputLabel,
   INPUT_STAGE_DIVISORS, inputToGreen, inputStageLabel,
+  KG_PER_SACO, factorYield,
 } = require('../netlify/functions/_lib/processYields');
 
 test('default divisors match the seeded migration', () => {
@@ -102,4 +103,32 @@ test('inputStageLabel returns Spanish label', () => {
   assert.match(inputStageLabel('cereza'),     /Cereza fresca/);
   assert.match(inputStageLabel('despulpado'), /Despulpado/);
   assert.match(inputStageLabel('seco'),       /Seco/);
+});
+
+// ── Per-lot factor de rendimiento ──────────────────────────────────
+test('KG_PER_SACO is 70', () => {
+  assert.equal(KG_PER_SACO, 70);
+});
+
+test('factorYield: 1000 kg seco / factor 145 → 482.76 kg verde', () => {
+  // (1000 / 145) * 70 = 482.7586... → 482.76
+  assert.equal(factorYield(1000, 145), 482.76);
+});
+
+test('factorYield: 700 kg seco / factor 100 → 490 kg verde', () => {
+  // (700 / 100) * 70 = 490
+  assert.equal(factorYield(700, 100), 490);
+});
+
+test('factorYield: 0 dried → 0 green', () => {
+  assert.equal(factorYield(0, 145), 0);
+});
+
+test('factorYield: rejects zero or negative factor', () => {
+  assert.throws(() => factorYield(100, 0));
+  assert.throws(() => factorYield(100, -1));
+});
+
+test('factorYield: rejects negative dried', () => {
+  assert.throws(() => factorYield(-1, 100), TypeError);
 });

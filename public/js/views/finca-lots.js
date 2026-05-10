@@ -17,18 +17,25 @@ const STAGE_OPTIONS = [
   { value: 'seco',       label: 'Seco',           inputLabel: 'kg de café seco' },
 ];
 
-// Dried→green divisors per process (used at the Ready transition).
-const DRIED_TO_GREEN_DIVISORS = { Natural: 3.40, Honey: 1.50, Lavado: 1.34 };
-const DRIED_LABELS = {
+// Per-lot yield formula at the Ready transition:
+//   kg_green = (kg_seco / factor_rendimiento) * KG_PER_SACO
+// (Mirrors processYields.js — server is the source of truth.)
+const KG_PER_SACO = 70;
+
+// Generic dried label (factor is per-lot, not per-process anymore).
+const DRIED_LABEL_GENERIC = 'Peso seco';
+const DRIED_LABELS_LEGACY = {
   Natural: 'Cereza seca',
   Honey:   'Pergamino seco (honey)',
   Lavado:  'Pergamino seco (lavado)',
 };
 
+// New flow skips Resting (Drying → Ready). Legacy lots already in
+// Resting can still advance to Ready via the same map.
 const NEXT_STATUS = {
   InFermentation: 'Drying',
-  Drying:         'Resting',
-  Resting:        'Ready',
+  Drying:         'Ready',
+  Resting:        'Ready',  // legacy
   Ready:          'Delivered',
 };
 
@@ -95,7 +102,8 @@ export async function fincaLotsView() {
         l.kg_cherry_input     != null ? meta('Cereza fresca', fmtKg(l.kg_cherry_input)) : null,
         l.kg_despulpado_input != null ? meta('Despulpado',    fmtKg(l.kg_despulpado_input)) : null,
         meta('Verde esperado', fmtKg(l.kg_green_expected)),
-        l.kg_dried_output != null ? meta(DRIED_LABELS[l.process_type] || 'Peso seco', fmtKg(l.kg_dried_output)) : null,
+        l.kg_dried_output != null ? meta(DRIED_LABEL_GENERIC, fmtKg(l.kg_dried_output)) : null,
+        l.factor_rendimiento != null ? meta('Factor', String(l.factor_rendimiento)) : null,
         l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
         meta('Inicio', fmtDate(l.start_date)),
         l.drying_start_date ? meta('Drying', fmtDate(l.drying_start_date)) : null,
@@ -143,8 +151,9 @@ export async function fincaLotsView() {
     try {
       const payload = { lot_id: lot.id, status: target };
       if (yieldValues) {
-        if (yieldValues.kg_dried_output != null) payload.kg_dried_output = yieldValues.kg_dried_output;
-        if (yieldValues.kg_green_actual != null) payload.kg_green_actual = yieldValues.kg_green_actual;
+        if (yieldValues.kg_dried_output    != null) payload.kg_dried_output    = yieldValues.kg_dried_output;
+        if (yieldValues.factor_rendimiento != null) payload.factor_rendimiento = yieldValues.factor_rendimiento;
+        if (yieldValues.kg_green_actual    != null) payload.kg_green_actual    = yieldValues.kg_green_actual;
       }
       const r = await api.lotUpdateStatus(payload);
       toast(`${lot.lot_code} → ${statusLabel(target)}`, 'success');
@@ -156,41 +165,51 @@ export async function fincaLotsView() {
   }
 
   function promptYield(lot, target) {
-    const divisor = DRIED_TO_GREEN_DIVISORS[lot.process_type] || 1;
-    const driedLabel = DRIED_LABELS[lot.process_type] || 'Peso seco';
-
     return openModal(({ close }) => {
       const driedInput = el('input', {
         type: 'number', step: '0.01', min: '0',
         value: lot.kg_dried_output != null ? String(lot.kg_dried_output) : '',
-        placeholder: 'Ej: 350',
+        placeholder: 'Ej: 1000',
+        class: 'ctrm-input mono',
+      });
+      const factorInput = el('input', {
+        type: 'number', step: '0.01', min: '0.01',
+        value: lot.factor_rendimiento != null ? String(lot.factor_rendimiento) : '',
+        placeholder: 'Ej: 145',
         class: 'ctrm-input mono',
       });
       const greenInput = el('input', {
         type: 'number', step: '0.01', min: '0',
         value: lot.kg_green_actual != null ? String(lot.kg_green_actual) : '',
-        placeholder: 'Auto desde peso seco',
+        placeholder: 'Auto desde peso seco / factor',
         class: 'ctrm-input mono',
       });
-      const formula = el('p', { class: 'ctrm-hint' }, [
-        `Conversión: ${driedLabel} ÷ ${divisor.toFixed(2)} = kg verde`,
-      ]);
+      const formula = el('p', { class: 'ctrm-hint', text: `Verde = (peso seco ÷ factor) × ${KG_PER_SACO}` });
       let greenManuallyEdited = lot.kg_green_actual != null;
+
       const recompute = () => {
         if (greenManuallyEdited) return;
-        const v = Number(driedInput.value || 0);
-        greenInput.value = v > 0 ? (Math.round((v / divisor) * 100) / 100).toString() : '';
+        const seco = Number(driedInput.value || 0);
+        const fac  = Number(factorInput.value || 0);
+        if (seco > 0 && fac > 0) {
+          greenInput.value = (Math.round((seco / fac) * KG_PER_SACO * 100) / 100).toString();
+        } else {
+          greenInput.value = '';
+        }
       };
       driedInput.addEventListener('input', recompute);
+      factorInput.addEventListener('input', recompute);
       greenInput.addEventListener('input', () => { greenManuallyEdited = greenInput.value !== ''; });
 
       return el('div', { class: 'space-y-3' }, [
         el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
           `Avanzando ${lot.lot_code} a `, el('strong', { class: 'text-navy', text: statusLabel(target) }),
-          '. Registra peso seco y verde real (verde se calcula automáticamente).',
+          '. Registra peso seco y factor de rendimiento; el verde se calcula automáticamente.',
         ]),
-        el('label', { class: 'ctrm-label', text: `${driedLabel} (kg)` }),
+        el('label', { class: 'ctrm-label', text: 'Peso seco (kg)' }),
         driedInput,
+        el('label', { class: 'ctrm-label mt-2', text: 'Factor de rendimiento' }),
+        factorInput,
         formula,
         el('label', { class: 'ctrm-label mt-2', text: 'kg verde reales' }),
         greenInput,
@@ -200,11 +219,13 @@ export async function fincaLotsView() {
             class: 'ctrm-btn ctrm-btn-primary',
             type: 'button',
             onClick: () => {
-              const dried = driedInput.value === '' ? null : Number(driedInput.value);
-              const green = greenInput.value === '' ? null : Number(greenInput.value);
-              if (dried != null && !(dried >= 0)) { toast('Peso seco inválido', 'warning'); return; }
-              if (green != null && !(green >= 0)) { toast('kg verde inválido', 'warning'); return; }
-              close({ kg_dried_output: dried, kg_green_actual: green });
+              const dried  = driedInput.value  === '' ? null : Number(driedInput.value);
+              const factor = factorInput.value === '' ? null : Number(factorInput.value);
+              const green  = greenInput.value  === '' ? null : Number(greenInput.value);
+              if (dried  != null && !(dried >= 0))  { toast('Peso seco inválido', 'warning'); return; }
+              if (factor != null && !(factor > 0))  { toast('Factor inválido (> 0)', 'warning'); return; }
+              if (green  != null && !(green >= 0))  { toast('kg verde inválido', 'warning'); return; }
+              close({ kg_dried_output: dried, factor_rendimiento: factor, kg_green_actual: green });
             },
           }, ['Confirmar']),
         ]),

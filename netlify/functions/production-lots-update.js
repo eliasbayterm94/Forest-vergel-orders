@@ -15,7 +15,7 @@ const { ok, badReq, notFound, serverErr, methodNotAllowed, parseJson } = require
  */
 const ALLOWED = new Set([
   'fermentation_hours', 'drying_start_date', 'ready_date', 'delivered_date',
-  'kg_dried_output', 'kg_green_actual', 'notes',
+  'kg_dried_output', 'factor_rendimiento', 'kg_green_actual', 'notes',
 ]);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {

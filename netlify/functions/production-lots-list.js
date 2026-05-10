@@ -20,7 +20,7 @@ exports.handler = requireAuth(async (event) => {
     id, lot_code, reference_id, process_type, processing_stage,
     kg_cherry_input, kg_despulpado_input,
     kg_green_expected, kg_green_actual,
-    kg_dried_output,
+    kg_dried_output, factor_rendimiento,
     status, fermentation_hours,
     start_date, drying_start_date, ready_date, delivered_date,
     notes, created_by, created_at, updated_at,

@@ -2,7 +2,7 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase, getDriedDivisorsByProcess } = require('./_lib/supabase');
-const { driedToGreen } = require('./_lib/processYields');
+const { driedToGreen, factorYield } = require('./_lib/processYields');
 const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, notFound, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { notifyOrderCompleted } = require('./_lib/notifications');
@@ -10,27 +10,31 @@ const { bogotaToday } = require('./_lib/bogotaTime');
 
 /**
  * POST /production-lots-update-status  (finca, admin)
- * Body: { lot_id, status, kg_dried_output?, kg_green_actual? }
+ * Body: { lot_id, status, kg_dried_output?, factor_rendimiento?, kg_green_actual? }
  *
- * Allowed transitions enforced by DB trigger; we mirror them here for
- * a clean error message and to set correlated date columns:
- *   InFermentation → Drying     ⇒ drying_start_date := today (if null)
- *   Drying        → Resting
- *   Resting       → Ready       ⇒ ready_date := today
- *   Ready         → Delivered   ⇒ delivered_date := today; check for order completion
+ * Lot lifecycle (skipping Resting in the new flow; legacy Resting rows
+ * still progress to Ready):
  *
- * Yield handling:
- *   - If kg_dried_output is provided (or already on the lot) and
- *     kg_green_actual is omitted, kg_green_actual is auto-computed via
- *     the process-specific divisor:
- *       Natural / 3.40, Honey / 1.50, Lavado / 1.34
- *     (loaded from process_lead_times — DB is authoritative).
- *   - kg_green_actual passed in the body always wins.
+ *   InFermentation → Drying          ⇒ drying_start_date := today
+ *   Drying        → Ready            ⇒ ready_date := today  (NEW path)
+ *   Drying        → Resting          (legacy)
+ *   Resting       → Ready            ⇒ ready_date := today  (legacy)
+ *   Ready         → Delivered        ⇒ delivered_date := today; cascade order completion
+ *
+ * Yield handling at Ready/Delivered (auto-compute kg_green_actual unless
+ * explicit value provided):
+ *   1) If factor_rendimiento is set (just provided or stored) and
+ *      kg_dried_output is set, use the per-lot formula:
+ *         kg_green_actual = (kg_dried_output / factor_rendimiento) * 70
+ *   2) Otherwise (no factor) fall back to the per-process divisor
+ *      (Natural ÷3.40, Honey ÷1.50, Lavado ÷1.34) loaded from
+ *      process_lead_times.dried_to_green_divisor.
+ *   3) An explicit kg_green_actual in the body always wins.
  */
 const NEXT = {
   [LOT_STATUS.InFermentation]: LOT_STATUS.Drying,
-  [LOT_STATUS.Drying]:         LOT_STATUS.Resting,
-  [LOT_STATUS.Resting]:        LOT_STATUS.Ready,
+  [LOT_STATUS.Drying]:         LOT_STATUS.Ready,     // skip Resting (new flow)
+  [LOT_STATUS.Resting]:        LOT_STATUS.Ready,     // legacy lots can still advance
   [LOT_STATUS.Ready]:          LOT_STATUS.Delivered,
 };
 
@@ -39,7 +43,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
 
-  const { lot_id, status: targetStatus, kg_dried_output, kg_green_actual } = body || {};
+  const { lot_id, status: targetStatus, kg_dried_output, factor_rendimiento, kg_green_actual } = body || {};
   if (!lot_id) return badReq('lot_id required', 'LOT_ID_REQUIRED');
   if (!Object.values(LOT_STATUS).includes(targetStatus)) return badReq('invalid status', 'INVALID_STATUS');
 
@@ -63,18 +67,30 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     if (!Number.isFinite(n) || n < 0) return badReq('kg_dried_output must be >= 0', 'INVALID_DRIED');
     update.kg_dried_output = n;
   }
+  if (factor_rendimiento != null) {
+    const n = Number(factor_rendimiento);
+    if (!Number.isFinite(n) || n <= 0) return badReq('factor_rendimiento must be > 0', 'INVALID_FACTOR');
+    update.factor_rendimiento = n;
+  }
   if (kg_green_actual != null) {
     const n = Number(kg_green_actual);
     if (!Number.isFinite(n) || n < 0) return badReq('kg_green_actual must be >= 0', 'INVALID_KG');
     update.kg_green_actual = n;
   } else {
-    // Auto-compute kg_green_actual when we have a dried-output reading
-    // (just provided or already stored) and the body didn't override it.
-    const effectiveDried = kg_dried_output != null ? Number(kg_dried_output) : lot.kg_dried_output;
+    // Auto-compute kg_green_actual:
+    //   1) factor + dried → per-lot formula (preferred)
+    //   2) dried only      → per-process divisor (legacy fallback)
+    const effectiveDried  = kg_dried_output    != null ? Number(kg_dried_output)    : lot.kg_dried_output;
+    const effectiveFactor = factor_rendimiento != null ? Number(factor_rendimiento) : lot.factor_rendimiento;
+
     if (effectiveDried != null && Number.isFinite(Number(effectiveDried)) && Number(effectiveDried) >= 0) {
       try {
-        const divisors = await getDriedDivisorsByProcess();
-        update.kg_green_actual = driedToGreen(Number(effectiveDried), lot.process_type, divisors);
+        if (effectiveFactor != null && Number.isFinite(Number(effectiveFactor)) && Number(effectiveFactor) > 0) {
+          update.kg_green_actual = factorYield(Number(effectiveDried), Number(effectiveFactor));
+        } else {
+          const divisors = await getDriedDivisorsByProcess();
+          update.kg_green_actual = driedToGreen(Number(effectiveDried), lot.process_type, divisors);
+        }
       } catch (e) {
         return serverErr('Yield calc failed', e.message);
       }
