@@ -140,3 +140,37 @@ test('urgency past — order with delivery already missed', () => {
   });
   assert.equal(r.orders[0].urgency, 'past');
 });
+
+
+test("weekly_load bucket exposes capacity_pct + is_overloaded", () => {
+  // Una orden con 8000 kg verde * 7.65 = 61200 kg cereza pone la
+  // semana sobre 60000.
+  const r = computeCapacity({
+    orders: [{
+      id: "o1", order_code: "FV-1", reference_id: "r1", reference_name: "A",
+      kg_green_required: 8000, kg_green_accepted: 8000,
+      max_delivery_date: "2026-06-01", process_type: "Natural",
+    }],
+    activeLots: [], dryingDaysByProcess: LEAD, todayYmd: "2026-05-09",
+  });
+  const b = r.weekly_load[0];
+  assert.equal(b.capacity_kg, 60000);
+  assert.equal(b.total_cherry_kg, 61200);
+  assert.equal(b.is_overloaded, true);
+  assert.equal(b.overloaded_by_kg, 1200);
+  assert.ok(b.capacity_pct > 100);
+});
+
+test("weekly_load under capacity is_overloaded=false", () => {
+  const r = computeCapacity({
+    orders: [{
+      id: "o1", order_code: "FV-1", reference_id: "r1", reference_name: "A",
+      kg_green_required: 1000, kg_green_accepted: 1000,
+      max_delivery_date: "2026-06-01", process_type: "Natural",
+    }],
+    activeLots: [], dryingDaysByProcess: LEAD, todayYmd: "2026-05-09",
+  });
+  assert.equal(r.weekly_load[0].is_overloaded, false);
+  assert.equal(r.weekly_load[0].overloaded_by_kg, 0);
+});
+

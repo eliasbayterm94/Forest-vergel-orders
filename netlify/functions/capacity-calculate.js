@@ -1,7 +1,7 @@
 'use strict';
 
 const { requireAuth } = require('./_lib/auth');
-const { getSupabase, getDryingDaysByProcess } = require('./_lib/supabase');
+const { getSupabase, getDryingDaysByProcess, getProcessingDaysByProcess } = require('./_lib/supabase');
 const { computeCapacity } = require('./_lib/capacity');
 const { bogotaToday } = require('./_lib/bogotaTime');
 const { ok, badReq, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
@@ -63,12 +63,16 @@ exports.handler = requireAuth(async (event) => {
     }));
   }
 
-  let dryingDaysByProcess;
-  try { dryingDaysByProcess = await getDryingDaysByProcess(); }
-  catch (e) { return serverErr('Lead-time load failed', e.message); }
+  let dryingDaysByProcess, processingDaysByProcess;
+  try {
+    dryingDaysByProcess     = await getDryingDaysByProcess();
+    processingDaysByProcess = await getProcessingDaysByProcess();
+  } catch (e) { return serverErr('Lead-time load failed', e.message); }
 
   const result = computeCapacity({
-    orders, activeLots, dryingDaysByProcess, todayYmd: bogotaToday(),
+    orders, activeLots,
+    dryingDaysByProcess, processingDaysByProcess,
+    todayYmd: bogotaToday(),
   });
   return ok(result);
 });

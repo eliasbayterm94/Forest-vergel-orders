@@ -29,6 +29,22 @@ export async function fincaColaView() {
   const allOrders  = ordersRes.orders || [];
   const activeLots = lotsRes.lots || [];
 
+  // Capacidad semanal calculada via /api/capacity-calculate sobre los
+  // pedidos in-flight. Sirve para marcar la semana de cada pedido
+  // como sobrecargada (rojo) o disponible (verde).
+  const inFlightIds = allOrders
+    .filter((o) => ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status))
+    .map((o) => o.id);
+  let capacity = null;
+  if (inFlightIds.length > 0) {
+    try {
+      capacity = await api.capacity({ order_ids: inFlightIds, include_active_queue: true });
+    } catch { /* silent fallback: no capacity overlay */ }
+  }
+  const weeklyByKey = new Map();
+  for (const w of (capacity?.weekly_load || [])) weeklyByKey.set(w.iso_week_key, w);
+  const cherryCap = capacity?.weekly_cherry_capacity_kg || 60000;
+
   // Coverage por pedido: suma de kg verde asignado desde lotes activos.
   const allocByOrder = new Map();
   for (const lot of activeLots) {
@@ -44,7 +60,9 @@ export async function fincaColaView() {
       const accepted  = Number(o.kg_green_accepted || 0);
       const allocated = allocByOrder.get(o.id) || 0;
       const pending   = Math.max(0, accepted - allocated);
-      return { ...o, allocated_kg: allocated, pending_kg: pending };
+      const wkey = o.iso_week_key || null;
+      const weekBucket = wkey ? weeklyByKey.get(wkey) : null;
+      return { ...o, allocated_kg: allocated, pending_kg: pending, week_bucket: weekBucket };
     })
     .sort((a, b) => (a.latest_drying_start_date || '').localeCompare(b.latest_drying_start_date || ''));
 
@@ -86,12 +104,61 @@ export async function fincaColaView() {
   }
   redraw();
 
+  const weeklyLoadPanel = capacity?.weekly_load?.length
+    ? renderWeeklyLoad(capacity.weekly_load, cherryCap)
+    : null;
+
   return chrome(el('div', {}, [
-    pageTitle('Cola de pedidos', `Hoy: ${today} · ordenado por fecha máxima de inicio de drying`),
+    pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
+    weeklyLoadPanel,
     filterChips,
     timelineLegend(),
     list,
   ]));
+}
+
+// ─── Weekly load panel ──────────────────────────────────────────────
+function renderWeeklyLoad(weeklyLoad, cap) {
+  const sorted = weeklyLoad.slice().sort((a, b) => a.week_start_date.localeCompare(b.week_start_date));
+  const hasOverload = sorted.some((w) => w.is_overloaded);
+  return el('section', { class: 'ctrm-card ctrm-card-pad mb-4' }, [
+    el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-2' }, [
+      el('p', { class: 'eyebrow', text: 'Carga semanal (kg cereza)' }),
+      el('p', { class: 'text-[11px] text-ink-500 font-mono' }, [
+        `Capacidad: `, el('strong', { class: 'text-ink-700', text: fmtKg(cap) }), ` / semana`,
+        hasOverload
+          ? el('span', { class: 'text-crit', text: ' · alguna semana sobrecargada' })
+          : null,
+      ]),
+    ]),
+    el('div', { class: 'space-y-1.5' }, sorted.map((w) => weekRow(w, cap))),
+  ]);
+}
+
+function weekRow(w, cap) {
+  const total = Number(w.total_cherry_kg ?? (w.selected_orders_kg_cherry || 0) + (w.active_queue_kg_cherry || 0));
+  const pct = cap > 0 ? Math.min(150, (total / cap) * 100) : 0;
+  const over = w.is_overloaded;
+  const color = over ? '#c45a4f' : pct > 80 ? '#ddae3e' : '#5d8b66';
+  return el('div', { class: 'flex items-center gap-2 text-[12px]' }, [
+    el('div', { class: 'w-20 shrink-0 font-mono text-[11px] text-ink-500', text: w.iso_week_key }),
+    el('div', { class: 'flex-1 h-5 bg-cream rounded-md relative overflow-hidden border border-sand' }, [
+      el('div', {
+        class: 'absolute inset-y-0 left-0',
+        style: `width:${Math.min(100, pct)}%;background:${color};`,
+        title: `${fmtKg(total)} de ${fmtKg(cap)} (${(pct).toFixed(0)}%)`,
+      }),
+      // Marca del 100% para referencia visual
+      el('div', {
+        class: 'absolute inset-y-0',
+        style: 'left:100%;width:2px;background:rgba(0,0,0,.15);',
+      }),
+    ]),
+    el('div', { class: 'w-32 shrink-0 text-right font-mono text-[11px]' }, [
+      el('strong', { class: over ? 'text-crit' : 'text-ink-700', text: fmtKg(total) }),
+      el('span', { class: 'text-ink-300', text: ` · ${pct.toFixed(0)}%` }),
+    ]),
+  ]);
 }
 
 // ─── Filtros ────────────────────────────────────────────────────────
@@ -134,6 +201,13 @@ function queueRow(o, today, earliest, latest) {
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
         el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
         isOverdue ? el('span', { class: 'ctrm-pill urgency-red', text: 'Drying vencido' }) : null,
+        o.week_bucket && o.week_bucket.is_overloaded
+          ? el('span', {
+              class: 'ctrm-pill urgency-red',
+              title: `Semana ${o.week_bucket.iso_week_key} con ${fmtKg(o.week_bucket.total_cherry_kg)} cereza (capacidad ${fmtKg(o.week_bucket.capacity_kg)})`,
+              text: 'Semana sobrecargada',
+            })
+          : null,
       ]),
       noLotOrPartialButton(o, allocated, pending),
     ]),

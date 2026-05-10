@@ -30,10 +30,12 @@ function getSupabase() {
  * Load process_lead_times once per cold start.
  * Returns:
  *   {
- *     Natural: { drying_days: 12, dried_to_green_divisor: 3.40 },
- *     Honey:   { drying_days:  8, dried_to_green_divisor: 1.50 },
- *     Lavado:  { drying_days:  8, dried_to_green_divisor: 1.34 },
+ *     Natural: { drying_days: 12, processing_days: 6, dried_to_green_divisor: 3.40 },
+ *     Honey:   { drying_days:  8, processing_days: 6, dried_to_green_divisor: 1.50 },
+ *     Lavado:  { drying_days:  8, processing_days: 6, dried_to_green_divisor: 1.34 },
  *   }
+ *
+ * processing_days defaultea a 6 si la migracion 0016 no esta aplicada.
  */
 let _processConfigCache = null;
 async function getProcessConfig() {
@@ -41,12 +43,32 @@ async function getProcessConfig() {
   const sb = getSupabase();
   const { data, error } = await sb
     .from('process_lead_times')
-    .select('process_type, drying_days, dried_to_green_divisor');
-  if (error) throw new Error(`Failed to load process_lead_times: ${error.message}`);
+    .select('process_type, drying_days, dried_to_green_divisor, processing_days');
+  if (error) {
+    // Si la columna no existe (pre-migracion 0016), reintenta sin ella.
+    if (/processing_days/.test(error.message)) {
+      const { data: data2, error: err2 } = await sb
+        .from('process_lead_times')
+        .select('process_type, drying_days, dried_to_green_divisor');
+      if (err2) throw new Error(`Failed to load process_lead_times: ${err2.message}`);
+      const map = {};
+      for (const row of data2) {
+        map[row.process_type] = {
+          drying_days:            Number(row.drying_days),
+          processing_days:        6,
+          dried_to_green_divisor: Number(row.dried_to_green_divisor),
+        };
+      }
+      _processConfigCache = map;
+      return map;
+    }
+    throw new Error(`Failed to load process_lead_times: ${error.message}`);
+  }
   const map = {};
   for (const row of data) {
     map[row.process_type] = {
       drying_days:            Number(row.drying_days),
+      processing_days:        row.processing_days != null ? Number(row.processing_days) : 6,
       dried_to_green_divisor: Number(row.dried_to_green_divisor),
     };
   }
@@ -59,6 +81,14 @@ async function getDryingDaysByProcess() {
   const cfg = await getProcessConfig();
   const out = {};
   for (const [k, v] of Object.entries(cfg)) out[k] = v.drying_days;
+  return out;
+}
+
+/** Returns { Natural: 6, Honey: 6, Lavado: 6 } (default fallback 6). */
+async function getProcessingDaysByProcess() {
+  const cfg = await getProcessConfig();
+  const out = {};
+  for (const [k, v] of Object.entries(cfg)) out[k] = v.processing_days != null ? v.processing_days : 6;
   return out;
 }
 
@@ -76,6 +106,7 @@ module.exports = {
   getSupabase,
   getProcessConfig,
   getDryingDaysByProcess,
+  getProcessingDaysByProcess,
   getDriedDivisorsByProcess,
   clearLeadCache,
 };

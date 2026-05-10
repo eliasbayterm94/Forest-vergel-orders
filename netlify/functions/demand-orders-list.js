@@ -1,7 +1,7 @@
 'use strict';
 
 const { requireAuth } = require('./_lib/auth');
-const { getSupabase, getDryingDaysByProcess } = require('./_lib/supabase');
+const { getSupabase, getDryingDaysByProcess, getProcessingDaysByProcess } = require('./_lib/supabase');
 const { greenToCherry } = require('./_lib/cherryConversion');
 const { latestDryingStartDate, urgencyOf } = require('./_lib/leadTime');
 const { bogotaToday, daysBetween } = require('./_lib/bogotaTime');
@@ -43,13 +43,15 @@ exports.handler = requireAuth(async (event) => {
   const { data, error } = await query;
   if (error) return serverErr('Failed to load demand orders', error.message);
 
-  let dryingDays;
-  try { dryingDays = await getDryingDaysByProcess(); }
-  catch (e) { return serverErr('Failed to load lead times', e.message); }
+  let dryingDays, processingDays;
+  try {
+    dryingDays = await getDryingDaysByProcess();
+    processingDays = await getProcessingDaysByProcess();
+  } catch (e) { return serverErr('Failed to load lead times', e.message); }
 
   const today = bogotaToday();
   const orders = (data || []).map((o) => {
-    const latest = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDays);
+    const latest = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDays, processingDays);
     const deliveryDelta = daysBetween(today, o.max_delivery_date);
     const deliveryUrgency = deliveryDelta < 0 ? 'past' : (deliveryDelta <= 7 ? 'red' : (deliveryDelta <= 14 ? 'yellow' : 'normal'));
     return {

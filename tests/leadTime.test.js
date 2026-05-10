@@ -6,8 +6,28 @@ const { latestDryingStartDate, urgencyOf } = require('../netlify/functions/_lib/
 
 const LEAD = { Natural: 12, Honey: 8, Lavado: 8 };
 
-test('Natural: 12 days back from delivery', () => {
+test('Natural: 12 days back from delivery (no processing)', () => {
   assert.equal(latestDryingStartDate('2026-06-01', 'Natural', LEAD), '2026-05-20');
+});
+
+test('Natural: 12 drying + 6 processing = 18 days back', () => {
+  const PROC = { Natural: 6, Honey: 6, Lavado: 6 };
+  assert.equal(latestDryingStartDate('2026-06-01', 'Natural', LEAD, PROC), '2026-05-14');
+});
+
+test('Honey: 8 drying + 6 processing = 14 days back', () => {
+  const PROC = { Natural: 6, Honey: 6, Lavado: 6 };
+  assert.equal(latestDryingStartDate('2026-06-01', 'Honey', LEAD, PROC), '2026-05-18');
+});
+
+test('processing_days zero in map = legacy behavior', () => {
+  const PROC = { Natural: 0 };
+  assert.equal(latestDryingStartDate('2026-06-01', 'Natural', LEAD, PROC), '2026-05-20');
+});
+
+test('throws on invalid (negative) processing_days', () => {
+  const PROC = { Natural: -1 };
+  assert.throws(() => latestDryingStartDate('2026-06-01', 'Natural', LEAD, PROC));
 });
 
 test('Honey: 8 days back', () => {

@@ -11,15 +11,16 @@
 'use strict';
 
 const { schedule } = require('@netlify/functions');
-const { getSupabase, getDryingDaysByProcess } = require('./_lib/supabase');
+const { getSupabase, getDryingDaysByProcess, getProcessingDaysByProcess } = require('./_lib/supabase');
 const { composeWeeklyDigest } = require('./_lib/digest');
 const { dispatch } = require('./_lib/notifications');
 
 const handler = async () => {
   try {
     const sb = getSupabase();
-    const dryingDaysByProcess = await getDryingDaysByProcess();
-    const { subject, text, html, summary } = await composeWeeklyDigest({ sb, dryingDaysByProcess });
+    const dryingDaysByProcess     = await getDryingDaysByProcess();
+    const processingDaysByProcess = await getProcessingDaysByProcess();
+    const { subject, text, html, summary } = await composeWeeklyDigest({ sb, dryingDaysByProcess, processingDaysByProcess });
     const result = await dispatch({ event_type: 'weekly_digest', subject, text, html });
     return {
       statusCode: 200,

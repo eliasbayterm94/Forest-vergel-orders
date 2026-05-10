@@ -21,7 +21,7 @@ const { latestDryingStartDate, urgencyOf } = require('./leadTime');
 const { isoWeekOf, isoWeekKey, isoWeekStart, isoWeekEnd } = require('./isoWeek');
 const { bogotaToday, daysBetween, addDays } = require('./bogotaTime');
 
-async function composeWeeklyDigest({ sb, dryingDaysByProcess, todayYmd = bogotaToday() }) {
+async function composeWeeklyDigest({ sb, dryingDaysByProcess, processingDaysByProcess = null, todayYmd = bogotaToday() }) {
   // --- Load data ---
   const { data: orders, error: oErr } = await sb
     .from('demand_orders')
@@ -45,7 +45,7 @@ async function composeWeeklyDigest({ sb, dryingDaysByProcess, todayYmd = bogotaT
   // --- Enrich orders with derived fields ---
   const ordersEnriched = (orders || []).map((o) => {
     const ref = (o.coffee_references && o.coffee_references.name) || '—';
-    const latest = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDaysByProcess);
+    const latest = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDaysByProcess, processingDaysByProcess);
     const deliveryDelta = daysBetween(todayYmd, o.max_delivery_date);
     const deliveryUrgency = deliveryDelta < 0 ? 'past' : (deliveryDelta <= 7 ? 'red' : (deliveryDelta <= 14 ? 'yellow' : 'normal'));
     return {

@@ -28,10 +28,17 @@ const { latestDryingStartDate, urgencyOf } = require('./leadTime');
 const { isoWeekOf, isoWeekStart, isoWeekEnd, isoWeekKey } = require('./isoWeek');
 const { bogotaToday, daysBetween } = require('./bogotaTime');
 
+// Limite operativo de la planta para procesamiento de cereza por semana.
+// Si la suma de pedidos + lots activos en una semana ISO supera esto,
+// la semana queda "sobrecargada" y la UI lo marca en rojo.
+const DEFAULT_WEEKLY_CHERRY_CAPACITY_KG = 60000;
+
 function computeCapacity({
   orders = [],
   activeLots = [],
   dryingDaysByProcess,
+  processingDaysByProcess = null,
+  weeklyCherryCapacityKg = DEFAULT_WEEKLY_CHERRY_CAPACITY_KG,
   todayYmd = bogotaToday(),
 }) {
   if (!dryingDaysByProcess) {
@@ -41,7 +48,7 @@ function computeCapacity({
   const enrichedOrders = orders.map((o) => {
     const kgGreen = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
     const kgGreenRequired = Number(o.kg_green_required ?? 0);
-    const latestStart = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDaysByProcess);
+    const latestStart = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDaysByProcess, processingDaysByProcess);
     return {
       id: o.id,
       order_code: o.order_code,
@@ -146,10 +153,28 @@ function computeCapacity({
     }
   }
 
+  // Enriquecer cada bucket con totales y semaforo respecto a la
+  // capacidad operativa semanal de cereza.
+  for (const b of buckets.values()) {
+    const totalCherry = Number(b.selected_orders_kg_cherry || 0)
+                      + Number(b.active_queue_kg_cherry || 0);
+    b.total_cherry_kg     = round2(totalCherry);
+    b.capacity_kg         = weeklyCherryCapacityKg;
+    b.capacity_pct        = weeklyCherryCapacityKg > 0
+      ? round2((totalCherry / weeklyCherryCapacityKg) * 100) : null;
+    b.is_overloaded       = totalCherry > weeklyCherryCapacityKg + 0.01;
+    b.overloaded_by_kg    = b.is_overloaded ? round2(totalCherry - weeklyCherryCapacityKg) : 0;
+  }
+
   const weekly_load = Array.from(buckets.values())
     .sort((a, b) => a.week_start_date.localeCompare(b.week_start_date));
 
-  return { orders: enrichedOrders, aggregate, weekly_load };
+  return {
+    orders: enrichedOrders,
+    aggregate,
+    weekly_load,
+    weekly_cherry_capacity_kg: weeklyCherryCapacityKg,
+  };
 }
 
 function sum(arr) { return arr.reduce((a, b) => a + Number(b || 0), 0); }
