@@ -83,6 +83,7 @@ export const api = {
 
   capacity: (payload) => request('POST', '/api/capacity-calculate', { body: payload }),
   processLeadTimes: () => request('GET', '/api/process-lead-times-list'),
+  search: (q, limit) => request('GET', '/api/search', { query: { q, limit } }),
 
   shipmentsList:   ()        => request('GET',  '/api/shipments-list'),
   shipmentsCreate: (payload) => request('POST', '/api/shipments-create', { body: payload }),

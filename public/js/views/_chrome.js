@@ -7,6 +7,7 @@ import { navigate, currentPath, setSession } from '../router.js';
 import { api } from '../api.js';
 import { toast } from '../ui/toast.js';
 import { confirmModal } from '../ui/modal.js';
+import { topbarSearch } from '../ui/topbar-search.js';
 
 // ─── Inline SVG icons (Lucide-style strokes) ──────────────────────────
 const ICONS = {
@@ -167,6 +168,8 @@ export function chrome(content) {
       el('div', { class: 'ctrm-topbar-logo' }, ['F']),
       el('span', { class: 'topbar-brand-title' }, ['Forest ↔ Vergel']),
     ]),
+
+    topbarSearch(),
 
     el('div', { class: 'topbar-status' }, [
       el('span', { class: 'topbar-status-dot' }),
