@@ -41,7 +41,7 @@ BEGIN
     INTO v_other_alloc
     FROM lot_order_assignments
     WHERE production_lot_id = NEW.production_lot_id
-      AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
 
   IF v_other_alloc + NEW.kg_green_allocated > v_lot_capacity + 0.01 THEN
     RAISE EXCEPTION
