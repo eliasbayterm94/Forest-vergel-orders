@@ -26,6 +26,10 @@ exports.handler = requireAuth(async (event) => {
     notes, created_by, created_at, updated_at,
     coffee_references ( id, name ),
     production_lot_varieties ( coffee_varieties ( id, name ) ),
+    lot_partials (
+      id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield,
+      completed_at, notes, created_at
+    ),
     lot_order_assignments (
       id, demand_order_id, kg_green_allocated,
       demand_orders ( id, order_code, status, max_delivery_date )
@@ -46,6 +50,18 @@ exports.handler = requireAuth(async (event) => {
     ...l,
     reference_name: l.coffee_references && l.coffee_references.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
+    partials: (l.lot_partials || [])
+      .map((p) => ({
+        id: p.id,
+        parcial_letter: p.parcial_letter,
+        kg_dried: Number(p.kg_dried),
+        factor_rendimiento: Number(p.factor_rendimiento),
+        kg_green_yield: Number(p.kg_green_yield),
+        completed_at: p.completed_at,
+        notes: p.notes,
+        created_at: p.created_at,
+      }))
+      .sort((a, b) => a.parcial_letter.localeCompare(b.parcial_letter)),
     assignments: (l.lot_order_assignments || []).map((a) => ({
       id: a.id,
       demand_order_id: a.demand_order_id,
@@ -54,6 +70,7 @@ exports.handler = requireAuth(async (event) => {
     })),
     coffee_references: undefined,
     production_lot_varieties: undefined,
+    lot_partials: undefined,
     lot_order_assignments: undefined,
   }));
 

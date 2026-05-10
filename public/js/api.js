@@ -73,6 +73,9 @@ export const api = {
   lotUpdate:       (payload) => request('POST', '/api/production-lots-update', { body: payload }),
   lotUpdateStatus: (payload) => request('POST', '/api/production-lots-update-status', { body: payload }),
 
+  lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
+  lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),
+
   assignmentsCreate: (payload) => request('POST', '/api/lot-assignments-create', { body: payload }),
   assignmentsUpdate: (payload) => request('POST', '/api/lot-assignments-update', { body: payload }),
   assignmentsDelete: (payload) => request('POST', '/api/lot-assignments-delete', { body: payload }),

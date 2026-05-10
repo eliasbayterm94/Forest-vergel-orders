@@ -72,27 +72,62 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     if (!Number.isFinite(n) || n <= 0) return badReq('factor_rendimiento must be > 0', 'INVALID_FACTOR');
     update.factor_rendimiento = n;
   }
-  if (kg_green_actual != null) {
-    const n = Number(kg_green_actual);
-    if (!Number.isFinite(n) || n < 0) return badReq('kg_green_actual must be >= 0', 'INVALID_KG');
-    update.kg_green_actual = n;
-  } else {
-    // Auto-compute kg_green_actual:
-    //   1) factor + dried → per-lot formula (preferred)
-    //   2) dried only      → per-process divisor (legacy fallback)
-    const effectiveDried  = kg_dried_output    != null ? Number(kg_dried_output)    : lot.kg_dried_output;
-    const effectiveFactor = factor_rendimiento != null ? Number(factor_rendimiento) : lot.factor_rendimiento;
 
-    if (effectiveDried != null && Number.isFinite(Number(effectiveDried)) && Number(effectiveDried) >= 0) {
-      try {
-        if (effectiveFactor != null && Number.isFinite(Number(effectiveFactor)) && Number(effectiveFactor) > 0) {
-          update.kg_green_actual = factorYield(Number(effectiveDried), Number(effectiveFactor));
-        } else {
-          const divisors = await getDriedDivisorsByProcess();
-          update.kg_green_actual = driedToGreen(Number(effectiveDried), lot.process_type, divisors);
+  // When closing the bache (Drying → Ready or Drying → Resting → Ready) we
+  // prefer the sum of registered partials over any provided dried/factor.
+  // The parcial-by-parcial yields are authoritative once they exist.
+  let usedPartials = false;
+  if (targetStatus === LOT_STATUS.Ready) {
+    const { data: partials, error: pErr } = await sb
+      .from('lot_partials')
+      .select('kg_dried, factor_rendimiento, kg_green_yield')
+      .eq('production_lot_id', lot_id);
+    if (pErr) return serverErr('Partials lookup failed', pErr.message);
+
+    if ((partials || []).length > 0) {
+      usedPartials = true;
+      let sumDried = 0;
+      let sumGreen = 0;
+      let weightedFactorNum = 0;  // Σ(factor_i · kg_dried_i)
+      for (const p of partials) {
+        const d = Number(p.kg_dried);
+        const f = Number(p.factor_rendimiento);
+        const g = Number(p.kg_green_yield);
+        sumDried += d;
+        sumGreen += g;
+        weightedFactorNum += f * d;
+      }
+      update.kg_dried_output    = Math.round(sumDried * 100) / 100;
+      update.kg_green_actual    = Math.round(sumGreen * 100) / 100;
+      update.factor_rendimiento = sumDried > 0
+        ? Math.round((weightedFactorNum / sumDried) * 10000) / 10000
+        : null;
+    }
+  }
+
+  if (!usedPartials) {
+    if (kg_green_actual != null) {
+      const n = Number(kg_green_actual);
+      if (!Number.isFinite(n) || n < 0) return badReq('kg_green_actual must be >= 0', 'INVALID_KG');
+      update.kg_green_actual = n;
+    } else {
+      // Auto-compute kg_green_actual:
+      //   1) factor + dried → per-lot formula (preferred)
+      //   2) dried only      → per-process divisor (legacy fallback)
+      const effectiveDried  = kg_dried_output    != null ? Number(kg_dried_output)    : lot.kg_dried_output;
+      const effectiveFactor = factor_rendimiento != null ? Number(factor_rendimiento) : lot.factor_rendimiento;
+
+      if (effectiveDried != null && Number.isFinite(Number(effectiveDried)) && Number(effectiveDried) >= 0) {
+        try {
+          if (effectiveFactor != null && Number.isFinite(Number(effectiveFactor)) && Number(effectiveFactor) > 0) {
+            update.kg_green_actual = factorYield(Number(effectiveDried), Number(effectiveFactor));
+          } else {
+            const divisors = await getDriedDivisorsByProcess();
+            update.kg_green_actual = driedToGreen(Number(effectiveDried), lot.process_type, divisors);
+          }
+        } catch (e) {
+          return serverErr('Yield calc failed', e.message);
         }
-      } catch (e) {
-        return serverErr('Yield calc failed', e.message);
       }
     }
   }

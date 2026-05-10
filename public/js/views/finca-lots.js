@@ -114,6 +114,10 @@ export async function fincaLotsView() {
     const overflow  = totalAllocated - capacity;       // positive when over-allocated
     const isOverAllocated = overflow > 0.01;
     const stageLabel = stageLabelOf(l);
+    const partials = l.partials || [];
+    const isDrying = l.status === 'Drying';
+    const closeBacheLabel = (next === 'Ready' && partials.length > 0)
+      ? 'Cerrar bache' : (next ? `→ ${statusLabel(next)}` : null);
 
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
@@ -130,7 +134,7 @@ export async function fincaLotsView() {
           next ? el('button', {
             class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
             onClick: () => advanceStatus(l, next),
-          }, [`→ ${statusLabel(next)}`]) : null,
+          }, [closeBacheLabel]) : null,
           // Ready lots get a "Despachar" shortcut that jumps to the Despachos view.
           (l.status === 'Ready') ? el('button', {
             class: 'ctrm-btn ctrm-btn-yellow ctrm-btn-sm',
@@ -185,6 +189,9 @@ export async function fincaLotsView() {
           ])
         : null,
 
+      // Parciales (visibles cuando esta en Drying o cuando ya hay alguno)
+      (isDrying || partials.length > 0) ? partialsSection(l, partials, isDrying) : null,
+
       (l.assignments || []).length > 0
         ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
             el('p', { class: 'eyebrow mb-1.5', text: 'Asignaciones' }),
@@ -192,6 +199,145 @@ export async function fincaLotsView() {
           ])
         : null,
     ]);
+  }
+
+  function partialsSection(lot, partials, canEdit) {
+    const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+    const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+    const usedLetters = new Set(partials.map((p) => p.parcial_letter));
+    const fullySplit = usedLetters.size >= 6;
+
+    const rows = partials.map((p) => el('div', {
+      class: 'flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-sand bg-cream',
+    }, [
+      el('div', { class: 'flex items-center gap-2 min-w-0' }, [
+        el('span', { class: 'ctrm-pill dark', text: `Parcial ${p.parcial_letter}` }),
+        el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
+          `${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → `,
+          el('strong', { class: 'text-navy', text: fmtKg(p.kg_green_yield) }),
+          ' verde',
+        ]),
+      ]),
+      canEdit ? el('button', {
+        class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-sm text-crit',
+        title: 'Quitar parcial',
+        onClick: () => removePartial(lot, p),
+      }, ['×']) : null,
+    ]));
+
+    return el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
+      el('div', { class: 'flex items-center justify-between mb-1.5' }, [
+        el('p', { class: 'eyebrow' }, [
+          'Parciales',
+          partials.length > 0
+            ? el('span', { class: 'text-ink-500', text: ` · ${partials.length}/6` })
+            : null,
+        ]),
+        canEdit ? el('button', {
+          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+          disabled: fullySplit ? 'true' : null,
+          onClick: () => addPartial(lot),
+        }, [fullySplit ? 'Sin letras disponibles' : '+ Agregar parcial']) : null,
+      ]),
+      partials.length > 0
+        ? el('div', { class: 'space-y-1' }, rows)
+        : el('p', { class: 'ctrm-hint', text: 'Aún no hay parciales. Registra cada uno al sacarlo del secadero.' }),
+      partials.length > 0 ? el('div', {
+        class: 'flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-ink-500 mt-2',
+      }, [
+        meta('Σ Seco',  fmtKg(sumDried)),
+        meta('Σ Verde', fmtKg(sumGreen)),
+      ]) : null,
+    ]);
+  }
+
+  async function addPartial(lot) {
+    const used = new Set((lot.partials || []).map((p) => p.parcial_letter));
+    const available = ['A','B','C','D','E','F'].filter((x) => !used.has(x));
+    if (available.length === 0) return;
+
+    return openModal(({ close }) => {
+      const letterSel = el('select', { class: 'ctrm-select' },
+        available.map((L) => el('option', { value: L }, [`Parcial ${L}`])));
+      const driedInput = el('input', {
+        type: 'number', step: '0.01', min: '0', placeholder: 'Ej: 250',
+        class: 'ctrm-input mono',
+      });
+      const factorInput = el('input', {
+        type: 'number', step: '0.01', min: '0.01', placeholder: 'Ej: 145',
+        class: 'ctrm-input mono',
+      });
+      const greenHint = el('p', { class: 'ctrm-hint', text: 'Verde = (peso seco ÷ factor) × 70' });
+      const recompute = () => {
+        const d = Number(driedInput.value || 0);
+        const f = Number(factorInput.value || 0);
+        if (d > 0 && f > 0) {
+          greenHint.textContent = `Verde estimado: ${fmtKg((d / f) * 70)}`;
+        } else {
+          greenHint.textContent = 'Verde = (peso seco ÷ factor) × 70';
+        }
+      };
+      driedInput.addEventListener('input', recompute);
+      factorInput.addEventListener('input', recompute);
+
+      const notesInput = el('textarea', { rows: '2', class: 'ctrm-textarea' });
+
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-700' }, [
+          `Bache `, el('strong', { text: lot.bache_code || lot.lot_code }),
+          ' · ', el('span', { text: lot.reference_name || '' }),
+        ]),
+        labelled('Letra', letterSel),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Peso seco (kg)' }),
+          driedInput,
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Factor de rendimiento' }),
+          factorInput,
+          greenHint,
+        ]),
+        labelled('Notas (opcional)', notesInput),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: async () => {
+              const d = Number(driedInput.value);
+              const f = Number(factorInput.value);
+              if (!(d > 0)) { toast('Peso seco inválido', 'warning'); return; }
+              if (!(f > 0)) { toast('Factor inválido', 'warning'); return; }
+              try {
+                await api.lotPartialCreate({
+                  production_lot_id: lot.id,
+                  parcial_letter: letterSel.value,
+                  kg_dried: d,
+                  factor_rendimiento: f,
+                  notes: notesInput.value || null,
+                });
+                toast(`Parcial ${letterSel.value} registrado`, 'success');
+                close({ ok: true });
+                await reloadLots();
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, ['Registrar parcial']),
+        ]),
+      ]);
+    }, { title: 'Registrar parcial' });
+  }
+
+  async function removePartial(lot, partial) {
+    const ok = await confirmModal(
+      `Quitar parcial ${partial.parcial_letter} (${fmtKg(partial.kg_dried)} seco) del bache ${lot.bache_code || lot.lot_code}?`,
+      { title: 'Quitar parcial', confirmText: 'Quitar', danger: true },
+    );
+    if (!ok) return;
+    try {
+      await api.lotPartialDelete({ partial_id: partial.id });
+      toast(`Parcial ${partial.parcial_letter} eliminado`, 'success');
+      await reloadLots();
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   // Single assignment row — shows kg + % of lot + Editar/Quitar.
@@ -311,7 +457,21 @@ export async function fincaLotsView() {
 
   async function advanceStatus(lot, target) {
     let yieldValues = null;
-    if (target === 'Ready' || target === 'Delivered') {
+    const partials = lot.partials || [];
+    const hasPartials = partials.length > 0;
+
+    // Drying → Ready con parciales: el servidor suma los rendimientos.
+    // No se pide peso seco ni factor; solo confirmamos.
+    if (target === 'Ready' && hasPartials) {
+      const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+      const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+      const ok = await confirmModal(
+        `Cerrar bache ${lot.bache_code || lot.lot_code} con ${partials.length} parcial(es)? ` +
+        `Total: ${fmtKg(sumDried)} seco · ${fmtKg(sumGreen)} verde.`,
+        { title: 'Cerrar bache' },
+      );
+      if (!ok) return;
+    } else if (target === 'Ready' || target === 'Delivered') {
       yieldValues = await promptYield(lot, target);
       if (yieldValues === undefined) return;
     } else {
