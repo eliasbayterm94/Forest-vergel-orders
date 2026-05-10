@@ -12,6 +12,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
+import { renderFilterButton } from '../ui/filters-sheet.js';
 
 const FILTERS = [
   { key: 'all',         label: 'Todos' },
@@ -74,13 +75,49 @@ export async function fincaColaView() {
   );
 
   let currentFilter = 'all';
+  let sheetValues = {};   // { client_name?: [...], process_type?: [...] }
 
-  const filterChips = el('div', { class: 'flex flex-wrap gap-2 mb-4' });
+  // Filtros del sheet: cliente + proceso. Las opciones se derivan de
+  // los pedidos in-flight cargados.
+  const sheetFilters = [
+    { key: 'client_name', label: 'Cliente', multi: true,
+      options: [...new Set(inFlight.map((o) => o.client_name).filter(Boolean))].sort(),
+      getter: (o) => o.client_name || '' },
+    { key: 'process_type', label: 'Proceso', multi: true,
+      options: ['Natural', 'Honey', 'Lavado'],
+      getter: (o) => o.process_type || '' },
+  ];
+
+  const filterRow = el('div', { class: 'flex items-center gap-2 flex-wrap mb-4' });
+  const filterChips = el('div', { class: 'flex flex-wrap gap-2' });
+  const sheetBtnHolder = el('div', { class: 'flex items-center gap-2 flex-wrap' });
+  filterRow.append(sheetBtnHolder, filterChips);
+
+  function passesSheet(o) {
+    for (const f of sheetFilters) {
+      const v = sheetValues[f.key];
+      if (v == null || v.length === 0) continue;
+      if (!v.includes(f.getter(o))) return false;
+    }
+    return true;
+  }
+
   const list = el('div', { class: 'space-y-2' });
   function redraw() {
+    // Boton de filtros (cliente + proceso)
+    sheetBtnHolder.innerHTML = '';
+    const fb = renderFilterButton({
+      filters: sheetFilters,
+      values: sheetValues,
+      onChange: (v) => { sheetValues = v; redraw(); },
+    });
+    sheetBtnHolder.append(fb.el);
+
+    // Chips de status (todos / sin lote / parcial / vencidos)
     filterChips.innerHTML = '';
+    const baseFilteredBySheet = inFlight.filter(passesSheet);
     for (const f of FILTERS) {
-      const count = inFlight.filter((o) => matches(o, f.key, today)).length;
+      const count = baseFilteredBySheet.filter((o) => matches(o, f.key, today)).length;
       filterChips.append(el('button', {
         type: 'button',
         class: currentFilter === f.key
@@ -90,7 +127,7 @@ export async function fincaColaView() {
       }, [`${f.label}${count > 0 ? ` · ${count}` : ''}`]));
     }
     list.innerHTML = '';
-    const shown = inFlight.filter((o) => matches(o, currentFilter, today));
+    const shown = baseFilteredBySheet.filter((o) => matches(o, currentFilter, today));
     if (shown.length === 0) {
       list.append(emptyStateCard({
         title: currentFilter === 'all' ? 'Sin pedidos en curso' : 'No hay pedidos en este filtro',
@@ -111,7 +148,7 @@ export async function fincaColaView() {
   return chrome(el('div', {}, [
     pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
     weeklyLoadPanel,
-    filterChips,
+    filterRow,
     timelineLegend(),
     list,
   ]));

@@ -1,11 +1,12 @@
 // Finca monitoring — alertas operativas + pipeline visual.
 // Pedidos sin lote, lotes con fermentation/drying excedidos, distribucion
 // por etapa.
-import { el } from '../ui/el.js';
+import { el, clear } from '../ui/el.js';
 import { fmtKg, fmtDate, statusLabel, statusPillKind } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
+import { renderFilterButton } from '../ui/filters-sheet.js';
 
 const STAGE_ORDER = ['InFermentation', 'Drying', 'Ready', 'Delivered'];
 
@@ -82,44 +83,87 @@ export async function fincaMonitoreoView() {
   const maxCount = Math.max(1, ...STAGE_ORDER.map((s) => pipeline[s].count));
   const maxKg    = Math.max(1, ...STAGE_ORDER.map((s) => pipeline[s].kg));
 
-  // ── KPI row ──────────────────────────────────────────────────────
-  const totalAlerts = ordersSinLote.length + fermentationOverrun.length + dryingOverrun.length;
+  // ── Filtros (cliente solo aplica a pedidos; proceso a ambos) ──────
+  let sheetValues = {};
+  const sheetFilters = [
+    { key: 'client_name', label: 'Cliente (pedidos)', multi: true,
+      options: [...new Set(ordersSinLote.map((o) => o.client_name).filter(Boolean))].sort(),
+      getter: (o) => o.client_name || '' },
+    { key: 'process_type', label: 'Proceso', multi: true,
+      options: ['Natural', 'Honey', 'Lavado'],
+      getter: (o) => o.process_type || '' },
+  ];
 
-  return chrome(el('div', {}, [
-    pageTitle('Monitoreo', `Hoy: ${today}`),
+  function passesOrder(o) {
+    for (const f of sheetFilters) {
+      const v = sheetValues[f.key];
+      if (!v || v.length === 0) continue;
+      if (!v.includes(f.getter(o))) return false;
+    }
+    return true;
+  }
+  function passesLot(l) {
+    // Lotes no tienen client_name; solo aplica process_type.
+    const v = sheetValues.process_type;
+    if (!v || v.length === 0) return true;
+    return v.includes(l.process_type);
+  }
 
-    statRow([
-      stat('Alertas totales', totalAlerts, totalAlerts === 0 ? 'Sin pendientes' : 'Necesitan atencion',
-        null, { kind: totalAlerts > 0 ? 'warn' : 'ok' }),
-      stat('Pedidos sin lote', ordersSinLote.length, 'kg verde por asignar',
-        () => navigate('/finca/lots'),
-        { kind: ordersSinLote.length > 0 ? 'warn' : 'ok' }),
-      stat(`Fermentacion >${FERMENTATION_OVERRUN_DAYS}d`, fermentationOverrun.length, 'Lotes vencidos',
-        null, { kind: fermentationOverrun.length > 0 ? 'crit' : 'ok' }),
-      stat('Drying vencido', dryingOverrun.length, 'Excede dias esperados',
-        null, { kind: dryingOverrun.length > 0 ? 'crit' : 'ok' }),
-    ]),
+  // ── KPI row + secciones — todo en un wrapper que se redibuja ──────
+  const root = el('div', {});
+  function redraw() {
+    const ordersSh    = ordersSinLote.filter(passesOrder);
+    const fermSh      = fermentationOverrun.filter(passesLot);
+    const dryingSh    = dryingOverrun.filter(passesLot);
+    const totalAlerts = ordersSh.length + fermSh.length + dryingSh.length;
 
-    section('Pipeline de produccion', pipelinePanel(pipeline, maxCount, maxKg)),
+    const fb = renderFilterButton({
+      filters: sheetFilters,
+      values: sheetValues,
+      onChange: (v) => { sheetValues = v; redraw(); },
+    });
 
-    section('Pedidos sin lote',
-      ordersSinLote.length === 0
-        ? emptyText('Todos los pedidos en curso tienen lote asignado.')
-        : ordersSinLote.map(orderSinLoteRow),
-    ),
+    clear(root);
+    root.append(
+      pageTitle('Monitoreo', `Hoy: ${today}`),
 
-    section('Fermentacion vencida',
-      fermentationOverrun.length === 0
-        ? emptyText('Sin lotes en fermentacion >' + FERMENTATION_OVERRUN_DAYS + 'd.')
-        : fermentationOverrun.map(fermentationRow),
-    ),
+      el('div', { class: 'mb-4' }, [fb.el]),
 
-    section('Drying vencido',
-      dryingOverrun.length === 0
-        ? emptyText('Sin lotes con drying excedido.')
-        : dryingOverrun.map(dryingRow),
-    ),
-  ]));
+      statRow([
+        stat('Alertas totales', totalAlerts, totalAlerts === 0 ? 'Sin pendientes' : 'Necesitan atencion',
+          null, { kind: totalAlerts > 0 ? 'warn' : 'ok' }),
+        stat('Pedidos sin lote', ordersSh.length, 'kg verde por asignar',
+          () => navigate('/finca/lots'),
+          { kind: ordersSh.length > 0 ? 'warn' : 'ok' }),
+        stat(`Fermentacion >${FERMENTATION_OVERRUN_DAYS}d`, fermSh.length, 'Lotes vencidos',
+          null, { kind: fermSh.length > 0 ? 'crit' : 'ok' }),
+        stat('Drying vencido', dryingSh.length, 'Excede dias esperados',
+          null, { kind: dryingSh.length > 0 ? 'crit' : 'ok' }),
+      ]),
+
+      section('Pipeline de produccion', pipelinePanel(pipeline, maxCount, maxKg)),
+
+      section('Pedidos sin lote',
+        ordersSh.length === 0
+          ? emptyText('Todos los pedidos en curso tienen lote asignado.')
+          : ordersSh.map(orderSinLoteRow),
+      ),
+
+      section('Fermentacion vencida',
+        fermSh.length === 0
+          ? emptyText('Sin lotes en fermentacion >' + FERMENTATION_OVERRUN_DAYS + 'd.')
+          : fermSh.map(fermentationRow),
+      ),
+
+      section('Drying vencido',
+        dryingSh.length === 0
+          ? emptyText('Sin lotes con drying excedido.')
+          : dryingSh.map(dryingRow),
+      ),
+    );
+  }
+  redraw();
+  return chrome(root);
 }
 
 // ── Pipeline panel ──────────────────────────────────────────────────
