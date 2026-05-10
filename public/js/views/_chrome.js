@@ -48,6 +48,7 @@ const FINCA_NAV = [
   { path: '/finca/inbox',     label: 'Pedidos entrantes', icon: 'inbox' },
   { path: '/finca/lots',      label: 'Producción',        icon: 'box' },
   { path: '/finca/despachos', label: 'Despachos',         icon: 'truck' },
+  { path: '/finca/monitoreo', label: 'Monitoreo',         icon: 'chart' },
   { path: '/calendar',        label: 'Calendario',        icon: 'calendar' },
   { path: '/reports',         label: 'Reportes',          icon: 'chart' },
 ];
