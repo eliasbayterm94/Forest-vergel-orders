@@ -14,23 +14,23 @@ export async function forestReferencesView() {
   function render() {
     list.innerHTML = '';
     if (refs.length === 0) {
-      list.append(el('p', { class: 'text-sm text-slate-400 italic px-1', text: 'Aún no hay referencias. Crea la primera con el botón de arriba.' }));
+      list.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Aún no hay referencias. Crea la primera con el botón de arriba.' }));
       return;
     }
     for (const r of refs) {
-      list.append(el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
-        el('div', { class: 'flex items-center justify-between gap-2 mb-1' }, [
+      list.append(el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+        el('div', { class: 'flex items-center justify-between gap-2 mb-2' }, [
           el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-            el('span', { class: 'font-medium text-slate-900 truncate', text: r.name }),
-            el('span', { class: 'text-xs text-slate-500', text: r.active ? 'activa' : 'inactiva' }),
+            el('span', { class: 'font-display font-semibold text-navy text-[14px] truncate', text: r.name }),
+            el('span', { class: `ctrm-pill ${r.active ? 'ok' : 'muted'}`, text: r.active ? 'activa' : 'inactiva' }),
           ]),
           el('button', {
-            class: 'text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700',
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
             onClick: () => editRef(r),
           }, ['Editar']),
         ]),
-        el('div', { class: 'flex flex-wrap gap-1 text-xs' }, (r.varieties || []).map((v) =>
-          el('span', { class: 'px-2 py-0.5 rounded-full bg-forest-light/15 text-forest-dark', text: v.name }),
+        el('div', { class: 'flex flex-wrap gap-1' }, (r.varieties || []).map((v) =>
+          el('span', { class: 'ctrm-pill dark', text: v.name }),
         )),
       ]));
     }
@@ -58,7 +58,7 @@ export async function forestReferencesView() {
   }
 
   const newBtn = el('button', {
-    class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+    class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
     onClick: () => editRef(null),
   }, ['+ Nueva referencia']);
 
@@ -66,7 +66,7 @@ export async function forestReferencesView() {
 
   return chrome(el('div', {}, [
     pageTitle('Referencias', 'Catálogo maestro y variedades vinculadas'),
-    el('div', { class: 'mb-3 flex justify-end' }, [newBtn]),
+    el('div', { class: 'mb-4 flex justify-end' }, [newBtn]),
     list,
   ]));
 }
@@ -75,7 +75,7 @@ function openReferenceModal({ initial, allVarieties }) {
   return openModal(({ close }) => {
     const nameInput = el('input', {
       type: 'text', value: initial?.name || '',
-      class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+      class: 'ctrm-input',
     });
     let chosen = initial?.varieties ? [...initial.varieties] : [];
     const vc = createMultiCombobox({
@@ -86,20 +86,20 @@ function openReferenceModal({ initial, allVarieties }) {
     });
     const notesInput = el('textarea', {
       rows: '2', placeholder: 'Notas (opcional)',
-      class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+      class: 'ctrm-textarea',
       value: initial?.notes || '',
     });
     return el('div', { class: 'space-y-3' }, [
-      el('label', { class: 'block text-sm font-medium text-slate-700' }, ['Nombre']),
+      el('label', { class: 'ctrm-label' }, ['Nombre']),
       nameInput,
-      el('label', { class: 'block text-sm font-medium text-slate-700 mt-2' }, ['Variedades']),
+      el('label', { class: 'ctrm-label mt-2' }, ['Variedades']),
       vc.el,
-      el('label', { class: 'block text-sm font-medium text-slate-700 mt-2' }, ['Notas']),
+      el('label', { class: 'ctrm-label mt-2' }, ['Notas']),
       notesInput,
       el('div', { class: 'flex justify-end gap-2 pt-2' }, [
-        el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         el('button', {
-          class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+          class: 'ctrm-btn ctrm-btn-primary',
           type: 'button',
           onClick: () => {
             const name = nameInput.value.trim();

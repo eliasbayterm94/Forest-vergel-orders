@@ -1,5 +1,5 @@
 import { el } from '../ui/el.js';
-import { fmtKg, fmtDate, statusLabel, URGENCY_LABEL } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
@@ -26,13 +26,13 @@ export async function forestDashboardView() {
     .filter((o) => o.delivery_urgency === 'red' || o.delivery_urgency === 'past' || o.drying_urgency === 'red' || o.drying_urgency === 'past');
 
   return chrome(el('div', {}, [
-    pageTitle('Tablero — Forest', `Hoy: ${today}`),
+    pageTitle('Tablero Forest', `Hoy: ${today}`),
 
     statRow([
-      stat('Pendientes',  buckets.pending.length,  'Esperando respuesta de finca'),
-      stat('En curso',    buckets.inFlight.length, 'Aceptados o en producción'),
-      stat('Listos en finca', readyLots.length,    'Lotes Ready para envío'),
-      stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO externo'),
+      stat('Pendientes',  buckets.pending.length,  'Esperando finca'),
+      stat('En curso',    buckets.inFlight.length, 'Aceptados / producción'),
+      stat('Listos',      readyLots.length,        'Lotes para envío', { kind: 'ok' }),
+      stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO', { kind: buckets.rejected.length + buckets.partial.length > 0 ? 'crit' : 'ok' }),
     ]),
 
     primaryCTA(),
@@ -64,75 +64,83 @@ export async function forestDashboardView() {
 }
 
 function statRow(items) {
-  return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4' }, items);
+  return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5' }, items);
 }
 
-function stat(label, value, hint) {
-  return el('div', { class: 'bg-white rounded-xl border border-slate-200 px-3 py-3' }, [
-    el('p', { class: 'text-xs text-slate-500', text: label }),
-    el('p', { class: 'text-2xl font-semibold text-slate-900', text: String(value) }),
-    el('p', { class: 'text-[11px] text-slate-400', text: hint }),
+function stat(label, value, hint, opts = {}) {
+  const valClass = opts.kind ? `stat-val ${opts.kind}` : 'stat-val';
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: label }),
+    el('p', { class: valClass, text: String(value) }),
+    el('p', { class: 'stat-sub', text: hint }),
   ]);
 }
 
 function primaryCTA() {
-  return el('div', { class: 'mb-4' }, [
+  return el('div', { class: 'mb-5' }, [
     el('button', {
-      class: 'w-full sm:w-auto px-5 py-3 rounded-lg bg-forest hover:bg-forest-dark text-white font-medium',
+      class: 'ctrm-btn ctrm-btn-yellow w-full sm:w-auto uppercase tracking-eyebrow text-[11px] py-3 px-6',
       onClick: () => navigate('/forest/demand'),
     }, ['+ Nuevo pedido']),
   ]);
 }
 
 function section(title, children) {
-  return el('section', { class: 'mb-5' }, [
-    el('h3', { class: 'text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2', text: title }),
+  return el('section', { class: 'mb-6' }, [
+    el('h3', { class: 'eyebrow mb-2', text: title }),
     el('div', { class: 'space-y-2' }, children),
   ]);
 }
 
 function emptyText(t) {
-  return el('p', { class: 'text-sm text-slate-400 italic px-1', text: t });
+  return el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: t });
 }
 
 export function orderRow(o) {
   const urg = pickUrgency(o);
-  return el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
-    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
-      el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-        el('span', { class: 'font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700', text: o.order_code }),
-        el('span', { class: 'font-medium text-slate-900 truncate', text: o.reference_name || '—' }),
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+      el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
+        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
+        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
       ]),
-      urg ? el('span', { class: `text-xs px-2 py-0.5 rounded urgency-${urg.kind}`, text: urg.label }) : null,
+      urg ? el('span', { class: `ctrm-pill urgency-${urg.kind}`, text: urg.label }) : null,
     ]),
-    el('div', { class: 'flex flex-wrap text-xs text-slate-600 gap-x-4 gap-y-1' }, [
-      el('span', {}, [`Estado: `, el('strong', { text: statusLabel(o.status) })]),
-      el('span', {}, [`Verde: `, el('strong', { text: fmtKg(o.kg_green_required) })]),
-      o.kg_green_accepted != null ? el('span', {}, [`Aceptado: `, el('strong', { text: fmtKg(o.kg_green_accepted) })]) : null,
-      el('span', {}, [`Cereza: `, el('strong', { text: fmtKg(o.kg_cherry_required) })]),
-      el('span', {}, [`Entrega: `, el('strong', { text: fmtDate(o.max_delivery_date) })]),
-      el('span', {}, [`Drying-start: `, el('strong', { text: fmtDate(o.latest_drying_start_date) })]),
-      el('span', {}, [`Proceso: `, el('strong', { text: o.process_type })]),
+    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+      meta('Verde', fmtKg(o.kg_green_required)),
+      o.kg_green_accepted != null ? meta('Aceptado', fmtKg(o.kg_green_accepted)) : null,
+      meta('Cereza', fmtKg(o.kg_cherry_required)),
+      meta('Entrega', fmtDate(o.max_delivery_date)),
+      meta('Drying-start', fmtDate(o.latest_drying_start_date)),
+      meta('Proceso', o.process_type),
     ]),
   ]);
 }
 
 function lotRow(l) {
-  return el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
-    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
-      el('div', { class: 'flex items-center gap-2' }, [
-        el('span', { class: 'font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700', text: l.lot_code }),
-        el('span', { class: 'font-medium text-slate-900', text: l.reference_name || '—' }),
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+        el('span', { class: 'ctrm-code', text: l.lot_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
+        el('span', { class: 'ctrm-pill ok', text: statusLabel(l.status) }),
       ]),
-      el('span', { class: 'text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800', text: statusLabel(l.status) }),
     ]),
-    el('div', { class: 'flex flex-wrap text-xs text-slate-600 gap-x-4 gap-y-1' }, [
-      el('span', {}, [`Cereza: `, el('strong', { text: fmtKg(l.kg_cherry_input) })]),
-      el('span', {}, [`Verde esperado: `, el('strong', { text: fmtKg(l.kg_green_expected) })]),
-      l.kg_green_actual != null ? el('span', {}, [`Verde real: `, el('strong', { text: fmtKg(l.kg_green_actual) })]) : null,
-      el('span', {}, [`Listo: `, el('strong', { text: fmtDate(l.ready_date) })]),
-      el('span', {}, [`Asignaciones: `, el('strong', { text: String((l.assignments || []).length) })]),
+    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+      meta('Cereza', fmtKg(l.kg_cherry_input)),
+      meta('Verde esperado', fmtKg(l.kg_green_expected)),
+      l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
+      meta('Listo', fmtDate(l.ready_date)),
+      meta('Asignaciones', String((l.assignments || []).length)),
     ]),
+  ]);
+}
+
+function meta(label, value) {
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { class: 'text-ink-700 font-mono', text: value }),
   ]);
 }
 

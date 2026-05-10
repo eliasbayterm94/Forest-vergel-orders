@@ -1,5 +1,5 @@
 // Promise-based modal helpers using native <dialog>.
-// openModal(buildBody) → resolves with whatever you call resolve(value) with.
+// CTRM-style header with eyebrow title.
 import { el } from './el.js';
 
 export function openModal(buildBody, { title = '', wide = false } = {}) {
@@ -16,10 +16,13 @@ export function openModal(buildBody, { title = '', wide = false } = {}) {
       resolve(val);
     };
 
-    const header = el('div', { class: 'flex items-center justify-between px-5 py-3 border-b border-slate-200' }, [
-      el('h2', { class: 'font-semibold text-slate-900', text: title || ' ' }),
+    const header = el('div', { class: 'flex items-center justify-between px-5 py-3 border-b border-sand bg-cream' }, [
+      el('h2', {
+        class: 'eyebrow text-navy',
+        text: title || ' ',
+      }),
       el('button', {
-        class: 'text-slate-500 hover:text-slate-800 px-2 py-1 -mr-2',
+        class: 'text-ink-500 hover:text-navy w-7 h-7 rounded-full flex items-center justify-center hover:bg-sand text-sm',
         type: 'button',
         onClick: () => close(null),
         'aria-label': 'Cerrar',
@@ -42,14 +45,14 @@ export function openModal(buildBody, { title = '', wide = false } = {}) {
 export function confirmModal(message, { title = 'Confirmar', confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false } = {}) {
   return openModal(({ close }) => {
     return el('div', {}, [
-      el('p', { class: 'text-slate-700 mb-4', text: message }),
+      el('p', { class: 'text-ink-700 mb-4 text-[13px] leading-relaxed', text: message }),
       el('div', { class: 'flex justify-end gap-2' }, [
         el('button', {
-          class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700',
+          class: 'ctrm-btn ctrm-btn-ghost',
           type: 'button', onClick: () => close(false),
         }, [cancelText]),
         el('button', {
-          class: `px-4 py-2 rounded-lg text-white ${danger ? 'bg-rose-700 hover:bg-rose-800' : 'bg-forest hover:bg-forest-dark'}`,
+          class: `ctrm-btn ${danger ? 'ctrm-btn-danger' : 'ctrm-btn-primary'}`,
           type: 'button', onClick: () => close(true),
         }, [confirmText]),
       ]),

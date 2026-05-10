@@ -12,7 +12,6 @@ const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
 const CHERRY_PER_GREEN = 7.65; // Display only; server is the source of truth.
 
 export async function forestDemandFormView() {
-  // Initial fetch of references + varieties (in parallel)
   const [refsRes, varsRes] = await Promise.all([api.references(), api.varieties()]);
   const allReferences = refsRes.references;
   const allVarieties  = varsRes.varieties;
@@ -42,14 +41,12 @@ export async function forestDemandFormView() {
     items: allReferences,
     onChange: (item) => {
       selectedReference = item;
-      // pre-fill varieties from the reference template if no manual selection yet
       if (item && selectedVarieties.length === 0 && Array.isArray(item.varieties)) {
         varietyCombo.setValues(item.varieties);
         selectedVarieties = item.varieties;
       }
     },
     onCreate: async (text) => {
-      // open inline modal: name + variety multi-select
       const result = await openInlineReferenceModal(text, allVarieties);
       if (!result) return null;
       try {
@@ -68,9 +65,9 @@ export async function forestDemandFormView() {
   const kgInput = el('input', {
     type: 'number', min: '0', step: '0.01', required: true,
     placeholder: 'Ej: 250',
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-input mono',
   });
-  const cherryHint = el('p', { class: 'text-xs text-slate-500 mt-1', text: 'Equivale a — kg cereza' });
+  const cherryHint = el('p', { class: 'ctrm-hint', text: 'Equivale a — kg cereza' });
   kgInput.addEventListener('input', () => {
     const v = Number(kgInput.value || 0);
     cherryHint.textContent = `Equivale a ${fmtKg(v * CHERRY_PER_GREEN)} cereza`;
@@ -78,12 +75,12 @@ export async function forestDemandFormView() {
 
   const dateInput = el('input', {
     type: 'date', required: true,
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-input',
   });
 
   const aspectSelect = el('select', {
     required: true,
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-select',
   }, [
     el('option', { value: '', disabled: true, selected: true }, ['Selecciona aspecto...']),
     ...PHYSICAL_ASPECTS.map((a) => el('option', { value: a }, [a])),
@@ -91,7 +88,7 @@ export async function forestDemandFormView() {
 
   const processSelect = el('select', {
     required: true,
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-select',
   }, [
     el('option', { value: '', disabled: true, selected: true }, ['Selecciona proceso...']),
     ...PROCESS_TYPES.map((p) => el('option', { value: p }, [p])),
@@ -99,21 +96,21 @@ export async function forestDemandFormView() {
 
   const fermInput = el('input', {
     type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-input mono',
   });
 
   const commentsInput = el('textarea', {
     rows: '3', placeholder: 'Notas adicionales...',
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-textarea',
   });
 
   const submitBtn = el('button', {
     type: 'submit',
-    class: 'w-full sm:w-auto px-6 py-3 rounded-lg bg-forest hover:bg-forest-dark text-white font-medium',
+    class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
   }, ['Crear pedido']);
 
   const form = el('form', {
-    class: 'space-y-5 bg-white rounded-xl border border-slate-200 p-4 sm:p-6',
+    class: 'space-y-5 ctrm-card p-4 sm:p-6',
     onSubmit: async (e) => {
       e.preventDefault();
       if (!selectedReference) { toast('Selecciona una referencia', 'warning'); return; }
@@ -145,10 +142,10 @@ export async function forestDemandFormView() {
     section('Proceso', processSelect),
     section('Horas de fermentación', fermInput),
     section('Comentarios', commentsInput),
-    el('div', { class: 'pt-2 flex flex-col sm:flex-row sm:justify-end gap-2' }, [
+    el('div', { class: 'pt-3 flex flex-col sm:flex-row sm:justify-end gap-2 border-t border-sand' }, [
       el('button', {
         type: 'button',
-        class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700',
+        class: 'ctrm-btn ctrm-btn-ghost uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
         onClick: () => navigate('/forest/dashboard'),
       }, ['Cancelar']),
       submitBtn,
@@ -191,9 +188,9 @@ export async function forestDemandFormView() {
 
 function section(label, child, hint) {
   return el('div', {}, [
-    el('label', { class: 'block text-sm font-medium text-slate-700 mb-1', text: label }),
+    el('label', { class: 'ctrm-label', text: label }),
     child,
-    hint ? el('p', { class: 'text-xs text-slate-500 mt-1', text: hint }) : null,
+    hint ? el('p', { class: 'ctrm-hint', text: hint }) : null,
   ]);
 }
 
@@ -201,7 +198,7 @@ function openInlineReferenceModal(initialName, allVarieties) {
   return openModal(({ close }) => {
     const nameInput = el('input', {
       type: 'text', value: initialName,
-      class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+      class: 'ctrm-input',
     });
     let chosen = [];
     const vc = createMultiCombobox({
@@ -210,14 +207,14 @@ function openInlineReferenceModal(initialName, allVarieties) {
       onChange: (v) => { chosen = v; },
     });
     return el('div', { class: 'space-y-3' }, [
-      el('label', { class: 'block text-sm font-medium text-slate-700' }, ['Nombre']),
+      el('label', { class: 'ctrm-label' }, ['Nombre']),
       nameInput,
-      el('label', { class: 'block text-sm font-medium text-slate-700 mt-2' }, ['Variedades']),
+      el('label', { class: 'ctrm-label mt-2' }, ['Variedades']),
       vc.el,
       el('div', { class: 'flex justify-end gap-2 pt-3' }, [
-        el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         el('button', {
-          class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+          class: 'ctrm-btn ctrm-btn-primary',
           type: 'button',
           onClick: () => {
             const name = nameInput.value.trim();

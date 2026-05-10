@@ -28,6 +28,23 @@ const STATUS_LABEL = {
 };
 export const statusLabel = (s) => STATUS_LABEL[s] || s;
 
+// Maps each status to a CTRM pill kind (ok | warn | crit | roll | muted)
+const STATUS_PILL = {
+  Pending:           'warn',
+  Accepted:          'ok',
+  PartiallyAccepted: 'warn',
+  Rejected:          'crit',
+  InProduction:      'roll',
+  Completed:         'ok',
+  Cancelled:         'muted',
+  InFermentation:    'roll',
+  Drying:            'roll',
+  Resting:           'roll',
+  Ready:             'ok',
+  Delivered:         'muted',
+};
+export const statusPillKind = (s) => STATUS_PILL[s] || 'muted';
+
 export const URGENCY_LABEL = {
   past:   'Vencido',
   red:    'Crítico',

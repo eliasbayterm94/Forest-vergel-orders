@@ -1,8 +1,4 @@
-// Finca production module:
-// - List active lots
-// - Create lot (modal: reference + process + kg cherry + start date + varieties + ferm hours)
-// - Advance status (one step at a time)
-// - Assign lot to demand orders with kg allocation (compatible by ref + process)
+// Finca production module — CTRM-styled.
 import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
@@ -14,8 +10,7 @@ import { chrome, pageTitle } from './_chrome.js';
 const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
 const CHERRY_PER_GREEN = 7.65;
 
-// Dried→green divisors. Must mirror process_lead_times.dried_to_green_divisor
-// in the DB; the server is authoritative — these are UI hints only.
+// Dried→green divisors. Mirror process_lead_times.dried_to_green_divisor in DB.
 const DRIED_TO_GREEN_DIVISORS = { Natural: 3.40, Honey: 1.50, Lavado: 1.34 };
 const DRIED_LABELS = {
   Natural: 'Cereza seca',
@@ -45,7 +40,7 @@ export async function fincaLotsView() {
   function render() {
     clear(list);
     if (lots.length === 0) {
-      list.append(el('p', { class: 'text-sm text-slate-400 italic px-1', text: 'Sin lotes activos. Crea uno con el botón de arriba.' }));
+      list.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Sin lotes activos. Crea uno con el botón de arriba.' }));
       return;
     }
     for (const l of lots) list.append(lotCard(l));
@@ -54,9 +49,9 @@ export async function fincaLotsView() {
 
   return chrome(el('div', {}, [
     pageTitle('Producción', 'Lotes activos en El Vergel'),
-    el('div', { class: 'mb-3 flex justify-end gap-2' }, [
+    el('div', { class: 'mb-4 flex justify-end gap-2' }, [
       el('button', {
-        class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+        class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
         onClick: () => createLot(),
       }, ['+ Crear lote']),
     ]),
@@ -69,55 +64,53 @@ export async function fincaLotsView() {
     const totalAllocated = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
     const remaining = Number(l.kg_green_actual ?? l.kg_green_expected) - totalAllocated;
 
-    return el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
-      el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
-        el('div', { class: 'flex items-center gap-2' }, [
-          el('span', { class: 'font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700', text: l.lot_code }),
-          el('span', { class: 'font-medium text-slate-900', text: l.reference_name || '—' }),
-          el('span', { class: 'text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800', text: statusLabel(l.status) }),
+    return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+      el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+        el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+          el('span', { class: 'ctrm-code', text: l.lot_code }),
+          el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
+          el('span', { class: 'ctrm-pill roll', text: statusLabel(l.status) }),
         ]),
-        el('div', { class: 'flex items-center gap-2' }, [
+        el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           next ? el('button', {
-            class: 'px-3 py-1.5 rounded-lg bg-forest text-white text-sm',
+            class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
             onClick: () => advanceStatus(l, next),
           }, [`→ ${statusLabel(next)}`]) : null,
           el('button', {
-            class: 'px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm',
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
             onClick: () => assignLot(l),
           }, ['Asignar pedidos']),
         ]),
       ]),
-      el('div', { class: 'flex flex-wrap text-xs text-slate-600 gap-x-4 gap-y-1' }, [
-        el('span', {}, [`Cereza fresca: `, el('strong', { text: fmtKg(l.kg_cherry_input) })]),
-        el('span', {}, [`Verde esperado: `, el('strong', { text: fmtKg(l.kg_green_expected) })]),
-        l.kg_dried_output != null ? el('span', {}, [`${DRIED_LABELS[l.process_type] || 'Peso seco'}: `, el('strong', { text: fmtKg(l.kg_dried_output) })]) : null,
-        l.kg_green_actual != null ? el('span', {}, [`Verde real: `, el('strong', { text: fmtKg(l.kg_green_actual) })]) : null,
-        el('span', {}, [`Inicio: `, el('strong', { text: fmtDate(l.start_date) })]),
-        l.drying_start_date ? el('span', {}, [`Drying: `, el('strong', { text: fmtDate(l.drying_start_date) })]) : null,
-        el('span', {}, [`Asignado: `, el('strong', { text: fmtKg(totalAllocated) })]),
-        el('span', {
-          class: remaining < -0.001 ? 'text-rose-700 font-semibold' : '',
-        }, [`Disponible: `, el('strong', { text: fmtKg(remaining) })]),
-        el('span', {}, [`Proceso: `, el('strong', { text: l.process_type })]),
+      el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+        meta('Cereza fresca', fmtKg(l.kg_cherry_input)),
+        meta('Verde esperado', fmtKg(l.kg_green_expected)),
+        l.kg_dried_output != null ? meta(DRIED_LABELS[l.process_type] || 'Peso seco', fmtKg(l.kg_dried_output)) : null,
+        l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
+        meta('Inicio', fmtDate(l.start_date)),
+        l.drying_start_date ? meta('Drying', fmtDate(l.drying_start_date)) : null,
+        meta('Asignado', fmtKg(totalAllocated)),
+        metaColor('Disponible', fmtKg(remaining), remaining < -0.001 ? 'crit' : null),
+        meta('Proceso', l.process_type),
       ]),
       (l.varieties || []).length > 0
-        ? el('div', { class: 'flex flex-wrap gap-1 text-[11px] mt-1' }, (l.varieties || []).map((v) =>
-            el('span', { class: 'px-2 py-0.5 rounded-full bg-forest-light/15 text-forest-dark', text: v.name }),
+        ? el('div', { class: 'flex flex-wrap gap-1 mt-2' }, (l.varieties || []).map((v) =>
+            el('span', { class: 'ctrm-pill dark', text: v.name }),
           ))
         : null,
       (l.assignments || []).length > 0
-        ? el('div', { class: 'mt-2 border-t border-slate-100 pt-2' }, [
-            el('p', { class: 'text-[11px] uppercase text-slate-500 tracking-wide mb-1' }, ['Asignaciones']),
+        ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
+            el('p', { class: 'eyebrow mb-1.5', text: 'Asignaciones' }),
             el('div', { class: 'space-y-1' }, l.assignments.map((a) =>
-              el('div', { class: 'flex flex-wrap items-center justify-between text-xs gap-2' }, [
+              el('div', { class: 'flex flex-wrap items-center justify-between text-[11px] gap-2 py-1' }, [
                 el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-                  el('span', { class: 'font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700', text: a.order?.order_code || a.demand_order_id }),
-                  el('span', { class: 'truncate text-slate-700', text: a.order?.status ? statusLabel(a.order.status) : '' }),
+                  el('span', { class: 'ctrm-code', text: a.order?.order_code || a.demand_order_id }),
+                  el('span', { class: 'text-ink-500', text: a.order?.status ? statusLabel(a.order.status) : '' }),
                 ]),
-                el('div', { class: 'flex items-center gap-2' }, [
-                  el('span', { class: 'text-slate-700' }, [fmtKg(a.kg_green_allocated)]),
+                el('div', { class: 'flex items-center gap-3' }, [
+                  el('span', { class: 'font-mono text-ink-700 font-medium' }, [fmtKg(a.kg_green_allocated)]),
                   el('button', {
-                    class: 'text-rose-700 hover:underline',
+                    class: 'text-crit hover:underline text-[11px]',
                     onClick: () => removeAssignment(a, l),
                   }, ['Quitar']),
                 ]),
@@ -132,7 +125,7 @@ export async function fincaLotsView() {
     let yieldValues = null;
     if (target === 'Ready' || target === 'Delivered') {
       yieldValues = await promptYield(lot, target);
-      if (yieldValues === undefined) return; // cancelled
+      if (yieldValues === undefined) return;
     } else {
       const ok = await confirmModal(`Avanzar ${lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
@@ -161,15 +154,15 @@ export async function fincaLotsView() {
         type: 'number', step: '0.01', min: '0',
         value: lot.kg_dried_output != null ? String(lot.kg_dried_output) : '',
         placeholder: 'Ej: 350',
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-input mono',
       });
       const greenInput = el('input', {
         type: 'number', step: '0.01', min: '0',
         value: lot.kg_green_actual != null ? String(lot.kg_green_actual) : '',
         placeholder: 'Auto desde peso seco',
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-input mono',
       });
-      const formula = el('p', { class: 'text-xs text-slate-500' }, [
+      const formula = el('p', { class: 'ctrm-hint' }, [
         `Conversión: ${driedLabel} ÷ ${divisor.toFixed(2)} = kg verde`,
       ]);
       let greenManuallyEdited = lot.kg_green_actual != null;
@@ -182,19 +175,19 @@ export async function fincaLotsView() {
       greenInput.addEventListener('input', () => { greenManuallyEdited = greenInput.value !== ''; });
 
       return el('div', { class: 'space-y-3' }, [
-        el('p', { class: 'text-sm text-slate-700' }, [
-          `Avanzando ${lot.lot_code} a `, el('strong', { text: statusLabel(target) }),
+        el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+          `Avanzando ${lot.lot_code} a `, el('strong', { class: 'text-navy', text: statusLabel(target) }),
           '. Registra peso seco y verde real (verde se calcula automáticamente).',
         ]),
-        el('label', { class: 'block text-sm font-medium text-slate-700', text: `${driedLabel} (kg)` }),
+        el('label', { class: 'ctrm-label', text: `${driedLabel} (kg)` }),
         driedInput,
         formula,
-        el('label', { class: 'block text-sm font-medium text-slate-700 mt-2', text: 'kg verde reales' }),
+        el('label', { class: 'ctrm-label mt-2', text: 'kg verde reales' }),
         greenInput,
-        el('div', { class: 'flex justify-end gap-2 pt-2' }, [
-          el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
           el('button', {
-            class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+            class: 'ctrm-btn ctrm-btn-primary',
             type: 'button',
             onClick: () => {
               const dried = driedInput.value === '' ? null : Number(driedInput.value);
@@ -242,18 +235,16 @@ export async function fincaLotsView() {
         },
       });
 
-      const procSelect = el('select', {
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300 bg-white',
-      }, [
+      const procSelect = el('select', { class: 'ctrm-select' }, [
         el('option', { value: '', disabled: true, selected: true }, ['Selecciona proceso...']),
         ...PROCESS_TYPES.map((p) => el('option', { value: p }, [p])),
       ]);
 
       const kgCherry = el('input', {
         type: 'number', min: '0', step: '0.01',
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-input mono',
       });
-      const kgGreenHint = el('p', { class: 'text-xs text-slate-500 mt-1', text: 'Verde esperado: —' });
+      const kgGreenHint = el('p', { class: 'ctrm-hint', text: 'Verde esperado: —' });
       kgCherry.addEventListener('input', () => {
         const v = Number(kgCherry.value || 0);
         kgGreenHint.textContent = `Verde esperado: ${fmtKg(v / CHERRY_PER_GREEN)}`;
@@ -261,12 +252,12 @@ export async function fincaLotsView() {
 
       const startInput = el('input', {
         type: 'date', value: new Date().toISOString().slice(0, 10),
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-input',
       });
 
       const fermInput = el('input', {
         type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-input mono',
       });
 
       const vCombo = createMultiCombobox({
@@ -276,7 +267,7 @@ export async function fincaLotsView() {
 
       const notesInput = el('textarea', {
         rows: '2',
-        class: 'w-full px-3 py-2 rounded-lg border border-slate-300',
+        class: 'ctrm-textarea',
       });
 
       return el('div', { class: 'space-y-3' }, [
@@ -287,10 +278,10 @@ export async function fincaLotsView() {
         labelled('Horas de fermentación', fermInput),
         labelled('Variedades', vCombo.el),
         labelled('Notas', notesInput),
-        el('div', { class: 'flex justify-end gap-2 pt-2' }, [
-          el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
           el('button', {
-            class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+            class: 'ctrm-btn ctrm-btn-primary',
             type: 'button',
             onClick: async () => {
               if (!chosenRef) { toast('Selecciona referencia', 'warning'); return; }
@@ -321,7 +312,6 @@ export async function fincaLotsView() {
 
   // ---------- Assign lot to orders ----------
   async function assignLot(lot) {
-    // Pull compatible candidate orders: same reference, same process, status acceptable.
     let candidates = [];
     try {
       const r = await api.ordersList({
@@ -329,10 +319,7 @@ export async function fincaLotsView() {
         reference_id: lot.reference_id,
         process_type: lot.process_type,
       });
-      // Compute already-assigned per order so we know remaining capacity.
-      // The API doesn't return this aggregated by order; we compute from
-      // production-lots-list (already loaded) for any lot containing the order.
-      const allLots = lots; // currently active lots only — close enough for MVP
+      const allLots = lots;
       const allocByOrder = new Map();
       for (const ll of allLots) {
         for (const a of ll.assignments || []) {
@@ -374,9 +361,23 @@ export async function fincaLotsView() {
   }
 }
 
+function meta(label, value) {
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { class: 'text-ink-700 font-mono', text: value }),
+  ]);
+}
+
+function metaColor(label, value, kind) {
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { class: `font-mono font-bold ${kind === 'crit' ? 'text-crit' : 'text-ink-700'}`, text: value }),
+  ]);
+}
+
 function labelled(label, child) {
   return el('div', {}, [
-    el('label', { class: 'block text-sm font-medium text-slate-700 mb-1', text: label }),
+    el('label', { class: 'ctrm-label', text: label }),
     child,
   ]);
 }
@@ -386,35 +387,35 @@ function assignModalBody(lot, candidates, close) {
   const totalLotAllocated = (lot.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
   const lotRemaining = Math.max(0, totalLotAvail - totalLotAllocated);
 
-  const inputs = new Map(); // order_id → input element
-  const totalEl = el('strong', { text: '0' });
-  const remEl   = el('strong', { text: fmtKg(lotRemaining) });
+  const inputs = new Map();
+  const totalEl = el('strong', { class: 'font-mono text-navy', text: '0' });
+  const remEl   = el('strong', { class: 'font-mono', text: fmtKg(lotRemaining) });
 
   function recalcTotal() {
     let total = 0;
     for (const inp of inputs.values()) total += Number(inp.value || 0);
     totalEl.textContent = fmtKg(total);
     remEl.textContent = fmtKg(lotRemaining - total);
-    remEl.style.color = total > lotRemaining ? '#9f1239' : '';
+    remEl.style.color = total > lotRemaining ? '#a8351c' : '';
   }
 
   const rows = candidates.map((o) => {
     const inp = el('input', {
       type: 'number', step: '0.01', min: '0', max: String(o.remaining_kg),
       placeholder: '0',
-      class: 'w-28 px-2 py-1 rounded-lg border border-slate-300 text-right',
+      class: 'ctrm-input mono w-28 text-right py-1.5',
     });
     inp.addEventListener('input', () => recalcTotal());
     inputs.set(o.id, inp);
-    return el('div', { class: 'flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100' }, [
+    return el('div', { class: 'flex flex-wrap items-center justify-between gap-2 py-2 border-b border-sand' }, [
       el('div', { class: 'min-w-0' }, [
-        el('div', { class: 'flex items-center gap-2' }, [
-          el('span', { class: 'font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700', text: o.order_code }),
-          el('span', { class: 'truncate text-sm', text: o.reference_name || '' }),
+        el('div', { class: 'flex items-center gap-2 mb-0.5' }, [
+          el('span', { class: 'ctrm-code', text: o.order_code }),
+          el('span', { class: 'truncate text-[12px] font-display font-semibold text-navy', text: o.reference_name || '' }),
         ]),
-        el('div', { class: 'text-xs text-slate-600' }, [
+        el('div', { class: 'text-[11px] text-ink-500 font-mono' }, [
           `Aceptado ${fmtKg(o.kg_green_accepted)} · Asignado ${fmtKg(o.allocated_kg)} · `,
-          el('strong', {}, [`Disponible ${fmtKg(o.remaining_kg)}`]),
+          el('strong', { class: 'text-ink-700' }, [`Disponible ${fmtKg(o.remaining_kg)}`]),
           ` · Entrega ${fmtDate(o.max_delivery_date)}`,
         ]),
       ]),
@@ -422,7 +423,7 @@ function assignModalBody(lot, candidates, close) {
         inp,
         el('button', {
           type: 'button',
-          class: 'text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700',
+          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
           onClick: () => { inp.value = String(Math.min(o.remaining_kg, lotRemaining - sumExcept(inputs, o.id))); recalcTotal(); },
         }, ['Llenar']),
       ]),
@@ -430,16 +431,25 @@ function assignModalBody(lot, candidates, close) {
   });
 
   return el('div', { class: 'space-y-3' }, [
-    el('div', { class: 'rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm flex flex-wrap items-center gap-3' }, [
-      el('span', {}, [`Disponible en lote: `, el('strong', { text: fmtKg(lotRemaining) })]),
-      el('span', {}, [`Asignado en este modal: `, totalEl]),
-      el('span', {}, [`Restante tras asignar: `, remEl]),
+    el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono' }, [
+      el('span', {}, [
+        el('span', { class: 'text-ink-500 uppercase tracking-loose text-[10px] mr-1', text: 'Disponible lote' }),
+        el('strong', { class: 'text-navy', text: fmtKg(lotRemaining) }),
+      ]),
+      el('span', {}, [
+        el('span', { class: 'text-ink-500 uppercase tracking-loose text-[10px] mr-1', text: 'Asignado' }),
+        totalEl,
+      ]),
+      el('span', {}, [
+        el('span', { class: 'text-ink-500 uppercase tracking-loose text-[10px] mr-1', text: 'Restante' }),
+        remEl,
+      ]),
     ]),
-    el('div', { class: 'max-h-[50vh] overflow-y-auto' }, rows),
-    el('div', { class: 'flex justify-end gap-2 pt-2' }, [
-      el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+    el('div', { class: 'max-h-[50vh] overflow-y-auto pr-1' }, rows),
+    el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+      el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
       el('button', {
-        class: 'px-4 py-2 rounded-lg bg-forest hover:bg-forest-dark text-white',
+        class: 'ctrm-btn ctrm-btn-primary',
         type: 'button',
         onClick: () => {
           const assignments = [];

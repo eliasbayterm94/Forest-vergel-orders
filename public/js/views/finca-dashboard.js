@@ -1,10 +1,6 @@
-// Finca dashboard:
-// - Stat cards (pending / accepted / in production / ready / delivered)
-// - Active queue grouped by reference, kg cereza required
-// - Urgencies (drying past/red, delivery red)
-// - Weekly capacity load (all in-flight orders + active queue)
+// Finca dashboard — CTRM-styled.
 import { el } from '../ui/el.js';
-import { fmtKg, fmtDate, statusLabel, URGENCY_LABEL } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { renderCapacityPayload } from './_capacity-panel.js';
@@ -34,7 +30,6 @@ export async function fincaDashboardView() {
     o.drying_urgency === 'past' || o.drying_urgency === 'red'
     || o.delivery_urgency === 'past' || o.delivery_urgency === 'red');
 
-  // Capacity payload for in-flight orders + active queue overlay
   let capacity = null;
   if (inFlight.length > 0) {
     try {
@@ -45,7 +40,6 @@ export async function fincaDashboardView() {
     } catch (e) { /* surface in section */ }
   }
 
-  // Group active queue by reference (kg cereza required)
   const queueByRef = new Map();
   for (const o of inFlight) {
     const key = o.reference_name || '—';
@@ -59,13 +53,13 @@ export async function fincaDashboardView() {
   }
 
   return chrome(el('div', {}, [
-    pageTitle('Tablero — El Vergel', `Hoy: ${today}`),
+    pageTitle('Tablero El Vergel', `Hoy: ${today}`),
 
     statRow([
       stat('Pendientes',     buckets.pending.length,      'Por aceptar', () => navigate('/finca/inbox')),
       stat('Aceptados',      buckets.accepted.length,     'Sin lote aún', () => navigate('/finca/lots')),
-      stat('En producción',  buckets.inProduction.length, 'Con lote asignado', () => navigate('/finca/lots')),
-      stat('Listos / entregados', `${buckets.ready.length} / ${buckets.delivered.length}`, 'Lotes', () => navigate('/finca/lots')),
+      stat('En producción',  buckets.inProduction.length, 'Con lote asignado', () => navigate('/finca/lots'), { kind: 'roll' }),
+      stat('Listos / entregados', `${buckets.ready.length} / ${buckets.delivered.length}`, 'Lotes', () => navigate('/finca/lots'), { kind: 'ok' }),
     ]),
 
     section('Urgencias',
@@ -84,76 +78,84 @@ export async function fincaDashboardView() {
 
     section('Carga semanal',
       capacity
-        ? renderCapacityPayload(capacity, { showOrders: false })
+        ? el('div', { class: 'ctrm-card ctrm-card-pad' }, [renderCapacityPayload(capacity, { showOrders: false })])
         : emptyText('Sin pedidos para calcular carga.'),
     ),
   ]));
 }
 
 function statRow(items) {
-  return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4' }, items);
+  return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5' }, items);
 }
 
-function stat(label, value, hint, onClick) {
+function stat(label, value, hint, onClick, opts = {}) {
+  const valClass = opts.kind ? `stat-val ${opts.kind}` : 'stat-val';
   return el('button', {
-    class: 'text-left bg-white rounded-xl border border-slate-200 px-3 py-3 hover:border-forest hover:shadow-sm transition',
+    class: 'stat-card is-clickable text-left',
     type: 'button', onClick: onClick || (() => {}),
   }, [
-    el('p', { class: 'text-xs text-slate-500', text: label }),
-    el('p', { class: 'text-2xl font-semibold text-slate-900', text: String(value) }),
-    el('p', { class: 'text-[11px] text-slate-400', text: hint }),
+    el('p', { class: 'stat-label', text: label }),
+    el('p', { class: valClass, text: String(value) }),
+    el('p', { class: 'stat-sub', text: hint }),
   ]);
 }
 
 function section(title, children) {
-  return el('section', { class: 'mb-5' }, [
-    el('h3', { class: 'text-sm font-semibold text-slate-700 uppercase tracking-wide mb-2', text: title }),
+  return el('section', { class: 'mb-6' }, [
+    el('h3', { class: 'eyebrow mb-2', text: title }),
     Array.isArray(children)
       ? el('div', { class: 'space-y-2' }, children)
-      : el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [children]),
+      : children,
   ]);
 }
 
 function emptyText(t) {
-  return el('p', { class: 'text-sm text-slate-400 italic px-1', text: t });
+  return el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: t });
 }
 
 function orderRow(o) {
   const u = o.drying_urgency === 'past' || o.drying_urgency === 'red'
     ? o.drying_urgency : o.delivery_urgency;
   const badge = u && u !== 'normal'
-    ? el('span', { class: `text-xs px-2 py-0.5 rounded urgency-${u}`, text: URGENCY_LABEL[u] || u })
+    ? el('span', { class: `ctrm-pill urgency-${u}`, text: URGENCY_LABEL[u] || u })
     : null;
-  return el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
-    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
-      el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-        el('span', { class: 'font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700', text: o.order_code }),
-        el('span', { class: 'font-medium text-slate-900 truncate', text: o.reference_name || '—' }),
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+      el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
+        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
       ]),
       badge,
     ]),
-    el('div', { class: 'flex flex-wrap text-xs text-slate-600 gap-x-4 gap-y-1' }, [
-      el('span', {}, [`Estado: `, el('strong', { text: statusLabel(o.status) })]),
-      el('span', {}, [`Cereza: `, el('strong', { text: fmtKg(o.kg_cherry_accepted ?? o.kg_cherry_required) })]),
-      el('span', {}, [`Inicio drying: `, el('strong', { text: fmtDate(o.latest_drying_start_date) })]),
-      el('span', {}, [`Entrega: `, el('strong', { text: fmtDate(o.max_delivery_date) })]),
-      el('span', {}, [`Proceso: `, el('strong', { text: o.process_type })]),
+    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+      meta('Estado', statusLabel(o.status)),
+      meta('Cereza', fmtKg(o.kg_cherry_accepted ?? o.kg_cherry_required)),
+      meta('Inicio drying', fmtDate(o.latest_drying_start_date)),
+      meta('Entrega', fmtDate(o.max_delivery_date)),
+      meta('Proceso', o.process_type),
     ]),
   ]);
 }
 
+function meta(label, value) {
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { class: 'text-ink-700 font-mono', text: value }),
+  ]);
+}
+
 function referenceQueueCard(refName, b) {
-  return el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 sm:p-4' }, [
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
-      el('span', { class: 'font-medium text-slate-900', text: refName }),
-      el('span', { class: 'text-xs text-slate-500', text: `${b.count} pedido(s)` }),
+      el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: refName }),
+      el('span', { class: 'ctrm-pill muted', text: `${b.count} pedido${b.count===1?'':'s'}` }),
     ]),
-    el('div', { class: 'flex flex-wrap text-xs text-slate-700 gap-x-4 gap-y-1' }, [
-      el('span', {}, [`Verde total: `, el('strong', { text: fmtKg(b.kg_green) })]),
-      el('span', {}, [`Cereza total: `, el('strong', { text: fmtKg(b.kg_cherry) })]),
+    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+      meta('Verde total', fmtKg(b.kg_green)),
+      meta('Cereza total', fmtKg(b.kg_cherry)),
     ]),
-    el('div', { class: 'flex flex-wrap gap-1 text-[11px] mt-1' }, b.orders.map((o) =>
-      el('span', { class: 'font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700', text: o.order_code }),
+    el('div', { class: 'flex flex-wrap gap-1 mt-2' }, b.orders.map((o) =>
+      el('span', { class: 'ctrm-code', text: o.order_code }),
     )),
   ]);
 }

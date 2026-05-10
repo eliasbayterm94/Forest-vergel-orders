@@ -1,4 +1,5 @@
 // Shared shell: top nav + content area for authenticated views.
+// CTRM-style: navy-dark topbar, yellow logo, uppercase tracked nav tabs.
 import { el } from '../ui/el.js';
 import { getSession, logout } from '../auth.js';
 import { navigate, currentPath, setSession } from '../router.js';
@@ -31,40 +32,43 @@ export function chrome(content) {
   const items = navFor(session?.role);
   const cur = currentPath();
 
-  const nav = el('nav', { class: 'flex gap-1 overflow-x-auto -mb-px' },
+  const navTabs = el('nav', { class: 'flex gap-0 overflow-x-auto -mb-px scrollbar-none' },
     items.map((it) => el('a', {
       href: `#${it.path}`,
-      class: `whitespace-nowrap px-3 py-2 text-sm rounded-t-lg ${cur === it.path ? 'bg-white text-forest border border-b-white border-slate-200 font-medium' : 'text-white/80 hover:text-white'}`,
+      class: `ctrm-nav-tab ${cur === it.path ? 'is-active' : ''}`,
       onClick: (e) => { e.preventDefault(); navigate(it.path); },
     }, [it.label])),
   );
 
-  const header = el('header', { class: 'bg-forest text-white' }, [
-    el('div', { class: 'max-w-5xl mx-auto px-4 pt-3' }, [
-      el('div', { class: 'flex items-center justify-between mb-2' }, [
-        el('div', { class: 'flex items-center gap-2' }, [
-          el('div', { class: 'w-8 h-8 rounded bg-white/15 flex items-center justify-center text-sm font-bold' }, ['F']),
-          el('h1', { class: 'font-semibold tracking-tight' }, ['Forest ↔ El Vergel']),
+  const header = el('header', { class: 'ctrm-topbar' }, [
+    el('div', { class: 'max-w-6xl mx-auto px-4 sm:px-6' }, [
+      el('div', { class: 'flex items-center justify-between py-3' }, [
+        el('div', { class: 'flex items-center gap-3 min-w-0' }, [
+          el('div', { class: 'ctrm-topbar-logo' }, ['F']),
+          el('div', { class: 'flex flex-col min-w-0' }, [
+            el('span', { class: 'ctrm-topbar-title truncate' }, ['Forest ↔ El Vergel']),
+            el('span', { class: 'text-[10px] font-mono text-white/40 tracking-loose' }, ['Production Bridge']),
+          ]),
         ]),
-        el('div', { class: 'flex items-center gap-2 text-xs' }, [
-          el('span', { class: 'px-2 py-0.5 rounded bg-white/15' }, [session?.role || '']),
+        el('div', { class: 'flex items-center gap-2 text-[11px]' }, [
+          el('span', { class: 'px-2 py-1 rounded bg-white/10 text-white/70 font-display font-semibold uppercase tracking-eyebrow text-[10px]' }, [session?.role || '']),
           session?.role === 'admin' ? el('button', {
-            class: 'px-2 py-1 rounded bg-white/15 hover:bg-white/25',
+            class: 'px-3 py-1 rounded bg-yellow text-navy-dark hover:bg-yellow-dark font-display font-semibold uppercase tracking-eyebrow text-[10px]',
             onClick: () => triggerDigest(),
           }, ['Resumen ahora']) : null,
           el('button', {
-            class: 'px-2 py-1 hover:underline',
+            class: 'px-2 py-1 text-white/60 hover:text-yellow text-[11px] font-medium',
             onClick: async () => { await logout(); setSession(null); navigate('/login'); },
           }, ['Salir']),
         ]),
       ]),
-      nav,
+      navTabs,
     ]),
   ]);
 
-  return el('div', { class: 'min-h-[100dvh]' }, [
+  return el('div', { class: 'min-h-[100dvh] bg-cream' }, [
     header,
-    el('main', { class: 'max-w-5xl mx-auto px-4 py-4' }, [content]),
+    el('main', { class: 'max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6' }, [content]),
   ]);
 }
 
@@ -82,8 +86,8 @@ async function triggerDigest() {
 }
 
 export function pageTitle(title, subtitle) {
-  return el('div', { class: 'mb-4' }, [
-    el('h2', { class: 'text-lg font-semibold text-slate-900', text: title }),
-    subtitle ? el('p', { class: 'text-sm text-slate-500', text: subtitle }) : null,
+  return el('div', { class: 'mb-5 flex flex-col gap-0.5' }, [
+    el('h1', { class: 'page-h', text: title }),
+    subtitle ? el('p', { class: 'page-sub', text: subtitle }) : null,
   ]);
 }

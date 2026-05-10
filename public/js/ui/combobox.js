@@ -30,11 +30,11 @@ export function createCombobox({
   const input = el('input', {
     type: 'text',
     placeholder,
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-input',
     autocomplete: 'off',
   });
   const list = el('div', {
-    class: 'absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-auto z-20 hidden',
+    class: 'absolute left-0 right-0 mt-1 bg-white border border-sand rounded-lg shadow-card-2 max-h-64 overflow-auto z-20 hidden',
     role: 'listbox',
   });
   const wrap = el('div', { class: 'relative' }, [input, list]);
@@ -55,11 +55,11 @@ export function createCombobox({
     list.innerHTML = '';
     const f = filteredItems();
     if (f.length === 0) {
-      list.append(el('div', { class: 'px-3 py-2 text-sm text-slate-500', text: emptyText }));
+      list.append(el('div', { class: 'px-3 py-2 text-[12px] text-ink-500', text: emptyText }));
     } else {
       f.forEach((item, i) => {
         const row = el('div', {
-          class: `px-3 py-2 text-sm cursor-pointer ${i === _activeIdx ? 'bg-forest text-white' : 'hover:bg-slate-100'}`,
+          class: `px-3 py-2 text-[13px] cursor-pointer ${i === _activeIdx ? 'bg-navy text-white' : 'hover:bg-cream'}`,
           role: 'option',
           onClick: () => { setValue(item); close(); },
         }, [item.name]);
@@ -69,7 +69,7 @@ export function createCombobox({
     if (onCreate) {
       const showCreate = _filter.trim() && !_items.some((i) => i.name.toLowerCase() === _filter.trim().toLowerCase());
       list.append(el('div', {
-        class: `px-3 py-2 text-sm border-t border-slate-200 cursor-pointer ${showCreate ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium' : 'text-slate-500 hover:bg-slate-100'}`,
+        class: `px-3 py-2 text-[12px] border-t border-sand cursor-pointer font-medium ${showCreate ? 'bg-yellow-light text-warn hover:bg-yellow' : 'text-ink-500 hover:bg-cream'}`,
         onClick: async () => {
           const text = _filter.trim();
           if (!text) { input.focus(); return; }
@@ -139,11 +139,11 @@ export function createMultiCombobox({
   const input = el('input', {
     type: 'text',
     placeholder,
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-forest focus:ring-1 focus:ring-forest outline-none',
+    class: 'ctrm-input',
     autocomplete: 'off',
   });
   const list = el('div', {
-    class: 'absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-auto z-20 hidden',
+    class: 'absolute left-0 right-0 mt-1 bg-white border border-sand rounded-lg shadow-card-2 max-h-64 overflow-auto z-20 hidden',
   });
   const inputWrap = el('div', { class: 'relative' }, [input, list]);
   const wrap = el('div', {}, [tagsRow, inputWrap]);
@@ -153,16 +153,16 @@ export function createMultiCombobox({
   function renderTags() {
     tagsRow.innerHTML = '';
     if (_values.length === 0) {
-      tagsRow.append(el('span', { class: 'text-xs text-slate-400', text: 'Ninguna seleccionada' }));
+      tagsRow.append(el('span', { class: 'text-[11px] text-ink-300 italic', text: 'Ninguna seleccionada' }));
       return;
     }
     for (const v of _values) {
       tagsRow.append(el('span', {
-        class: 'inline-flex items-center gap-1 px-2 py-1 rounded-full bg-forest-light/15 text-forest-dark text-xs',
+        class: 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-navy text-yellow text-[11px] font-mono',
       }, [
         v.name,
         el('button', {
-          class: 'text-forest-dark hover:text-cherry',
+          class: 'text-yellow/70 hover:text-white text-[14px] leading-none',
           type: 'button',
           onClick: () => { _values = _values.filter((x) => x.id !== v.id); renderTags(); notify(); },
         }, ['×']),
@@ -182,11 +182,11 @@ export function createMultiCombobox({
     list.innerHTML = '';
     const f = filteredItems();
     if (f.length === 0 && !onCreate) {
-      list.append(el('div', { class: 'px-3 py-2 text-sm text-slate-500', text: 'Sin resultados' }));
+      list.append(el('div', { class: 'px-3 py-2 text-[12px] text-ink-500', text: 'Sin resultados' }));
     }
     f.forEach((item) => {
       list.append(el('div', {
-        class: 'px-3 py-2 text-sm cursor-pointer hover:bg-slate-100',
+        class: 'px-3 py-2 text-[13px] cursor-pointer hover:bg-cream',
         onClick: () => { _values = [..._values, item]; renderTags(); notify(); _filter = ''; input.value = ''; renderList(); },
       }, [item.name]));
     });
@@ -194,7 +194,7 @@ export function createMultiCombobox({
       const text = _filter.trim();
       const showCreate = text && !_items.some((i) => i.name.toLowerCase() === text.toLowerCase());
       list.append(el('div', {
-        class: `px-3 py-2 text-sm border-t border-slate-200 cursor-pointer ${showCreate ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium' : 'text-slate-500 hover:bg-slate-100'}`,
+        class: `px-3 py-2 text-[12px] border-t border-sand cursor-pointer font-medium ${showCreate ? 'bg-yellow-light text-warn hover:bg-yellow' : 'text-ink-500 hover:bg-cream'}`,
         onClick: async () => {
           if (!text) { input.focus(); return; }
           const newItem = await onCreate(text);
