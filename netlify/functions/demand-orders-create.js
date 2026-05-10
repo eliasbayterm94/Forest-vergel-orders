@@ -6,6 +6,7 @@ const { greenToCherry } = require('./_lib/cherryConversion');
 const { bogotaToday, daysBetween } = require('./_lib/bogotaTime');
 const { PROCESS_TYPES, PHYSICAL_ASPECTS } = require('./_lib/schema');
 const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { notifyDemandCreated } = require('./_lib/notifications');
 
 const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
 const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
@@ -76,7 +77,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
 
   // Validate reference exists
   const { data: refRow, error: refErr } = await sb
-    .from('coffee_references').select('id, active').eq('id', reference_id).maybeSingle();
+    .from('coffee_references').select('id, name, active').eq('id', reference_id).maybeSingle();
   if (refErr) return serverErr('Reference lookup failed', refErr.message);
   if (!refRow || !refRow.active) return badReq('Unknown or inactive reference', 'INVALID_REFERENCE');
 
@@ -103,6 +104,14 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
     const rows = variety_ids.map((variety_id) => ({ demand_order_id: orderRow.id, variety_id }));
     const { error: vErr } = await sb.from('demand_order_varieties').insert(rows);
     if (vErr) return serverErr('Failed to link varieties', vErr.message);
+  }
+
+  // Notificar a finca/admin. Fire-and-forget — si falla, log pero no
+  // tumbamos el create del pedido.
+  try {
+    await notifyDemandCreated(orderRow, refRow);
+  } catch (e) {
+    console.error('notifyDemandCreated failed:', e && e.message);
   }
 
   return created({
