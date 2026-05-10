@@ -70,9 +70,11 @@ export function createCombobox({
       const showCreate = _filter.trim() && !_items.some((i) => i.name.toLowerCase() === _filter.trim().toLowerCase());
       list.append(el('div', {
         class: `px-3 py-2 text-[12px] border-t border-sand cursor-pointer font-medium ${showCreate ? 'bg-yellow-light text-warn hover:bg-yellow' : 'text-ink-500 hover:bg-cream'}`,
-        onClick: async () => {
+        // mousedown fires before the document-level mousedown that closes the list,
+        // so the create handler always runs even when the click would also close.
+        onMouseDown: async (e) => {
+          e.preventDefault();
           const text = _filter.trim();
-          if (!text) { input.focus(); return; }
           try {
             const newItem = await onCreate(text);
             if (newItem) {
@@ -80,7 +82,7 @@ export function createCombobox({
               setValue(newItem);
               close();
             }
-          } catch (e) {
+          } catch (err) {
             // upstream should toast; do nothing here
           }
         },
@@ -195,8 +197,8 @@ export function createMultiCombobox({
       const showCreate = text && !_items.some((i) => i.name.toLowerCase() === text.toLowerCase());
       list.append(el('div', {
         class: `px-3 py-2 text-[12px] border-t border-sand cursor-pointer font-medium ${showCreate ? 'bg-yellow-light text-warn hover:bg-yellow' : 'text-ink-500 hover:bg-cream'}`,
-        onClick: async () => {
-          if (!text) { input.focus(); return; }
+        onMouseDown: async (e) => {
+          e.preventDefault();
           const newItem = await onCreate(text);
           if (newItem) {
             _items = [..._items, newItem].sort((a, b) => a.name.localeCompare(b.name));

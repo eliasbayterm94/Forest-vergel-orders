@@ -1,28 +1,71 @@
 /**
- * Process-specific yield utilities (delivery side).
+ * Process-specific yield utilities.
  *
- * Different processes deliver different physical forms at end-of-drying:
- *   Natural → cereza seca (whole dried cherry)
- *   Honey   → pergamino seco (dried parchment)
- *   Lavado  → pergamino seco (dried parchment)
+ * Two distinct purposes:
  *
- * Conversion to green coffee:
- *   Natural: kg_green = kg_dried_output / 3.40
- *   Honey:   kg_green = kg_dried_output / 1.50
- *   Lavado:  kg_green = kg_dried_output / 1.34
+ *  A) INPUT-STAGE divisors — used at lot creation when the operator
+ *     reports how much they received at one of three processing stages:
  *
- * The divisors live in the DB (process_lead_times.dried_to_green_divisor)
- * and are loaded via getDriedDivisorsByProcess(). The constants below
- * mirror the seeded values for unit-test convenience and as a fallback
- * default — the DB is authoritative at runtime.
+ *       cereza      — fresh whole cherry              kg / 7.65 = green
+ *       despulpado  — wet depulped (mucilage / wet)    kg / 4.20 = green
+ *       seco        — dried product (any process)      kg / 1.34 = green
  *
- * Note: greenToCherry / cherryToGreen (× 7.65) in cherryConversion.js
- * are the demand-side forecasting utilities — used only when planning
+ *     These are universal accounting factors per the operations team.
+ *
+ *  B) DRIED-TO-GREEN per-process divisors — used at lot DELIVERY when
+ *     measured kg_dried_output is converted to actual green yield. These
+ *     are loaded from process_lead_times.dried_to_green_divisor and are
+ *     more accurate per process:
+ *
+ *       Natural (cereza seca)       kg / 3.40 = green
+ *       Honey   (pergamino seco)    kg / 1.50 = green
+ *       Lavado  (pergamino seco)    kg / 1.34 = green
+ *
+ * (A) and (B) coexist intentionally. (A) is a standard accounting view
+ * regardless of process; (B) is the precise yield measurement at end of
+ * drying. In practice the kg_dried_output → kg_green_actual conversion
+ * at delivery is the authoritative number.
+ *
+ * The demand-side cherry conversion (× 7.65) lives in
+ * cherryConversion.js and is the single source of truth for forecasting
  * how much fresh cherry an order requires.
  */
 
 'use strict';
 
+// ── A) Input-stage divisors ────────────────────────────────────────
+const INPUT_STAGE_DIVISORS = Object.freeze({
+  cereza:     7.65,
+  despulpado: 4.20,
+  seco:       1.34,
+});
+
+const INPUT_STAGE_LABELS = Object.freeze({
+  cereza:     'Cereza fresca',
+  despulpado: 'Despulpado (wet)',
+  seco:       'Seco',
+});
+
+/**
+ * Convert a weight at any input stage to its green-coffee equivalent.
+ * @param {number} kgInput
+ * @param {'cereza'|'despulpado'|'seco'} stage
+ * @returns {number} kg green, rounded to 2 decimals.
+ */
+function inputToGreen(kgInput, stage) {
+  if (typeof kgInput !== 'number' || !Number.isFinite(kgInput) || kgInput < 0) {
+    throw new TypeError(`inputToGreen: kgInput must be a non-negative finite number, got ${kgInput}`);
+  }
+  const divisor = INPUT_STAGE_DIVISORS[stage];
+  if (!divisor) {
+    throw new Error(`inputToGreen: unknown processing stage "${stage}"`);
+  }
+  return round2(kgInput / divisor);
+}
+
+function inputStageLabel(stage) { return INPUT_STAGE_LABELS[stage] || stage; }
+
+// ── B) Dried-to-green per-process divisors ──────────────────────────
 /** Default divisors — must be kept in sync with migration 0006_dried_yield.sql. */
 const DRIED_TO_GREEN_DIVISORS = Object.freeze({
   Natural: 3.40,
@@ -47,12 +90,6 @@ function driedToGreen(kgDried, processType, divisorMap = DRIED_TO_GREEN_DIVISORS
   return round2(kgDried / divisor);
 }
 
-/**
- * @param {number} kgGreen
- * @param {string} processType
- * @param {Record<string, number>} [divisorMap]
- * @returns {number} kg dried output expected, rounded to 2 decimals.
- */
 function greenToDried(kgGreen, processType, divisorMap = DRIED_TO_GREEN_DIVISORS) {
   if (typeof kgGreen !== 'number' || !Number.isFinite(kgGreen) || kgGreen < 0) {
     throw new TypeError(`greenToDried: kgGreen must be a non-negative finite number, got ${kgGreen}`);
@@ -64,10 +101,6 @@ function greenToDried(kgGreen, processType, divisorMap = DRIED_TO_GREEN_DIVISORS
   return round2(kgGreen * divisor);
 }
 
-/**
- * Spanish label for the physical dried-output form, used in UIs that
- * speak Spanish. Pure UI helper; not used in calculations.
- */
 function driedOutputLabel(processType) {
   switch (processType) {
     case 'Natural': return 'Cereza seca';
@@ -80,6 +113,10 @@ function driedOutputLabel(processType) {
 function round2(n) { return Math.round(n * 100) / 100; }
 
 module.exports = {
+  INPUT_STAGE_DIVISORS,
+  INPUT_STAGE_LABELS,
+  inputToGreen,
+  inputStageLabel,
   DRIED_TO_GREEN_DIVISORS,
   driedToGreen,
   greenToDried,

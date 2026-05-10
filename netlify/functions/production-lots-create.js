@@ -2,23 +2,36 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
-const { cherryToGreen } = require('./_lib/cherryConversion');
-const { PROCESS_TYPES } = require('./_lib/schema');
-const { created, badReq, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
+const { PROCESS_TYPES, ORDER_STATUS } = require('./_lib/schema');
+const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
  * POST /production-lots-create  (finca, admin)
  * Body:
  *   reference_id           uuid
  *   process_type           one of PROCESS_TYPES
- *   kg_cherry_input        number > 0
+ *   processing_stage       'cereza' | 'despulpado' | 'seco'
+ *   kg_input_amount        number > 0          (the weight at the chosen stage)
  *   start_date             'YYYY-MM-DD'
  *   fermentation_hours     number >= 0 (optional)
  *   variety_ids            [uuid] (optional)
  *   notes                  string (optional)
+ *   initial_assignments    [{ demand_order_id, kg_green_allocated }] (optional)
  *
- * Lot starts in status InFermentation. kg_green_expected is computed
- * from kg_cherry_input via the cherry-conversion utility.
+ * Backwards-compat: if `kg_cherry_input` is sent without `processing_stage`,
+ * it is treated as a 'cereza' lot (legacy behavior).
+ *
+ * The kg amount is stored in the column matching the stage:
+ *   cereza      → kg_cherry_input
+ *   despulpado  → kg_despulpado_input
+ *   seco        → kg_dried_output
+ *
+ * kg_green_expected is computed via inputToGreen(amount, stage).
+ *
+ * If `initial_assignments` is provided, those allocations are created
+ * after the lot insert (atomically chained — order's InProduction status
+ * is promoted via the same path as POST /lot-assignments-create).
  */
 exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -28,15 +41,30 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const errors = [];
   const reference_id = body.reference_id;
   const process_type = body.process_type;
-  const kg_cherry_input = Number(body.kg_cherry_input);
+
+  // Backwards-compat: legacy callers send kg_cherry_input + no stage.
+  let processing_stage = body.processing_stage;
+  let kg_input_amount  = Number(body.kg_input_amount);
+  if ((!processing_stage || !Number.isFinite(kg_input_amount) || kg_input_amount <= 0)
+      && body.kg_cherry_input != null) {
+    processing_stage = 'cereza';
+    kg_input_amount  = Number(body.kg_cherry_input);
+  }
+
   const start_date = body.start_date;
   const fermentation_hours = body.fermentation_hours == null ? null : Number(body.fermentation_hours);
   const variety_ids = Array.isArray(body.variety_ids) ? body.variety_ids : [];
   const notes = body.notes == null ? null : String(body.notes);
+  const initial_assignments = Array.isArray(body.initial_assignments) ? body.initial_assignments : [];
 
   if (!reference_id) errors.push('reference_id required');
   if (!PROCESS_TYPES.includes(process_type)) errors.push('process_type invalid');
-  if (!Number.isFinite(kg_cherry_input) || kg_cherry_input <= 0) errors.push('kg_cherry_input must be > 0');
+  if (!processing_stage || !INPUT_STAGE_DIVISORS[processing_stage]) {
+    errors.push('processing_stage must be cereza, despulpado, or seco');
+  }
+  if (!Number.isFinite(kg_input_amount) || kg_input_amount <= 0) {
+    errors.push('kg_input_amount must be > 0');
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errors.push('start_date must be YYYY-MM-DD');
   if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
     errors.push('fermentation_hours must be >= 0');
@@ -48,13 +76,21 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   if (refErr) return serverErr('Reference lookup failed', refErr.message);
   if (!refRow || !refRow.active) return badReq('Unknown or inactive reference', 'INVALID_REFERENCE');
 
-  const kg_green_expected = cherryToGreen(kg_cherry_input);
+  const kg_green_expected = inputToGreen(kg_input_amount, processing_stage);
+
+  // Map the kg into the appropriate column based on the stage.
+  const stageInsert = {
+    kg_cherry_input:     processing_stage === 'cereza'     ? kg_input_amount : null,
+    kg_despulpado_input: processing_stage === 'despulpado' ? kg_input_amount : null,
+    kg_dried_output:     processing_stage === 'seco'        ? kg_input_amount : null,
+  };
 
   const { data: lot, error: insErr } = await sb
     .from('production_lots').insert({
       reference_id,
       process_type,
-      kg_cherry_input,
+      processing_stage,
+      ...stageInsert,
       kg_green_expected,
       fermentation_hours,
       start_date,
@@ -69,5 +105,45 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (vErr) return serverErr('Failed to link varieties', vErr.message);
   }
 
-  return created({ lot });
+  // Optional initial assignments
+  const assignmentResults = [];
+  if (initial_assignments.length > 0) {
+    const valid = initial_assignments.filter((a) => {
+      const n = Number(a.kg_green_allocated);
+      return a.demand_order_id && Number.isFinite(n) && n > 0;
+    });
+    if (valid.length > 0) {
+      const rows = valid.map((a) => ({
+        production_lot_id: lot.id,
+        demand_order_id: a.demand_order_id,
+        kg_green_allocated: Number(a.kg_green_allocated),
+      }));
+      const { data: createdAssigns, error: aErr } = await sb
+        .from('lot_order_assignments').insert(rows).select();
+      if (aErr) {
+        // Roll back the lot to keep things consistent.
+        await sb.from('production_lots').delete().eq('id', lot.id);
+        if (/reference mismatch/i.test(aErr.message))   return conflict(aErr.message, 'REFERENCE_MISMATCH');
+        if (/process_type mismatch/i.test(aErr.message))return conflict(aErr.message, 'PROCESS_MISMATCH');
+        if (/exceeds order kg_green_accepted/i.test(aErr.message))
+          return conflict(aErr.message, 'OVER_ALLOCATED');
+        return serverErr('Assignment insert failed', aErr.message);
+      }
+      assignmentResults.push(...(createdAssigns || []));
+
+      // Promote any Accepted/PartiallyAccepted orders to InProduction.
+      const orderIds = [...new Set(valid.map((a) => a.demand_order_id))];
+      for (const id of orderIds) {
+        const { data: o } = await sb.from('demand_orders').select('id, status').eq('id', id).maybeSingle();
+        if (o && (o.status === ORDER_STATUS.Accepted || o.status === ORDER_STATUS.PartiallyAccepted)) {
+          await sb.from('demand_orders').update({
+            status: ORDER_STATUS.InProduction,
+            in_production_at: new Date().toISOString(),
+          }).eq('id', id);
+        }
+      }
+    }
+  }
+
+  return created({ lot, assignments: assignmentResults });
 });

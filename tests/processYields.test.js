@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   DRIED_TO_GREEN_DIVISORS, driedToGreen, greenToDried, driedOutputLabel,
+  INPUT_STAGE_DIVISORS, inputToGreen, inputStageLabel,
 } = require('../netlify/functions/_lib/processYields');
 
 test('default divisors match the seeded migration', () => {
@@ -63,4 +64,42 @@ test('driedOutputLabel returns Spanish form', () => {
   assert.match(driedOutputLabel('Honey'),   /Pergamino/);
   assert.match(driedOutputLabel('Lavado'),  /Pergamino/);
   assert.match(driedOutputLabel('Other'),   /Producto seco/);
+});
+
+// ── Input-stage divisors ──────────────────────────────────────────
+test('input-stage divisors match what ops specified', () => {
+  assert.equal(INPUT_STAGE_DIVISORS.cereza,     7.65);
+  assert.equal(INPUT_STAGE_DIVISORS.despulpado, 4.20);
+  assert.equal(INPUT_STAGE_DIVISORS.seco,       1.34);
+});
+
+test('inputToGreen: cereza 765kg → 100kg green', () => {
+  assert.equal(inputToGreen(765, 'cereza'), 100);
+});
+
+test('inputToGreen: despulpado 420kg → 100kg green', () => {
+  assert.equal(inputToGreen(420, 'despulpado'), 100);
+});
+
+test('inputToGreen: seco 134kg → 100kg green', () => {
+  assert.equal(inputToGreen(134, 'seco'), 100);
+});
+
+test('inputToGreen: rounds to 2 decimals', () => {
+  // 100 / 4.20 = 23.809523... → 23.81
+  assert.equal(inputToGreen(100, 'despulpado'), 23.81);
+});
+
+test('inputToGreen: rejects unknown stage', () => {
+  assert.throws(() => inputToGreen(100, 'mojado'));
+});
+
+test('inputToGreen: rejects negative', () => {
+  assert.throws(() => inputToGreen(-1, 'cereza'), TypeError);
+});
+
+test('inputStageLabel returns Spanish label', () => {
+  assert.match(inputStageLabel('cereza'),     /Cereza fresca/);
+  assert.match(inputStageLabel('despulpado'), /Despulpado/);
+  assert.match(inputStageLabel('seco'),       /Seco/);
 });

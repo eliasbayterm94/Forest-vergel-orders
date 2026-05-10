@@ -8,9 +8,16 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 
 const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
-const CHERRY_PER_GREEN = 7.65;
 
-// Dried→green divisors. Mirror process_lead_times.dried_to_green_divisor in DB.
+// Input-stage divisors. Mirror processYields.js on the server.
+const INPUT_STAGE_DIVISORS = { cereza: 7.65, despulpado: 4.20, seco: 1.34 };
+const STAGE_OPTIONS = [
+  { value: 'cereza',     label: 'Cereza fresca',  inputLabel: 'kg de cereza fresca' },
+  { value: 'despulpado', label: 'Despulpado',     inputLabel: 'kg de café despulpado' },
+  { value: 'seco',       label: 'Seco',           inputLabel: 'kg de café seco' },
+];
+
+// Dried→green divisors per process (used at the Ready transition).
 const DRIED_TO_GREEN_DIVISORS = { Natural: 3.40, Honey: 1.50, Lavado: 1.34 };
 const DRIED_LABELS = {
   Natural: 'Cereza seca',
@@ -63,6 +70,7 @@ export async function fincaLotsView() {
     const next = NEXT_STATUS[l.status];
     const totalAllocated = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
     const remaining = Number(l.kg_green_actual ?? l.kg_green_expected) - totalAllocated;
+    const stageLabel = stageLabelOf(l);
 
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
@@ -70,6 +78,7 @@ export async function fincaLotsView() {
           el('span', { class: 'ctrm-code', text: l.lot_code }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
           el('span', { class: 'ctrm-pill roll', text: statusLabel(l.status) }),
+          stageLabel ? el('span', { class: 'ctrm-pill muted', text: stageLabel }) : null,
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           next ? el('button', {
@@ -83,7 +92,8 @@ export async function fincaLotsView() {
         ]),
       ]),
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
-        meta('Cereza fresca', fmtKg(l.kg_cherry_input)),
+        l.kg_cherry_input     != null ? meta('Cereza fresca', fmtKg(l.kg_cherry_input)) : null,
+        l.kg_despulpado_input != null ? meta('Despulpado',    fmtKg(l.kg_despulpado_input)) : null,
         meta('Verde esperado', fmtKg(l.kg_green_expected)),
         l.kg_dried_output != null ? meta(DRIED_LABELS[l.process_type] || 'Peso seco', fmtKg(l.kg_dried_output)) : null,
         l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
@@ -220,18 +230,24 @@ export async function fincaLotsView() {
     render();
   }
 
-  // ---------- Create lot ----------
+  // ---------- Create lot (stage selector + optional pre-assignment) ----------
   function createLot() {
     return openModal(({ close }) => {
       let chosenRef = null;
+      let chosenStage = 'cereza';
+      let candidateOrders = [];      // lazy-loaded when reference + process settle
+      const assignmentInputs = new Map();   // order_id → input element
+
       const refCombo = createCombobox({
         placeholder: 'Buscar referencia...',
         items: refs,
         onChange: (item) => {
           chosenRef = item;
-          if (item && Array.isArray(item.varieties) && vCombo.getValues().length === 0) {
-            vCombo.setValues(item.varieties);
+          if (item?.process_type) procSelect.value = item.process_type;
+          if (item?.fermentation_hours != null && fermInput.value === '') {
+            fermInput.value = String(item.fermentation_hours);
           }
+          maybeRefreshCandidates();
         },
       });
 
@@ -239,16 +255,38 @@ export async function fincaLotsView() {
         el('option', { value: '', disabled: true, selected: true }, ['Selecciona proceso...']),
         ...PROCESS_TYPES.map((p) => el('option', { value: p }, [p])),
       ]);
+      procSelect.addEventListener('change', () => maybeRefreshCandidates());
 
-      const kgCherry = el('input', {
+      // Stage selector — visual segmented control
+      const stageButtons = STAGE_OPTIONS.map((opt) => el('button', {
+        type: 'button',
+        class: `ctrm-btn flex-1 uppercase tracking-eyebrow text-[10px] ${opt.value === chosenStage ? 'ctrm-btn-primary' : 'ctrm-btn-soft'}`,
+        onClick: () => { chosenStage = opt.value; refreshStageUI(); },
+      }, [opt.label]));
+
+      const kgInput = el('input', {
         type: 'number', min: '0', step: '0.01',
         class: 'ctrm-input mono',
       });
-      const kgGreenHint = el('p', { class: 'ctrm-hint', text: 'Verde esperado: —' });
-      kgCherry.addEventListener('input', () => {
-        const v = Number(kgCherry.value || 0);
-        kgGreenHint.textContent = `Verde esperado: ${fmtKg(v / CHERRY_PER_GREEN)}`;
-      });
+      const kgLabelEl = el('label', { class: 'ctrm-label', text: stageInputLabelOf(chosenStage) });
+      const kgGreenHint = el('p', { class: 'ctrm-hint', text: stageHintEmpty(chosenStage) });
+      const recomputeGreen = () => {
+        const v = Number(kgInput.value || 0);
+        const div = INPUT_STAGE_DIVISORS[chosenStage];
+        kgGreenHint.textContent = v > 0
+          ? `Verde esperado: ${fmtKg(v / div)}  (÷ ${div.toFixed(2)})`
+          : stageHintEmpty(chosenStage);
+      };
+      kgInput.addEventListener('input', recomputeGreen);
+
+      function refreshStageUI() {
+        stageButtons.forEach((btn, i) => {
+          const opt = STAGE_OPTIONS[i];
+          btn.className = `ctrm-btn flex-1 uppercase tracking-eyebrow text-[10px] ${opt.value === chosenStage ? 'ctrm-btn-primary' : 'ctrm-btn-soft'}`;
+        });
+        kgLabelEl.textContent = stageInputLabelOf(chosenStage);
+        recomputeGreen();
+      }
 
       const startInput = el('input', {
         type: 'date', value: new Date().toISOString().slice(0, 10),
@@ -270,14 +308,102 @@ export async function fincaLotsView() {
         class: 'ctrm-textarea',
       });
 
-      return el('div', { class: 'space-y-3' }, [
+      // Optional assignments section
+      const assignWrap = el('div', { class: 'space-y-1.5' }, [
+        el('p', { class: 'ctrm-hint', text: 'Selecciona referencia + proceso para ver pedidos compatibles.' }),
+      ]);
+
+      async function maybeRefreshCandidates() {
+        if (!chosenRef || !procSelect.value) {
+          assignWrap.innerHTML = '';
+          assignWrap.append(el('p', { class: 'ctrm-hint', text: 'Selecciona referencia + proceso para ver pedidos compatibles.' }));
+          return;
+        }
+        try {
+          const r = await api.ordersList({
+            status: 'Accepted,PartiallyAccepted,InProduction',
+            reference_id: chosenRef.id,
+            process_type: procSelect.value,
+          });
+          // Compute remaining kg per order based on currently visible lots' assignments.
+          const allocByOrder = new Map();
+          for (const ll of lots) {
+            for (const a of ll.assignments || []) {
+              allocByOrder.set(a.demand_order_id, (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
+            }
+          }
+          candidateOrders = (r.orders || []).map((o) => {
+            const allocated = allocByOrder.get(o.id) || 0;
+            const remaining = Math.max(0, Number(o.kg_green_accepted || 0) - allocated);
+            return { ...o, allocated_kg: allocated, remaining_kg: remaining };
+          }).filter((o) => o.remaining_kg > 0.001);
+          renderCandidates();
+        } catch (e) {
+          assignWrap.innerHTML = '';
+          assignWrap.append(el('p', { class: 'text-[12px] text-crit', text: e.message }));
+        }
+      }
+
+      function renderCandidates() {
+        assignWrap.innerHTML = '';
+        assignmentInputs.clear();
+        if (candidateOrders.length === 0) {
+          assignWrap.append(el('p', { class: 'ctrm-hint', text: 'No hay pedidos compatibles con kg disponibles.' }));
+          return;
+        }
+        for (const o of candidateOrders) {
+          const inp = el('input', {
+            type: 'number', step: '0.01', min: '0', max: String(o.remaining_kg),
+            placeholder: '0',
+            class: 'ctrm-input mono w-24 text-right py-1',
+          });
+          assignmentInputs.set(o.id, inp);
+          assignWrap.append(el('div', { class: 'flex flex-wrap items-center justify-between gap-2 py-1.5 border-b border-sand last:border-b-0' }, [
+            el('div', { class: 'min-w-0 flex-1' }, [
+              el('div', { class: 'flex items-center gap-2 mb-0.5' }, [
+                el('span', { class: 'ctrm-code', text: o.order_code }),
+                el('span', { class: 'text-[12px] text-ink-700 truncate', text: o.reference_name || '' }),
+              ]),
+              el('div', { class: 'text-[11px] text-ink-500 font-mono' }, [
+                `Aceptado ${fmtKg(o.kg_green_accepted)} · Asignado ${fmtKg(o.allocated_kg)} · `,
+                el('strong', { class: 'text-ink-700' }, [`Disponible ${fmtKg(o.remaining_kg)}`]),
+                ` · Entrega ${fmtDate(o.max_delivery_date)}`,
+              ]),
+            ]),
+            inp,
+          ]));
+        }
+        assignWrap.append(el('p', { class: 'ctrm-hint mt-2', text: 'Opcional: indica cuántos kg verde de este lote se asignan a cada pedido. Se puede ajustar después.' }));
+      }
+
+      const body = el('div', { class: 'space-y-3' }, [
         labelled('Referencia', refCombo.el),
         labelled('Proceso', procSelect),
-        labelled('kg cereza ingresados', el('div', {}, [kgCherry, kgGreenHint])),
+
+        // Stage selector
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Etapa de procesamiento' }),
+          el('div', { class: 'flex gap-2' }, stageButtons),
+        ]),
+
+        // kg input + auto green hint
+        el('div', {}, [
+          kgLabelEl,
+          kgInput,
+          kgGreenHint,
+        ]),
+
         labelled('Fecha de inicio', startInput),
         labelled('Horas de fermentación', fermInput),
         labelled('Variedades', vCombo.el),
         labelled('Notas', notesInput),
+
+        // Optional pre-assignment
+        el('div', { class: 'pt-3 border-t border-sand' }, [
+          el('label', { class: 'ctrm-label', text: 'Asignar a pedidos (opcional)' }),
+          el('div', { class: 'max-h-[40vh] overflow-y-auto' }, [assignWrap]),
+        ]),
+
         el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
           el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
           el('button', {
@@ -286,20 +412,39 @@ export async function fincaLotsView() {
             onClick: async () => {
               if (!chosenRef) { toast('Selecciona referencia', 'warning'); return; }
               if (!procSelect.value) { toast('Selecciona proceso', 'warning'); return; }
-              const kg = Number(kgCherry.value);
-              if (!(kg > 0)) { toast('kg cereza inválido', 'warning'); return; }
+              const kg = Number(kgInput.value);
+              if (!(kg > 0)) { toast(`${stageInputLabelOf(chosenStage)}: valor inválido`, 'warning'); return; }
               if (!startInput.value) { toast('Falta fecha de inicio', 'warning'); return; }
+
+              // Collect assignments (filter out empty / zero rows)
+              const initial_assignments = [];
+              for (const [orderId, inp] of assignmentInputs) {
+                const v = Number(inp.value || 0);
+                if (v > 0) initial_assignments.push({ demand_order_id: orderId, kg_green_allocated: v });
+              }
+
+              // Local validation: total allocations ≤ kg verde esperado
+              const greenExpected = kg / INPUT_STAGE_DIVISORS[chosenStage];
+              const totalAlloc = initial_assignments.reduce((s, a) => s + a.kg_green_allocated, 0);
+              if (totalAlloc > greenExpected + 0.001) {
+                toast(`Asignaciones (${fmtKg(totalAlloc)}) exceden verde esperado (${fmtKg(greenExpected)})`, 'warning', 4500);
+                return;
+              }
+
               try {
                 const r = await api.lotCreate({
                   reference_id: chosenRef.id,
                   process_type: procSelect.value,
-                  kg_cherry_input: kg,
+                  processing_stage: chosenStage,
+                  kg_input_amount: kg,
                   start_date: startInput.value,
                   fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
                   variety_ids: vCombo.getValues().map((v) => v.id),
                   notes: notesInput.value || null,
+                  initial_assignments,
                 });
-                toast(`Lote ${r.lot.lot_code} creado`, 'success');
+                const assignedCount = (r.assignments || []).length;
+                toast(`Lote ${r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
                 close({ ok: true });
                 await reloadLots();
               } catch (e) { toast(e.message, 'error'); }
@@ -307,10 +452,13 @@ export async function fincaLotsView() {
           }, ['Crear lote']),
         ]),
       ]);
+
+      refreshStageUI();
+      return body;
     }, { title: 'Nuevo lote', wide: true });
   }
 
-  // ---------- Assign lot to orders ----------
+  // ---------- Assign lot to orders (post-creation) ----------
   async function assignLot(lot) {
     let candidates = [];
     try {
@@ -359,6 +507,23 @@ export async function fincaLotsView() {
       await reloadLots();
     } catch (e) { toast(e.message, 'error'); }
   }
+}
+
+// ───────────────────── helpers ──────────────────────
+function stageLabelOf(lot) {
+  if (lot.processing_stage === 'cereza')     return 'Inicio: cereza';
+  if (lot.processing_stage === 'despulpado') return 'Inicio: despulpado';
+  if (lot.processing_stage === 'seco')       return 'Inicio: seco';
+  return null;
+}
+
+function stageInputLabelOf(stage) {
+  return (STAGE_OPTIONS.find((s) => s.value === stage) || {}).inputLabel || 'kg de café';
+}
+
+function stageHintEmpty(stage) {
+  const div = INPUT_STAGE_DIVISORS[stage];
+  return `Verde esperado: ÷ ${div.toFixed(2)}`;
 }
 
 function meta(label, value) {

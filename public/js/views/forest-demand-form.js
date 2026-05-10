@@ -1,11 +1,12 @@
 import { el } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
-import { confirmModal, openModal } from '../ui/modal.js';
+import { confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
 import { fmtKg } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
+import { openReferenceModal } from './forest-references.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -13,13 +14,13 @@ const CHERRY_PER_GREEN = 7.65; // Display only; server is the source of truth.
 
 export async function forestDemandFormView() {
   const [refsRes, varsRes] = await Promise.all([api.references(), api.varieties()]);
-  const allReferences = refsRes.references;
-  const allVarieties  = varsRes.varieties;
+  let allReferences  = refsRes.references;
+  const allVarieties = varsRes.varieties;
 
   let selectedReference = null;
   let selectedVarieties = [];
 
-  // ----- Variety multi-combo -----
+  // ----- Variety multi-combo (per-order, independent of reference) -----
   const varietyCombo = createMultiCombobox({
     placeholder: 'Buscar variedades...',
     items: allVarieties,
@@ -35,33 +36,61 @@ export async function forestDemandFormView() {
     createLabel: '+ Crear variedad',
   });
 
-  // ----- Reference combo -----
+  // ----- Other inputs (declared first so the reference combo can pre-fill them) -----
+  const processSelect = el('select', {
+    required: true,
+    class: 'ctrm-select',
+  }, [
+    el('option', { value: '', disabled: true, selected: true }, ['Selecciona proceso...']),
+    ...PROCESS_TYPES.map((p) => el('option', { value: p }, [p])),
+  ]);
+
+  const fermInput = el('input', {
+    type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
+    class: 'ctrm-input mono',
+  });
+
+  // ----- Reference combo (auto-fills proceso + fermentación) -----
   const referenceCombo = createCombobox({
     placeholder: 'Buscar referencia...',
     items: allReferences,
     onChange: (item) => {
       selectedReference = item;
-      if (item && selectedVarieties.length === 0 && Array.isArray(item.varieties)) {
-        varietyCombo.setValues(item.varieties);
-        selectedVarieties = item.varieties;
+      if (!item) return;
+      // Auto-fill the process select from the reference template
+      if (item.process_type && !processSelect.value) {
+        processSelect.value = item.process_type;
+      } else if (item.process_type) {
+        // Always respect the reference's process unless user explicitly changed it
+        processSelect.value = item.process_type;
+      }
+      // Auto-fill fermentation hours if not set
+      if (item.fermentation_hours != null && fermInput.value === '') {
+        fermInput.value = String(item.fermentation_hours);
       }
     },
     onCreate: async (text) => {
-      const result = await openInlineReferenceModal(text, allVarieties);
+      const result = await openReferenceModal({ initialName: text });
       if (!result) return null;
       try {
         const r = await api.referenceSave({
           name: result.name,
-          variety_ids: result.varieties.map((v) => v.id),
+          process_type: result.process_type,
+          fermentation_hours: result.fermentation_hours,
+          notes: result.notes,
         });
         toast(`Referencia creada: ${r.reference.name}`, 'success');
+        // Append to local list so the dropdown sees it next time it opens
+        allReferences = [...allReferences, r.reference]
+          .sort((a, b) => a.name.localeCompare(b.name));
+        referenceCombo.setItems(allReferences);
         return r.reference;
       } catch (e) { toast(e.message, 'error'); return null; }
     },
     createLabel: '+ Crear referencia',
   });
 
-  // ----- Other inputs -----
+  // ----- Numeric / date / textarea inputs -----
   const kgInput = el('input', {
     type: 'number', min: '0', step: '0.01', required: true,
     placeholder: 'Ej: 250',
@@ -85,19 +114,6 @@ export async function forestDemandFormView() {
     el('option', { value: '', disabled: true, selected: true }, ['Selecciona aspecto...']),
     ...PHYSICAL_ASPECTS.map((a) => el('option', { value: a }, [a])),
   ]);
-
-  const processSelect = el('select', {
-    required: true,
-    class: 'ctrm-select',
-  }, [
-    el('option', { value: '', disabled: true, selected: true }, ['Selecciona proceso...']),
-    ...PROCESS_TYPES.map((p) => el('option', { value: p }, [p])),
-  ]);
-
-  const fermInput = el('input', {
-    type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
-    class: 'ctrm-input mono',
-  });
 
   const commentsInput = el('textarea', {
     rows: '3', placeholder: 'Notas adicionales...',
@@ -134,8 +150,8 @@ export async function forestDemandFormView() {
       await trySubmit(payload);
     },
   }, [
-    section('Referencia', referenceCombo.el, 'Selecciona una existente o crea una nueva.'),
-    section('Variedades', varietyCombo.el, 'Una o varias. Las de la referencia se cargan por defecto.'),
+    section('Referencia', referenceCombo.el, 'Selecciona una existente o crea una nueva. Proceso y fermentación se autocompletan desde la referencia.'),
+    section('Variedades', varietyCombo.el, 'Una o varias. Selección por pedido.'),
     section('Cantidad (kg verde)', el('div', {}, [kgInput, cherryHint])),
     section('Fecha máxima de entrega', dateInput),
     section('Aspecto físico', aspectSelect),
@@ -192,37 +208,4 @@ function section(label, child, hint) {
     child,
     hint ? el('p', { class: 'ctrm-hint', text: hint }) : null,
   ]);
-}
-
-function openInlineReferenceModal(initialName, allVarieties) {
-  return openModal(({ close }) => {
-    const nameInput = el('input', {
-      type: 'text', value: initialName,
-      class: 'ctrm-input',
-    });
-    let chosen = [];
-    const vc = createMultiCombobox({
-      placeholder: 'Variedades de la referencia...',
-      items: allVarieties,
-      onChange: (v) => { chosen = v; },
-    });
-    return el('div', { class: 'space-y-3' }, [
-      el('label', { class: 'ctrm-label' }, ['Nombre']),
-      nameInput,
-      el('label', { class: 'ctrm-label mt-2' }, ['Variedades']),
-      vc.el,
-      el('div', { class: 'flex justify-end gap-2 pt-3' }, [
-        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
-        el('button', {
-          class: 'ctrm-btn ctrm-btn-primary',
-          type: 'button',
-          onClick: () => {
-            const name = nameInput.value.trim();
-            if (!name) { toast('Falta el nombre', 'warning'); return; }
-            close({ name, varieties: chosen });
-          },
-        }, ['Guardar']),
-      ]),
-    ]);
-  }, { title: 'Crear referencia', wide: true });
 }

@@ -5,33 +5,18 @@ const { getSupabase } = require('./_lib/supabase');
 const { ok, serverErr, methodNotAllowed } = require('./_lib/respond');
 
 /**
- * GET /references-list — returns references with linked variety ids/names.
+ * GET /references-list — returns active references with their template
+ * fields (name, process_type, fermentation_hours, notes).
  */
 exports.handler = requireAuth(async (event) => {
   if (event.httpMethod !== 'GET') return methodNotAllowed(['GET']);
   const sb = getSupabase();
   const { data, error } = await sb
     .from('coffee_references')
-    .select(`
-      id, name, active, notes,
-      coffee_reference_varieties (
-        variety_id,
-        coffee_varieties ( id, name )
-      )
-    `)
+    .select('id, name, active, notes, process_type, fermentation_hours')
     .eq('active', true)
     .order('name', { ascending: true });
   if (error) return serverErr('Failed to load references', error.message);
 
-  const references = (data || []).map((r) => ({
-    id: r.id,
-    name: r.name,
-    active: r.active,
-    notes: r.notes,
-    varieties: (r.coffee_reference_varieties || [])
-      .map((j) => j.coffee_varieties)
-      .filter(Boolean)
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  }));
-  return ok({ references });
+  return ok({ references: data || [] });
 });
