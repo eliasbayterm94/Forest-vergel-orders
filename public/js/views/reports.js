@@ -35,6 +35,10 @@ export async function reportsView() {
     redraw();
   });
 
+  // KPIs viven independientes del rango (siempre mes actual / 3m).
+  const kpis = computeKpis({ orders, lots, shipments, todayStr });
+  const kpiStrip = renderKpiStrip(kpis);
+
   function redraw() {
     clear(sectionsWrap);
     const months = monthKeysForRange(todayStr, activeRange);
@@ -48,6 +52,7 @@ export async function reportsView() {
   return chrome(el('div', {}, [
     pageTitle('Reportes',
       `${orders.length} pedidos · ${lots.length} lotes · ${shipments.length} despachos`),
+    kpiStrip,
     rangeBar.el,
     sectionsWrap,
   ]));
@@ -98,6 +103,153 @@ function monthKeysForRange(todayStr, rangeKey) {
     }
   }
   return months;
+}
+
+// ─── KPI strip (independiente del rango) ────────────────────────────
+function computeKpis({ orders, lots, shipments, todayStr }) {
+  const today = new Date(todayStr + 'T12:00:00Z');
+  const thisMonth = todayStr.slice(0, 7);
+  const lastMonth = monthOffset(today, -1);
+  const last3Months = [0, 1, 2].map((i) => monthOffset(today, -i));
+  const inLast3 = (s) => last3Months.includes((s || '').slice(0, 7));
+
+  // Comercial
+  const verdeMes = sum(
+    shipments.filter((s) => (s.shipment_date || '').slice(0, 7) === thisMonth),
+    (s) => s.totals?.kg_green || 0,
+  );
+  const verdeMesPrev = sum(
+    shipments.filter((s) => (s.shipment_date || '').slice(0, 7) === lastMonth),
+    (s) => s.totals?.kg_green || 0,
+  );
+  const verdeMomDelta = verdeMesPrev > 0
+    ? ((verdeMes - verdeMesPrev) / verdeMesPrev) * 100 : null;
+
+  const creadosMes = orders.filter((o) => (o.created_at || '').slice(0, 7) === thisMonth).length;
+  const creadosMesPrev = orders.filter((o) => (o.created_at || '').slice(0, 7) === lastMonth).length;
+  const creadosDelta = creadosMesPrev > 0
+    ? ((creadosMes - creadosMesPrev) / creadosMesPrev) * 100 : null;
+
+  const created3m  = orders.filter((o) => inLast3(o.created_at));
+  const accepted3m = created3m.filter((o) =>
+    ['Accepted','PartiallyAccepted','InProduction','Completed'].includes(o.status));
+  const acceptanceRate = created3m.length > 0
+    ? (accepted3m.length / created3m.length) * 100 : null;
+
+  const completed3m = orders.filter((o) =>
+    o.completed_at && inLast3(o.completed_at) && o.max_delivery_date);
+  const onTime3m = completed3m.filter((o) =>
+    (o.completed_at || '').slice(0, 10) <= o.max_delivery_date);
+  const cumplimientoRate = completed3m.length > 0
+    ? (onTime3m.length / completed3m.length) * 100 : null;
+
+  // Producción
+  const deliveredLatest = lots
+    .filter((l) => l.status === 'Delivered' && l.factor_rendimiento != null)
+    .sort((a, b) => (b.delivered_date || '').localeCompare(a.delivered_date || ''));
+  const factorMonth = deliveredLatest.length > 0
+    ? deliveredLatest[0].delivered_date.slice(0, 7) : null;
+  const factorRecent = factorMonth
+    ? avg(deliveredLatest.filter((l) => l.delivered_date.slice(0, 7) === factorMonth)
+        .map((l) => Number(l.factor_rendimiento)))
+    : null;
+
+  const completedAll3m = orders.filter((o) =>
+    o.completed_at && inLast3(o.completed_at) && o.created_at);
+  const cycleAvg = completedAll3m.length > 0
+    ? avg(completedAll3m.map((o) =>
+        (new Date(o.completed_at) - new Date(o.created_at)) / 86400000))
+    : null;
+
+  const lotsDeliveredMes = lots.filter((l) =>
+    l.status === 'Delivered' && (l.delivered_date || '').slice(0, 7) === thisMonth).length;
+
+  // Parciales rechazados últ. 3m
+  let rejected3mKg = 0;
+  let rejected3mCount = 0;
+  for (const lot of lots) {
+    for (const p of lot.partials || []) {
+      if (!p.rejected_at) continue;
+      if (!inLast3(p.rejected_at)) continue;
+      rejected3mCount += 1;
+      rejected3mKg    += Number(p.kg_green_yield || 0);
+    }
+  }
+
+  return {
+    thisMonth, lastMonth,
+    verdeMes, verdeMomDelta,
+    creadosMes, creadosDelta,
+    acceptanceRate, acceptanceCreated: created3m.length,
+    cumplimientoRate, cumplimientoTotal: completed3m.length,
+    factorRecent, factorMonth,
+    cycleAvg, cycleCount: completedAll3m.length,
+    lotsDeliveredMes,
+    rejected3mKg, rejected3mCount,
+  };
+}
+
+function renderKpiStrip(k) {
+  const fmtPct = (v) => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`;
+  const deltaKind = (v) => v == null ? null : v > 1 ? 'ok' : v < -1 ? 'crit' : null;
+  const rateKind  = (v) => v == null ? null : v >= 90 ? 'ok' : v >= 70 ? 'warn' : 'crit';
+
+  return el('div', { class: 'mb-5 space-y-2' }, [
+    el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2' }, [
+      kpiCard('Verde despachado mes', fmtKg(k.verdeMes),
+        k.verdeMomDelta == null
+          ? `vs ${k.lastMonth}: sin datos`
+          : `${fmtPct(k.verdeMomDelta)} vs mes prev.`,
+        deltaKind(k.verdeMomDelta)),
+      kpiCard('Pedidos creados mes', String(k.creadosMes),
+        k.creadosDelta == null
+          ? `vs ${k.lastMonth}: sin datos`
+          : `${fmtPct(k.creadosDelta)} vs mes prev.`,
+        deltaKind(k.creadosDelta)),
+      kpiCard('Tasa aceptación 3m',
+        k.acceptanceRate != null ? `${k.acceptanceRate.toFixed(0)}%` : '—',
+        `${k.acceptanceCreated} pedidos creados`,
+        rateKind(k.acceptanceRate)),
+      kpiCard('Cumplimiento plazos 3m',
+        k.cumplimientoRate != null ? `${k.cumplimientoRate.toFixed(0)}%` : '—',
+        `${k.cumplimientoTotal} entregados c/fecha`,
+        rateKind(k.cumplimientoRate)),
+    ]),
+    el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2' }, [
+      kpiCard('Factor reciente',
+        k.factorRecent != null ? k.factorRecent.toFixed(2) : '—',
+        k.factorMonth ? `Promedio ${k.factorMonth}` : 'Sin lotes entregados'),
+      kpiCard('Tiempo de ciclo 3m',
+        k.cycleAvg != null ? `${k.cycleAvg.toFixed(1)} d` : '—',
+        `${k.cycleCount} pedidos completados`),
+      kpiCard('Lotes entregados mes', String(k.lotsDeliveredMes),
+        'Status Delivered'),
+      kpiCard('Parciales rechazados 3m',
+        String(k.rejected3mCount),
+        `${fmtKg(k.rejected3mKg)} verde perdido`,
+        k.rejected3mCount > 0 ? 'warn' : null),
+    ]),
+  ]);
+}
+
+function kpiCard(label, value, hint, kind) {
+  const valClass = kind ? `stat-val ${kind}` : 'stat-val';
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: label }),
+    el('p', { class: valClass, text: String(value) }),
+    el('p', { class: 'stat-sub', text: hint }),
+  ]);
+}
+
+function avg(arr) {
+  if (arr.length === 0) return null;
+  return arr.reduce((s, x) => s + x, 0) / arr.length;
+}
+
+function monthOffset(date, deltaMonths) {
+  const d = new Date(date);
+  d.setUTCMonth(d.getUTCMonth() + deltaMonths);
+  return d.toISOString().slice(0, 7);
 }
 
 // ─── Aggregations ───────────────────────────────────────────────────
@@ -228,50 +380,9 @@ function computeAggregations({ orders, lots, shipments, months }) {
     byReason: rejectedTotalsByReason,
   };
 
-  // 6) Top 10 clientes (todo el periodo cargado)
-  const byClient = groupBy(
-    orders.filter((o) => o.client_name),
-    (o) => o.client_name,
-    (group) => ({
-      pedidos: group.length,
-      verdeSolicitado: sum(group, (o) => o.kg_green_required),
-      verdeAceptado:   sum(group, (o) => o.kg_green_accepted),
-      abiertos: group.filter((o) => ['Pending','Accepted','PartiallyAccepted','InProduction'].includes(o.status)).length,
-      completados: group.filter((o) => o.status === 'Completed').length,
-    }),
-  )
-    .sort((a, b) => Number(b[1].verdeAceptado || 0) - Number(a[1].verdeAceptado || 0))
-    .slice(0, 10);
-
-  // 7) Por región
-  const regionAgg = new Map();
-  for (const o of orders) {
-    if (!o.regions || o.regions.length === 0) continue;
-    for (const r of o.regions) {
-      if (!regionAgg.has(r)) regionAgg.set(r, { pedidos: 0, verdeSolicitado: 0, verdeAceptado: 0 });
-      const b = regionAgg.get(r);
-      b.pedidos += 1;
-      b.verdeSolicitado += Number(o.kg_green_required || 0);
-      b.verdeAceptado   += Number(o.kg_green_accepted || 0);
-    }
-  }
-  const byRegion = [...regionAgg.entries()].sort((a, b) => b[1].verdeAceptado - a[1].verdeAceptado);
-
-  // 8) Por tipo de pedido
-  const byOrderType = groupBy(
-    orders.filter((o) => o.order_type),
-    (o) => o.order_type,
-    (group) => ({
-      pedidos: group.length,
-      verdeSolicitado: sum(group, (o) => o.kg_green_required),
-      verdeAceptado:   sum(group, (o) => o.kg_green_accepted),
-    }),
-  );
-
   return {
     monthSummary, yieldByMonth, cycleByMonth,
     onTimeByMonth, rejectedSummary,
-    byClient, byRegion, byOrderType,
   };
 }
 
@@ -280,7 +391,6 @@ function buildSections(data, months) {
   const {
     monthSummary, yieldByMonth, cycleByMonth,
     onTimeByMonth, rejectedSummary,
-    byClient, byRegion, byOrderType,
   } = data;
 
   // For mini-bars: scale by max created (most expressive base across columns).
@@ -391,59 +501,6 @@ function buildSections(data, months) {
 
     section(`Parciales rechazados (en ${months.length === 1 ? 'el mes' : `${months.length} meses`})`,
       rejectedSection(rejectedSummary)),
-
-    section('Top 10 clientes (por verde aceptado · todo el periodo cargado)',
-      byClient.length === 0
-        ? emptyText('Sin pedidos con cliente registrado.')
-        : sectionTable({
-            headers: ['Cliente', 'Pedidos', 'Abiertos', 'Completados', 'Verde solicitado', 'Verde aceptado'],
-            rows: byClient.map(([client, b]) => [
-              client, String(b.pedidos), String(b.abiertos), String(b.completados),
-              fmtKg(b.verdeSolicitado), fmtKg(b.verdeAceptado),
-            ]),
-            totals: null,
-            csv: () => csvFromTable(
-              ['Cliente','Pedidos','Abiertos','Completados','Verde_solicitado_kg','Verde_aceptado_kg'],
-              byClient.map(([c, b]) => [c, b.pedidos, b.abiertos, b.completados,
-                round2(b.verdeSolicitado), round2(b.verdeAceptado)]),
-              'top-clientes',
-            ),
-          }),
-    ),
-
-    section('Por región',
-      byRegion.length === 0
-        ? emptyText('Sin pedidos con región registrada.')
-        : sectionTable({
-            headers: ['Región', 'Pedidos', 'Verde solicitado', 'Verde aceptado'],
-            rows: byRegion.map(([region, b]) => [
-              region, String(b.pedidos), fmtKg(b.verdeSolicitado), fmtKg(b.verdeAceptado),
-            ]),
-            totals: null,
-            csv: () => csvFromTable(
-              ['Region','Pedidos','Verde_solicitado_kg','Verde_aceptado_kg'],
-              byRegion.map(([r, b]) => [r, b.pedidos, round2(b.verdeSolicitado), round2(b.verdeAceptado)]),
-              'por-region',
-            ),
-          }),
-    ),
-
-    section('Por tipo de pedido',
-      byOrderType.length === 0
-        ? emptyText('Sin pedidos con tipo registrado.')
-        : sectionTable({
-            headers: ['Tipo', 'Pedidos', 'Verde solicitado', 'Verde aceptado'],
-            rows: byOrderType.map(([type, b]) => [
-              type, String(b.pedidos), fmtKg(b.verdeSolicitado), fmtKg(b.verdeAceptado),
-            ]),
-            totals: null,
-            csv: () => csvFromTable(
-              ['Tipo','Pedidos','Verde_solicitado_kg','Verde_aceptado_kg'],
-              byOrderType.map(([t, b]) => [t, b.pedidos, round2(b.verdeSolicitado), round2(b.verdeAceptado)]),
-              'por-tipo',
-            ),
-          }),
-    ),
   ];
 }
 
