@@ -579,7 +579,8 @@ function sectionTable({ headers, rows, totals, csv, legend }) {
 
 function tableEl(headers, rows, totalsRow) {
   const wrap = el('div', { class: 'overflow-x-auto' });
-  const t = el('table', { class: 'w-full text-[12px]' }, [
+  const labelOf = (i) => typeof headers[i] === 'string' ? headers[i] : '';
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
     el('thead', {}, [
       el('tr', {}, headers.map((h, i) =>
         el('th', { class: i === 0 ? '' : 'text-right' }, [h]),
@@ -591,21 +592,23 @@ function tableEl(headers, rows, totalsRow) {
         const value = isObj ? cell.value : cell;
         const customClass = isObj ? cell.class : '';
         const baseClass = i === 0 ? 'font-mono text-navy font-semibold' : 'text-right font-mono';
-        // If value is already a Node (e.g. mini bar), put it as a child.
-        if (value instanceof Node) {
-          return el('td', { class: baseClass }, [value]);
-        }
-        return el('td', { class: `${baseClass} ${customClass || ''}`.trim() }, [String(value)]);
+        const td = value instanceof Node
+          ? el('td', { class: baseClass }, [value])
+          : el('td', { class: `${baseClass} ${customClass || ''}`.trim() }, [String(value)]);
+        td.setAttribute('data-label', labelOf(i));
+        return td;
       })),
     )),
     totalsRow ? el('tfoot', {}, [
-      el('tr', { class: 'bg-cream' }, totalsRow.map((cell, i) =>
-        el('td', {
+      el('tr', { class: 'bg-cream' }, totalsRow.map((cell, i) => {
+        const td = el('td', {
           class: i === 0
             ? 'font-display font-bold uppercase tracking-loose text-navy'
             : 'text-right font-mono font-bold text-navy',
-        }, [String(cell)]),
-      )),
+        }, [String(cell)]);
+        td.setAttribute('data-label', labelOf(i));
+        return td;
+      })),
     ]) : null,
   ]);
   wrap.append(t);

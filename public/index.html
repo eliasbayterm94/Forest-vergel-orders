@@ -308,6 +308,39 @@
         margin-top:2px;
       }
 
+      /* Responsive table → cards en mobile.
+         Aplica a <table class="responsive-stack"> con cada <td>
+         marcado data-label="Header". */
+      @media (max-width: 640px){
+        table.responsive-stack thead{ display:none; }
+        table.responsive-stack, table.responsive-stack tbody,
+        table.responsive-stack tr, table.responsive-stack td,
+        table.responsive-stack tfoot{ display:block; width:100%; }
+        table.responsive-stack tr{
+          border:1px solid var(--sand); border-radius:8px;
+          background:#fff; margin:0 0 8px; padding:8px 10px;
+        }
+        table.responsive-stack tfoot tr{
+          background:var(--cream); border-color:var(--sand);
+        }
+        table.responsive-stack td{
+          text-align:left !important;
+          padding:3px 0; border:none;
+          display:flex; justify-content:space-between; align-items:baseline; gap:8px;
+        }
+        table.responsive-stack td::before{
+          content: attr(data-label);
+          text-transform:uppercase; font-size:9px; letter-spacing:var(--ls-eyebrow);
+          color:var(--ink-300); font-weight:600;
+          flex-shrink:0;
+        }
+        table.responsive-stack td:first-child{
+          padding-bottom:6px; margin-bottom:6px;
+          border-bottom:1px dashed var(--sand);
+        }
+        table.responsive-stack td:first-child::before{ display:none; }
+      }
+
       /* Sidebar (drawer) */
       .sidebar{
         width:280px; flex-shrink:0;

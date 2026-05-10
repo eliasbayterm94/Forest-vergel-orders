@@ -689,7 +689,12 @@ function recentShipmentsTable(ships) {
     ]);
   }
   const wrap = el('div', { class: 'ctrm-card overflow-x-auto' });
-  const t = el('table', { class: 'w-full text-[12px]' }, [
+  const cell = (label, classes, text) => {
+    const td = el('td', { class: classes, text });
+    td.setAttribute('data-label', label);
+    return td;
+  };
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
     el('thead', {}, [el('tr', {}, [
       el('th', {}, ['Código']),
       el('th', {}, ['Fecha']),
@@ -701,11 +706,11 @@ function recentShipmentsTable(ships) {
       class: 'cursor-pointer hover:bg-cream',
       onClick: () => navigate('/finca/despachos'),
     }, [
-      el('td', { class: 'font-mono text-navy font-semibold', text: s.shipment_code }),
-      el('td', { class: 'font-mono', text: fmtDate(s.shipment_date) }),
-      el('td', { class: 'text-right font-mono', text: String(s.totals?.lot_count ?? s.lots.length) }),
-      el('td', { class: 'text-right font-mono', text: String(s.totals?.order_count ?? '—') }),
-      el('td', { class: 'text-right font-mono font-bold text-navy', text: fmtKg(s.totals?.kg_green || 0) }),
+      cell('Código',  'font-mono text-navy font-semibold', s.shipment_code),
+      cell('Fecha',   'font-mono', fmtDate(s.shipment_date)),
+      cell('Lotes',   'text-right font-mono', String(s.totals?.lot_count ?? s.lots.length)),
+      cell('Pedidos', 'text-right font-mono', String(s.totals?.order_count ?? '—')),
+      cell('kg verde', 'text-right font-mono font-bold text-navy', fmtKg(s.totals?.kg_green || 0)),
     ]))),
   ]);
   wrap.append(t);
