@@ -1,6 +1,7 @@
 // Hash router. Routes are functions that take a `mountNode` and an
 // optional params object. Roles guard which routes are accessible.
 import { mount, el } from './ui/el.js';
+import { skeletonView } from './ui/skeleton.js';
 
 const _routes = new Map();
 let _mountNode = null;
@@ -56,11 +57,30 @@ export async function handleHashChange() {
     mount(_mountNode, forbidden());
     return;
   }
-  // call view; it must return a Node (or set its own content async)
+
+  // Skeleton placeholder si el view tarda mas de 150ms en resolver.
+  // Las rutas rapidas no muestran flicker; las lentas tienen un
+  // estado de carga visible.
+  let resolved = false;
+  const skeletonTimer = setTimeout(() => {
+    if (resolved) return;
+    try {
+      // Importacion perezosa para no crear un ciclo con _chrome.
+      import('./views/_chrome.js').then(({ chrome }) => {
+        if (resolved) return;
+        mount(_mountNode, chrome(skeletonView()));
+      });
+    } catch { /* ignore */ }
+  }, 150);
+
   try {
     const node = await route.view({ session: _session });
+    resolved = true;
+    clearTimeout(skeletonTimer);
     if (node instanceof Node) mount(_mountNode, node);
   } catch (e) {
+    resolved = true;
+    clearTimeout(skeletonTimer);
     mount(_mountNode, el('div', { class: 'p-6 text-rose-700' }, [`Error: ${e.message}`]));
   }
 }

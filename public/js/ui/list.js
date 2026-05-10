@@ -191,7 +191,16 @@ export function listView(opts) {
     // List content
     clear(listContent);
     if (paged.length === 0) {
-      listContent.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: emptyText }));
+      // emptyText puede ser un string (renderiza italic gris) o ya un Node
+      // (e.g. emptyStateCard con CTA).
+      if (emptyText instanceof Node) {
+        listContent.append(emptyText);
+      } else if (typeof emptyText === 'function') {
+        const node = emptyText();
+        if (node) listContent.append(node);
+      } else {
+        listContent.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: String(emptyText) }));
+      }
     } else {
       for (const item of paged) {
         const node = renderItem(item);

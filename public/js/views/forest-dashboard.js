@@ -6,6 +6,7 @@ import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../u
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
+import { emptyStateCard } from '../ui/empty.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -84,19 +85,31 @@ export async function forestDashboardView() {
     primaryCTA(),
 
     section('Urgencias',
-      urgencies.length === 0 ? emptyText('Sin urgencias.') : urgencies.map(rowFor),
+      urgencies.length === 0
+        ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
+        : urgencies.map(rowFor),
     ),
 
     section('Lotes listos para envío',
-      readyLots.length === 0 ? emptyText('Ninguno por ahora.') : readyLots.map(lotRow),
+      readyLots.length === 0
+        ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
+        : readyLots.map(lotRow),
     ),
 
     section('Pedidos en curso',
-      buckets.inFlight.length === 0 ? emptyText('Sin pedidos activos.') : buckets.inFlight.map(rowFor),
+      buckets.inFlight.length === 0
+        ? emptyStateCard({
+            title: 'Sin pedidos activos',
+            description: 'Crea uno para que finca lo revise.',
+            action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
+          })
+        : buckets.inFlight.map(rowFor),
     ),
 
     section('Pedidos pendientes (esperando finca)',
-      buckets.pending.length === 0 ? emptyText('Sin pendientes.') : buckets.pending.map(rowFor),
+      buckets.pending.length === 0
+        ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
+        : buckets.pending.map(rowFor),
     ),
   ]));
 
@@ -303,7 +316,7 @@ function lotRow(l) {
       el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
         el('span', { class: 'ctrm-code', text: l.lot_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
-        el('span', { class: 'ctrm-pill ok', text: statusLabel(l.status) }),
+        el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
       ]),
     ]),
     el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [

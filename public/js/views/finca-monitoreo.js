@@ -2,7 +2,7 @@
 // Pedidos sin lote, lotes con fermentation/drying excedidos, distribucion
 // por etapa.
 import { el } from '../ui/el.js';
-import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
@@ -167,7 +167,7 @@ function orderSinLoteRow(o) {
       el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
         el('span', { class: 'ctrm-code', text: o.order_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
-        el('span', { class: 'ctrm-pill muted', text: statusLabel(o.status) }),
+        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
       ]),
       el('button', {
         class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',

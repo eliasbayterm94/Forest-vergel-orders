@@ -4,9 +4,10 @@ import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
 import { listView } from '../ui/list.js';
-import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
+import { emptyStateCard } from '../ui/empty.js';
 
 const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
 const LOT_STATUS_LABELS = {
@@ -67,7 +68,11 @@ export async function fincaLotsView() {
       items: lots,
       renderItem: lotCard,
       pageSize: 20,
-      emptyText: 'Sin lotes activos. Crea uno con el botón de arriba.',
+      emptyText: () => emptyStateCard({
+        title: 'Sin lotes activos',
+        description: 'Crea el primer lote cuando llegue cereza al beneficio.',
+        action: { label: '+ Nuevo lote', onClick: () => createLot() },
+      }),
       searchPlaceholder: 'Buscar código de lote, referencia...',
       searchMatch: (l, q) => {
         const lo = q.toLowerCase();
@@ -127,7 +132,7 @@ export async function fincaLotsView() {
             ? el('span', { class: 'text-[10px] text-ink-300 font-mono', text: l.lot_code })
             : null,
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
-          el('span', { class: 'ctrm-pill roll', text: statusLabel(l.status) }),
+          el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
           stageLabel ? el('span', { class: 'ctrm-pill muted', text: stageLabel }) : null,
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
@@ -313,7 +318,18 @@ export async function fincaLotsView() {
                   partial_id: partial.id,
                   reason: reasonInput.value || null,
                 });
-                toast(`Parcial ${partial.parcial_letter} rechazado`, 'success');
+                toast(`Parcial ${partial.parcial_letter} rechazado`, 'success', 3500, {
+                  action: {
+                    label: 'Deshacer',
+                    onClick: async () => {
+                      try {
+                        await api.lotPartialReject({ partial_id: partial.id, undo: true });
+                        toast(`Parcial ${partial.parcial_letter} restaurado`, 'success');
+                        await reloadLots();
+                      } catch (e) { toast(e.message, 'error'); }
+                    },
+                  },
+                });
                 close({ ok: true });
                 if (r.over_allocation) await maybeRebalance(r.over_allocation);
                 await reloadLots();
@@ -689,7 +705,31 @@ export async function fincaLotsView() {
     if (!ok) return;
     try {
       await api.assignmentsDelete({ assignment_id: assignment.id });
-      toast('Asignación eliminada', 'success');
+      // Snapshot pre-borrado para reconstruir si el usuario quiere deshacer.
+      const snap = {
+        production_lot_id: lot.id,
+        demand_order_id:   assignment.demand_order_id,
+        kg_green_allocated: Number(assignment.kg_green_allocated || 0),
+        order_code:         assignment.order?.order_code || '',
+      };
+      toast('Asignación eliminada', 'success', 3500, {
+        action: {
+          label: 'Deshacer',
+          onClick: async () => {
+            try {
+              await api.assignmentsCreate({
+                production_lot_id: snap.production_lot_id,
+                assignments: [{
+                  demand_order_id:    snap.demand_order_id,
+                  kg_green_allocated: snap.kg_green_allocated,
+                }],
+              });
+              toast(`Asignación al pedido ${snap.order_code} restaurada`, 'success');
+              await reloadLots();
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        },
+      });
       await reloadLots();
     } catch (e) { toast(e.message, 'error'); }
   }

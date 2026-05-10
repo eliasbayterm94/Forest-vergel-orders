@@ -341,6 +341,23 @@
         table.responsive-stack td:first-child::before{ display:none; }
       }
 
+      /* Skeleton placeholder durante carga de view */
+      @keyframes skeleton-pulse{
+        0%,100%{ opacity:.55; }
+        50%{ opacity:.85; }
+      }
+      .skeleton-view{ padding:16px; }
+      .skeleton-view > *{ animation:skeleton-pulse 1.4s ease-in-out infinite; background:var(--sand); border-radius:8px; }
+      .skeleton-title{ height:24px; width:40%; margin-bottom:16px; }
+      .skeleton-stat-row{
+        display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:16px;
+        background:transparent !important; animation:none !important;
+      }
+      @media (min-width:640px){ .skeleton-stat-row{ grid-template-columns:repeat(4,1fr); } }
+      .skeleton-stat-row .skeleton-stat{ height:78px; }
+      .skeleton-block{ height:140px; margin-bottom:14px; }
+      .skeleton-block.tall{ height:240px; }
+
       /* Sidebar (drawer) */
       .sidebar{
         width:280px; flex-shrink:0;

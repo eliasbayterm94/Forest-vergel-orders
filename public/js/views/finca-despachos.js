@@ -7,6 +7,7 @@ import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { generateShipmentPdf } from '../ui/pdf.js';
+import { emptyStateCard } from '../ui/empty.js';
 
 export async function fincaDespachosView() {
   const [shipsRes, lotsRes] = await Promise.all([
@@ -24,7 +25,15 @@ export async function fincaDespachosView() {
       items: shipments,
       renderItem: shipmentCard,
       pageSize: 20,
-      emptyText: 'Aún no se han creado despachos.',
+      emptyText: () => emptyStateCard({
+        title: 'Aún no se han creado despachos',
+        description: readyLots.length > 0
+          ? `Hay ${readyLots.length} lote(s) Listos esperando.`
+          : 'Cuando finca cierre el primer bache podrás crear el despacho.',
+        action: readyLots.length > 0
+          ? { label: '+ Nuevo despacho', onClick: () => openCreateModal() }
+          : null,
+      }),
       searchPlaceholder: 'Buscar código de despacho, lote, pedido...',
       searchMatch: (s, q) => {
         const lo = q.toLowerCase();
