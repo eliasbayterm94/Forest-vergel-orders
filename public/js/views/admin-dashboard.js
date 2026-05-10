@@ -431,11 +431,12 @@ function renderSections(m, state, auditEvents = [], emails = []) {
 
 // ─── Email log feed ─────────────────────────────────────────────────
 const EVENT_TYPE_LABELS = {
-  demand_created:  'Pedido creado',
-  demand_accepted: 'Pedido aceptado',
-  demand_rejected: 'Pedido rechazado',
-  order_completed: 'Pedido completado',
-  weekly_digest:   'Resumen semanal',
+  demand_created:    'Pedido creado',
+  daily_new_orders:  'Resumen diario de pedidos',
+  demand_accepted:   'Pedido aceptado',
+  demand_rejected:   'Pedido rechazado',
+  order_completed:   'Pedido completado',
+  weekly_digest:     'Resumen semanal',
 };
 const EMAIL_STATUS_KIND = { sent: 'ok', dry_run: 'muted', failed: 'crit' };
 const EMAIL_STATUS_LABEL = { sent: 'Enviado', dry_run: 'Dry-run', failed: 'Fallido' };

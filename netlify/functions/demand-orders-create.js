@@ -6,7 +6,6 @@ const { greenToCherry } = require('./_lib/cherryConversion');
 const { bogotaToday, daysBetween } = require('./_lib/bogotaTime');
 const { PROCESS_TYPES, PHYSICAL_ASPECTS } = require('./_lib/schema');
 const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
-const { notifyDemandCreated } = require('./_lib/notifications');
 
 const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
 const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
@@ -106,13 +105,10 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
     if (vErr) return serverErr('Failed to link varieties', vErr.message);
   }
 
-  // Notificar a finca/admin. Fire-and-forget — si falla, log pero no
-  // tumbamos el create del pedido.
-  try {
-    await notifyDemandCreated(orderRow, refRow);
-  } catch (e) {
-    console.error('notifyDemandCreated failed:', e && e.message);
-  }
+  // Notificacion: las creaciones de pedidos se acumulan en el daily
+  // digest (scheduled daily-new-orders-digest), no se envia email
+  // inmediato. Asi finca recibe un solo email por dia con todos los
+  // pedidos del periodo en vez de uno por cada uno.
 
   return created({
     order: {
