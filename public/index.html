@@ -283,6 +283,14 @@
       .topbar-brand-title{ font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--navy); letter-spacing:var(--ls-eyebrow); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .topbar-status{ margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:var(--ink-500); font-family:var(--mono); letter-spacing:var(--ls-loose); white-space:nowrap; }
       .topbar-role-pill{ padding:4px 10px; border-radius:6px; background:var(--ink-100); color:var(--ink-700); font-family:var(--font-display); font-weight:700; font-size:9.5px; text-transform:uppercase; letter-spacing:var(--ls-eyebrow); }
+      .topbar-help-btn{
+        width:24px; height:24px; border-radius:6px;
+        background:transparent; border:1px solid var(--sand);
+        color:var(--ink-500); font-family:var(--mono); font-weight:700; font-size:12px;
+        cursor:pointer; display:none;
+      }
+      .topbar-help-btn:hover{ border-color:var(--navy); color:var(--navy); }
+      @media (min-width:1024px){ .topbar-help-btn{ display:inline-flex; align-items:center; justify-content:center; } }
       .topbar-status-dot{ width:7px; height:7px; border-radius:50%; background:#4ade80; display:inline-block; }
 
       /* Topbar search */
@@ -503,6 +511,16 @@
       .bottom-nav-btn svg{ width:22px; height:22px; stroke-width:1.75; }
       .bottom-nav-btn.is-active{ color:var(--navy); }
       .bottom-nav-btn.is-active svg{ color:var(--navy); }
+      .bottom-nav-icon-wrap{ position:relative; display:inline-flex; }
+      .bottom-nav-dot{
+        position:absolute; top:-3px; right:-6px;
+        background:var(--crit); color:#fff;
+        font-size:9px; font-weight:700; line-height:1;
+        min-width:14px; height:14px; padding:0 3px;
+        border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+        font-family:var(--font-sans);
+      }
+      .bottom-nav-dot[hidden]{ display:none; }
 
       /* Responsive: desktop = sidebar always visible, no hamburger, no bottom-nav */
       @media (min-width:1024px){

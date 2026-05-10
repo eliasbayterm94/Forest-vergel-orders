@@ -2,7 +2,7 @@ import { el } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
-import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL, relDate } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
@@ -227,7 +227,7 @@ export function orderRow(o, opts = {}) {
       o.kg_green_accepted != null ? meta('Aceptado', fmtKg(o.kg_green_accepted)) : null,
       showProgress ? meta('Asignado', fmtKg(rollup.total)) : null,
       meta('Cereza', fmtKg(o.kg_cherry_required)),
-      meta('Entrega', fmtDate(o.max_delivery_date)),
+      meta('Entrega', `${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})`),
       meta('Drying-start', fmtDate(o.latest_drying_start_date)),
       meta('Proceso', o.process_type),
     ]),

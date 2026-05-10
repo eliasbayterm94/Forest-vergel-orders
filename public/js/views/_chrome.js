@@ -172,26 +172,86 @@ export function chrome(content) {
     topbarSearch(),
 
     el('div', { class: 'topbar-status' }, [
+      el('button', {
+        type: 'button',
+        class: 'topbar-help-btn',
+        title: 'Atajos de teclado (?)',
+        onClick: () => {
+          // Disparar el shortcut "?" simula ayuda. Inline import para
+          // no crear ciclo con shortcuts.js si el orden cambia.
+          import('../ui/shortcuts.js').then((m) => {
+            // showHelp no esta exportado, asi que disparamos un evento
+            // sintetico que el listener global maneja.
+            const ev = new KeyboardEvent('keydown', { key: '?' });
+            document.dispatchEvent(ev);
+          });
+        },
+      }, ['?']),
       el('span', { class: 'topbar-status-dot' }),
       el('span', { class: 'topbar-role-pill', text: role || '' }),
     ]),
   ]);
 
   // ── Bottom nav (mobile) ─────────────────────────────────────────
+  // Badge holders por path para que el chrome los pueda actualizar
+  // cuando llegue la respuesta de /api/badges.
+  const badgeNodes = new Map();   // key = path | 'more' → node
+
+  function btnContent(icon, label, key) {
+    const dot = el('span', { class: 'bottom-nav-dot', hidden: 'true' });
+    badgeNodes.set(key, dot);
+    return [
+      el('span', { class: 'bottom-nav-icon-wrap' }, [iconEl(icon), dot]),
+      el('span', { text: label }),
+    ];
+  }
+
   const bottomNav = el('nav', { class: 'bottom-nav' }, bottom.map((item) => {
     if (item.kind === 'more') {
       return el('button', {
         type: 'button',
         class: 'bottom-nav-btn',
         onClick: openSidebar,
-      }, [iconEl(item.icon), el('span', { text: item.label })]);
+      }, btnContent(item.icon, item.label, 'more'));
     }
     return el('button', {
       type: 'button',
       class: `bottom-nav-btn ${cur === item.path ? 'is-active' : ''}`,
       onClick: () => navigate(item.path),
-    }, [iconEl(item.icon), el('span', { text: item.label })]);
+    }, btnContent(item.icon, item.label, item.path));
   }));
+
+  // Fetch counts una vez y pinta dots. Si falla, silencioso.
+  api.badges().then((b) => {
+    // Mapeo simple: si una vista relevante NO esta en el bottom-nav,
+    // el dot lo muestra "more" (asi el usuario sabe que adentro hay
+    // algo que requiere atencion).
+    const visiblePaths = new Set(bottom.filter((x) => x.path).map((x) => x.path));
+
+    const targets = [];
+    if (b.pending_orders > 0)        targets.push({ path: '/finca/inbox',     count: b.pending_orders });
+    if (b.urgent_orders > 0)         targets.push({ path: '/finca/monitoreo', count: b.urgent_orders });
+    if (b.ready_lots_unshipped > 0)  targets.push({ path: '/finca/despachos', count: b.ready_lots_unshipped });
+
+    let inMore = 0;
+    for (const t of targets) {
+      if (visiblePaths.has(t.path)) {
+        const node = badgeNodes.get(t.path);
+        if (node) showDot(node, t.count);
+      } else {
+        inMore += t.count;
+      }
+    }
+    if (inMore > 0) {
+      const node = badgeNodes.get('more');
+      if (node) showDot(node, inMore);
+    }
+  }).catch(() => { /* silent */ });
+
+  function showDot(node, count) {
+    node.removeAttribute('hidden');
+    node.textContent = count > 9 ? '9+' : String(count);
+  }
 
   return el('div', { class: 'app-shell' }, [
     sidebar,

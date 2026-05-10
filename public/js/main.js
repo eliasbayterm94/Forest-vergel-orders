@@ -1,5 +1,6 @@
 import { defineRoute, setMount, setSession, startRouter, navigate, defaultRouteFor } from './router.js';
 import { loadSession, getSession } from './auth.js';
+import { mountShortcuts } from './ui/shortcuts.js';
 import { loginView }                from './views/login.js';
 import { forestDashboardView }      from './views/forest-dashboard.js';
 import { forestDemandFormView }     from './views/forest-demand-form.js';
@@ -48,6 +49,7 @@ async function bootstrap() {
     if (!session && location.hash !== '#/login') location.hash = '/login';
     if (session && (location.hash === '' || location.hash === '#/' || location.hash === '#/login'))
       location.hash = defaultRouteFor(session.role);
+    mountShortcuts(getSession);
     startRouter();
   } catch (e) {
     root.innerHTML = `<div class="p-6 text-rose-700">Error de arranque: ${e.message}</div>`;

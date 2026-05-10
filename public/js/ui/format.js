@@ -51,3 +51,43 @@ export const URGENCY_LABEL = {
   yellow: 'Próximo',
   normal: 'OK',
 };
+
+/**
+ * Tiempo relativo desde un timestamp ISO. "ahora" / "5m" / "2h" / "3d".
+ * Para fechas viejas (>7d) cae a MM-DD.
+ */
+export function relTime(iso) {
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '—';
+  const diffSec = Math.floor((Date.now() - t) / 1000);
+  if (diffSec < 0) return 'en breve';
+  if (diffSec < 60) return 'ahora';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
+  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d`;
+  return new Date(iso).toISOString().slice(5, 10);
+}
+
+/**
+ * Tiempo relativo a una fecha YYYY-MM-DD (futura o pasada). Devuelve
+ * "hoy" / "en 3d" / "hace 5d" / "en 2 sem" / "hace 1 mes".
+ */
+export function relDate(yyyyMmDd) {
+  if (!yyyyMmDd) return '—';
+  const today = new Date();
+  today.setUTCHours(12, 0, 0, 0);
+  const target = new Date(yyyyMmDd + 'T12:00:00Z');
+  if (Number.isNaN(target.getTime())) return '—';
+  const days = Math.round((target - today) / 86400000);
+  if (days === 0)  return 'hoy';
+  if (days === 1)  return 'mañana';
+  if (days === -1) return 'ayer';
+  if (days > 1 && days <= 7)   return `en ${days}d`;
+  if (days < -1 && days >= -7) return `hace ${-days}d`;
+  if (days > 7 && days <= 60)  return `en ${Math.round(days / 7)} sem`;
+  if (days < -7 && days >= -60) return `hace ${Math.round(-days / 7)} sem`;
+  if (days > 60)   return `en ${Math.round(days / 30)} mes`;
+  if (days < -60)  return `hace ${Math.round(-days / 30)} mes`;
+  return '—';
+}

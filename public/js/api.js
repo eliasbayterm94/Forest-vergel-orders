@@ -85,6 +85,8 @@ export const api = {
   processLeadTimes: () => request('GET', '/api/process-lead-times-list'),
   search: (q, limit) => request('GET', '/api/search', { query: { q, limit } }),
   auditLog: (query) => request('GET', '/api/audit-log-list', { query }),
+  badges: () => request('GET', '/api/badges'),
+  emailLog: (query) => request('GET', '/api/email-log-list', { query }),
 
   shipmentsList:   ()        => request('GET',  '/api/shipments-list'),
   shipmentsCreate: (payload) => request('POST', '/api/shipments-create', { body: payload }),

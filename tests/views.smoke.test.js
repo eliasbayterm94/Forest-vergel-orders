@@ -52,6 +52,8 @@ const CANNED = {
   '/api/audit-log-list':             { events: [] },
   '/api/capacity-calculate':         { orders: [], aggregate: {}, weekly_load: [] },
   '/api/search':                     { q: '', orders: [], lots: [], shipments: [] },
+  '/api/badges':                     { pending_orders: 0, urgent_orders: 0, ready_lots_unshipped: 0 },
+  '/api/email-log-list':             { emails: [] },
 };
 
 function pathOf(url) {

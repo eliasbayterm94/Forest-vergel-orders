@@ -5,7 +5,7 @@
 
 import { el, clear } from '../ui/el.js';
 import { createCombobox } from '../ui/combobox.js';
-import { fmtKg, fmtDate } from '../ui/format.js';
+import { fmtKg, fmtDate, relTime } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate, currentQuery, updateHashQuery } from '../router.js';
@@ -38,13 +38,14 @@ const RANGES = [
 const DEFAULT_RANGE = '12m';
 
 export async function adminDashboardView() {
-  const [ordersRes, lotsRes, shipsRes, leadRes, refsRes, auditRes] = await Promise.all([
+  const [ordersRes, lotsRes, shipsRes, leadRes, refsRes, auditRes, emailRes] = await Promise.all([
     api.ordersList({}),
     api.lotsList({}),
     api.shipmentsList(),
     api.processLeadTimes().catch(() => ({ process_lead_times: [] })),
     api.references().catch(() => ({ references: [] })),
     api.auditLog({ limit: 30 }).catch(() => ({ events: [] })),
+    api.emailLog({ limit: 20 }).catch(() => ({ emails: [] })),
   ]);
   const today     = ordersRes.today;
   const allOrders = ordersRes.orders || [];
@@ -52,6 +53,7 @@ export async function adminDashboardView() {
   const allShips  = shipsRes.shipments || [];
   const refs      = refsRes.references || [];
   const auditEvents = auditRes.events || [];
+  const emails = emailRes.emails || [];
   const leadByProcess = new Map(
     (leadRes.process_lead_times || []).map((r) => [r.process_type, r]),
   );
@@ -82,7 +84,7 @@ export async function adminDashboardView() {
       ...filtered, today, leadByProcess, range: state.range,
     });
     clear(contentWrap);
-    contentWrap.append(...renderSections(m, state, auditEvents));
+    contentWrap.append(...renderSections(m, state, auditEvents, emails));
     filterBar.refresh();
   }
   redraw();
@@ -356,7 +358,7 @@ function computeMetrics({ orders, lots, shipments, today, leadByProcess, range }
 }
 
 // ─── Sections render ────────────────────────────────────────────────
-function renderSections(m, state, auditEvents = []) {
+function renderSections(m, state, auditEvents = [], emails = []) {
   const refLabel = state.refId == null ? '' : ' · referencia filtrada';
   const rangeWord = `${m.rangeLabel}${refLabel}`;
 
@@ -420,7 +422,46 @@ function renderSections(m, state, auditEvents = []) {
     auditEvents.length > 0
       ? section('Actividad reciente', auditFeed(auditEvents))
       : null,
+
+    emails.length > 0
+      ? section('Notificaciones enviadas (últimas 20)', emailFeed(emails))
+      : null,
   ].filter(Boolean);
+}
+
+// ─── Email log feed ─────────────────────────────────────────────────
+const EVENT_TYPE_LABELS = {
+  demand_created:  'Pedido creado',
+  demand_accepted: 'Pedido aceptado',
+  demand_rejected: 'Pedido rechazado',
+  order_completed: 'Pedido completado',
+  weekly_digest:   'Resumen semanal',
+};
+const EMAIL_STATUS_KIND = { sent: 'ok', dry_run: 'muted', failed: 'crit' };
+const EMAIL_STATUS_LABEL = { sent: 'Enviado', dry_run: 'Dry-run', failed: 'Fallido' };
+
+function emailFeed(emails) {
+  return el('div', { class: 'ctrm-card overflow-hidden' },
+    emails.map((e) => el('div', {
+      class: 'flex items-start gap-3 px-3 py-2 border-b border-sand last:border-b-0',
+    }, [
+      el('div', { class: 'shrink-0 text-[10px] font-mono text-ink-300 w-20', text: relTime(e.sent_at) }),
+      el('span', {
+        class: `ctrm-pill ${EMAIL_STATUS_KIND[e.status] || 'muted'}`,
+        style: 'flex-shrink:0;',
+        text: EMAIL_STATUS_LABEL[e.status] || e.status,
+      }),
+      el('div', { class: 'flex-1 min-w-0' }, [
+        el('div', { class: 'flex items-baseline gap-2 flex-wrap' }, [
+          el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: EVENT_TYPE_LABELS[e.event_type] || e.event_type }),
+          el('span', { class: 'text-[10px] text-ink-300', text: e.to_address }),
+        ]),
+        el('p', { class: 'text-[11px] text-ink-700 truncate', text: e.subject }),
+        e.error_message
+          ? el('p', { class: 'text-[10px] font-mono text-crit mt-0.5', text: e.error_message })
+          : null,
+      ]),
+    ])));
 }
 
 // ─── Audit feed ─────────────────────────────────────────────────────
@@ -523,15 +564,6 @@ function formatVal(v) {
   return String(v);
 }
 
-function relTime(iso) {
-  const t = new Date(iso).getTime();
-  const diffSec = Math.floor((Date.now() - t) / 1000);
-  if (diffSec < 60) return 'ahora';
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
-  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d`;
-  return new Date(iso).toISOString().slice(5, 10);
-}
 
 // ─── Charts ─────────────────────────────────────────────────────────
 function funnelChart(t) {

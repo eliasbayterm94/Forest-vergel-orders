@@ -540,18 +540,45 @@ export async function fincaLotsView() {
     const pctClass = pct == null ? 'text-ink-500'
                    : pct > 100 ? 'text-crit font-bold'
                    : 'text-ink-500';
+
+    // Inline-edit del kg: input number que guarda al blur o Enter.
+    // Si no hay cambio o es invalido, no hace nada.
+    const kgInput = el('input', {
+      type: 'number', min: '0', step: '0.01',
+      value: String(kg),
+      class: 'ctrm-input mono w-24 text-right py-0.5 px-1.5 text-[11px]',
+      style: 'min-height:28px;',
+    });
+    const commitKg = async () => {
+      const newKg = Number(kgInput.value);
+      if (!Number.isFinite(newKg) || newKg <= 0) {
+        kgInput.value = String(kg);
+        return;
+      }
+      if (Math.abs(newKg - kg) < 0.005) return;   // sin cambio efectivo
+      try {
+        await api.assignmentsUpdate({ assignment_id: a.id, kg_green_allocated: newKg });
+        toast(`Asignación a ${a.order?.order_code || ''} ajustada a ${fmtKg(newKg)}`, 'success');
+        await reloadLots();
+      } catch (e) {
+        toast(e.message, 'error');
+        kgInput.value = String(kg);   // revertir UI
+      }
+    };
+    kgInput.addEventListener('blur', commitKg);
+    kgInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); kgInput.blur(); }
+      if (e.key === 'Escape') { kgInput.value = String(kg); kgInput.blur(); }
+    });
+
     return el('div', { class: 'flex flex-wrap items-center justify-between text-[11px] gap-2 py-1' }, [
       el('div', { class: 'flex items-center gap-2 min-w-0' }, [
         el('span', { class: 'ctrm-code', text: a.order?.order_code || a.demand_order_id }),
         el('span', { class: 'text-ink-500', text: a.order?.status ? statusLabel(a.order.status) : '' }),
       ]),
-      el('div', { class: 'flex items-center gap-3' }, [
-        el('span', { class: 'font-mono text-ink-700 font-medium' }, [fmtKg(kg)]),
-        pct != null ? el('span', { class: `font-mono text-[10px] ${pctClass}` }, [`(${pct.toFixed(1)}%)`]) : null,
-        el('button', {
-          class: 'text-navy hover:underline text-[11px]',
-          onClick: () => editAssignment(a, lot),
-        }, ['Editar']),
+      el('div', { class: 'flex items-center gap-2' }, [
+        kgInput,
+        pct != null ? el('span', { class: `font-mono text-[10px] ${pctClass}` }, [`${pct.toFixed(0)}%`]) : null,
         el('button', {
           class: 'text-crit hover:underline text-[11px]',
           onClick: () => removeAssignment(a, lot),
