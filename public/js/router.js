@@ -21,7 +21,34 @@ export function navigate(path) {
 
 export function currentPath() {
   const h = location.hash || '#/';
-  return h.slice(1);
+  const raw = h.slice(1);
+  const i = raw.indexOf('?');
+  return i < 0 ? raw : raw.slice(0, i);
+}
+
+/** URLSearchParams desde la query del hash actual. */
+export function currentQuery() {
+  const h = location.hash || '';
+  const i = h.indexOf('?');
+  return i < 0 ? new URLSearchParams() : new URLSearchParams(h.slice(i + 1));
+}
+
+/**
+ * Update one (or more) hash query params sin disparar navigation.
+ * Usa history.replaceState para evitar que se agregue al history.
+ *   updateHashQuery({ range: '24m', ref: null })   // null borra
+ */
+export function updateHashQuery(updates) {
+  const params = currentQuery();
+  for (const [k, v] of Object.entries(updates || {})) {
+    if (v == null || v === '') params.delete(k);
+    else params.set(k, String(v));
+  }
+  const path = currentPath();
+  const qs = params.toString();
+  const newHash = qs ? `#${path}?${qs}` : `#${path}`;
+  if (location.hash === newHash) return;
+  history.replaceState(null, '', newHash);
 }
 
 function notFound() {

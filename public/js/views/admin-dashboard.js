@@ -8,7 +8,7 @@ import { createCombobox } from '../ui/combobox.js';
 import { fmtKg, fmtDate } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
-import { navigate } from '../router.js';
+import { navigate, currentQuery, updateHashQuery } from '../router.js';
 
 const FERMENTATION_OVERRUN_DAYS = 5;
 const PROCESSES = ['Natural', 'Honey', 'Lavado'];
@@ -56,12 +56,24 @@ export async function adminDashboardView() {
     (leadRes.process_lead_times || []).map((r) => [r.process_type, r]),
   );
 
+  // Estado inicial leido del hash (?range=24m&ref=xxx). Si la
+  // referencia del hash ya no existe se resetea a null.
+  const initialQ = currentQuery();
+  const initialRange = RANGES.some((r) => r.key === initialQ.get('range'))
+    ? initialQ.get('range') : DEFAULT_RANGE;
+  const initialRef = initialQ.get('ref');
   const state = {
-    range: DEFAULT_RANGE,
-    refId: null,        // null = todas
+    range: initialRange,
+    refId: initialRef && refs.some((r) => r.id === initialRef) ? initialRef : null,
   };
 
-  const filterBar = renderFilterBar(state, refs, () => redraw());
+  const filterBar = renderFilterBar(state, refs, () => {
+    updateHashQuery({
+      range: state.range === DEFAULT_RANGE ? null : state.range,
+      ref:   state.refId,
+    });
+    redraw();
+  });
   const contentWrap = el('div', {});
 
   function redraw() {
@@ -92,9 +104,13 @@ function renderFilterBar(state, refs, onChange) {
   }, [r.label]));
 
   const refItems = [{ id: '__all__', name: 'Todas las referencias' }, ...refs];
+  const initialRefItem = state.refId
+    ? refs.find((r) => r.id === state.refId) || null
+    : null;
   const refCombo = createCombobox({
     placeholder: 'Filtrar por referencia...',
     items: refItems,
+    value: initialRefItem,
     onChange: (item) => {
       state.refId = (!item || item.id === '__all__') ? null : item.id;
       onChange();

@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { openReferenceModal } from './forest-references.js';
+import { bindValidation, setFieldError, clearFieldError } from '../ui/form-validation.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -113,6 +114,20 @@ export async function forestDemandFormView() {
     class: 'ctrm-input',
   });
 
+  // ── Validación inline ──
+  bindValidation(kgInput,
+    (v) => Number.isFinite(Number(v)) && Number(v) > 0,
+    'Ingresa un número mayor a 0',
+  );
+  bindValidation(dateInput,
+    (v) => !!v,
+    'Selecciona una fecha de entrega',
+  );
+  bindValidation(processSelect,
+    (v) => !!v,
+    'Selecciona un proceso',
+  );
+
   const aspectSelect = el('select', {
     required: true,
     class: 'ctrm-select',
@@ -159,12 +174,28 @@ export async function forestDemandFormView() {
     class: 'space-y-5 ctrm-card p-4 sm:p-6',
     onSubmit: async (e) => {
       e.preventDefault();
-      if (!selectedReference) { toast('Selecciona una referencia', 'warning'); return; }
+      // Forzar validacion inline en TODOS los campos al submit, asi el
+      // usuario ve los errores marcados sin tener que blur uno por uno.
       const kg = Number(kgInput.value);
-      if (!Number.isFinite(kg) || kg <= 0) { toast('Cantidad inválida', 'warning'); return; }
-      if (!dateInput.value) { toast('Falta fecha de entrega', 'warning'); return; }
-      if (!aspectSelect.value) { toast('Falta aspecto físico', 'warning'); return; }
-      if (!processSelect.value) { toast('Falta proceso', 'warning'); return; }
+      const errors = [];
+      if (!selectedReference) errors.push('Selecciona una referencia');
+      if (!Number.isFinite(kg) || kg <= 0) {
+        setFieldError(kgInput, 'Ingresa un número mayor a 0');
+        errors.push('Cantidad inválida');
+      } else clearFieldError(kgInput);
+      if (!dateInput.value) {
+        setFieldError(dateInput, 'Selecciona una fecha de entrega');
+        errors.push('Falta fecha de entrega');
+      } else clearFieldError(dateInput);
+      if (!processSelect.value) {
+        setFieldError(processSelect, 'Selecciona un proceso');
+        errors.push('Falta proceso');
+      } else clearFieldError(processSelect);
+      if (!aspectSelect.value) errors.push('Falta aspecto físico');
+      if (errors.length > 0) {
+        toast(errors[0], 'warning');
+        return;
+      }
 
       const selectedRegions = regionInputs.filter((r) => r.input.checked).map((r) => r.region);
 

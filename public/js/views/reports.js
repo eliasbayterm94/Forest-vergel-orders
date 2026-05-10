@@ -7,6 +7,7 @@ import { fmtKg, fmtDate } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
+import { currentQuery, updateHashQuery } from '../router.js';
 
 const RANGES = [
   { key: '3m',  label: '3 meses',  months: 3  },
@@ -27,11 +28,14 @@ export async function reportsView() {
   const shipments = shipsRes.shipments || [];
   const todayStr  = ordersRes.today;
 
-  let activeRange = DEFAULT_RANGE;
+  const initialQ = currentQuery();
+  let activeRange = RANGES.some((r) => r.key === initialQ.get('range'))
+    ? initialQ.get('range') : DEFAULT_RANGE;
 
   const sectionsWrap = el('div', {});
   const rangeBar = rangeSelector(() => activeRange, (k) => {
     activeRange = k;
+    updateHashQuery({ range: k === DEFAULT_RANGE ? null : k });
     redraw();
   });
 

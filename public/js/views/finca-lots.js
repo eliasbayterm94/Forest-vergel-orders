@@ -60,6 +60,17 @@ export async function fincaLotsView() {
   const refs = refsRes.references;
   const allVarieties = varsRes.varieties;
 
+  // Estado expand/collapse por lote. Por default colapsado en mobile,
+  // expandido en desktop. El usuario puede alternar. matchMedia puede
+  // no existir (jsdom en tests), default a desktop en ese caso.
+  const mq = (typeof window !== 'undefined' && window.matchMedia)
+    ? window.matchMedia('(max-width: 640px)') : { matches: false };
+  const isMobile = mq.matches;
+  const expanded = new Set();   // lot_id que estan expandidos
+  if (!isMobile) {
+    for (const l of lots) expanded.add(l.id);
+  }
+
   const list = el('div', { class: 'space-y-3' });
 
   function render() {
@@ -124,6 +135,15 @@ export async function fincaLotsView() {
     const closeBacheLabel = (next === 'Ready' && partials.length > 0)
       ? 'Cerrar bache' : (next ? `→ ${statusLabel(next)}` : null);
 
+    // Lotes con problemas (over-allocated) siempre se expanden para que
+    // el banner sea visible.
+    const isExp = isOverAllocated || expanded.has(l.id);
+    const toggleExpand = () => {
+      if (isExp && !isOverAllocated) expanded.delete(l.id);
+      else expanded.add(l.id);
+      render();
+    };
+
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
@@ -169,41 +189,79 @@ export async function fincaLotsView() {
         metaColor('Disponible', fmtKg(remaining), remaining < -0.001 ? 'crit' : null),
         meta('Proceso', l.process_type),
       ]),
-      (l.varieties || []).length > 0
-        ? el('div', { class: 'flex flex-wrap gap-1 mt-2' }, (l.varieties || []).map((v) =>
-            el('span', { class: 'ctrm-pill dark', text: v.name }),
-          ))
-        : null,
+      // ── Detalle expandible ───────────────────────────────────────
+      isExp ? el('div', {}, [
+        (l.varieties || []).length > 0
+          ? el('div', { class: 'flex flex-wrap gap-1 mt-2' }, (l.varieties || []).map((v) =>
+              el('span', { class: 'ctrm-pill dark', text: v.name }),
+            ))
+          : null,
 
-      // Discrepancy banner — appears only when assignments exceed capacity
-      isOverAllocated
-        ? el('div', {
-            class: 'mt-3 rounded-lg bg-crit-bg border-l-4 border-crit p-3 flex flex-wrap items-center justify-between gap-2',
-          }, [
-            el('div', { class: 'text-[12px] text-crit flex items-center gap-2 min-w-0' }, [
-              el('span', { text: '⚠' }),
-              el('div', {}, [
-                el('strong', {}, [`Asignaciones (${fmtKg(totalAllocated)}) exceden capacidad (${fmtKg(capacity)})`]),
-                el('div', { class: 'text-[11px] mt-0.5' }, [`Sobra: ${fmtKg(overflow)} verde. Ajusta antes de despachar.`]),
+        // Discrepancy banner — appears only when assignments exceed capacity
+        isOverAllocated
+          ? el('div', {
+              class: 'mt-3 rounded-lg bg-crit-bg border-l-4 border-crit p-3 flex flex-wrap items-center justify-between gap-2',
+            }, [
+              el('div', { class: 'text-[12px] text-crit flex items-center gap-2 min-w-0' }, [
+                el('span', { text: '⚠' }),
+                el('div', {}, [
+                  el('strong', {}, [`Asignaciones (${fmtKg(totalAllocated)}) exceden capacidad (${fmtKg(capacity)})`]),
+                  el('div', { class: 'text-[11px] mt-0.5' }, [`Sobra: ${fmtKg(overflow)} verde. Ajusta antes de despachar.`]),
+                ]),
               ]),
-            ]),
-            el('button', {
-              class: 'ctrm-btn ctrm-btn-danger ctrm-btn-sm shrink-0',
-              onClick: () => rescaleAssignments(l, capacity, totalAllocated),
-            }, ['Ajustar proporcionalmente']),
-          ])
-        : null,
+              el('button', {
+                class: 'ctrm-btn ctrm-btn-danger ctrm-btn-sm shrink-0',
+                onClick: () => rescaleAssignments(l, capacity, totalAllocated),
+              }, ['Ajustar proporcionalmente']),
+            ])
+          : null,
 
-      // Parciales (visibles cuando esta en Drying, Ready o cuando ya hay alguno)
-      (isDrying || partials.length > 0) ? partialsSection(l, partials) : null,
+        // Parciales (visibles cuando esta en Drying, Ready o cuando ya hay alguno)
+        (isDrying || partials.length > 0) ? partialsSection(l, partials) : null,
 
-      (l.assignments || []).length > 0
-        ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
-            el('p', { class: 'eyebrow mb-1.5', text: 'Asignaciones' }),
-            el('div', { class: 'space-y-1' }, l.assignments.map((a) => assignmentRow(a, l, capacity))),
-          ])
-        : null,
+        (l.assignments || []).length > 0
+          ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
+              el('p', { class: 'eyebrow mb-1.5', text: 'Asignaciones' }),
+              el('div', { class: 'space-y-1' }, l.assignments.map((a) => assignmentRow(a, l, capacity))),
+            ])
+          : null,
+      ]) : null,
+
+      // ── Toggle compact/expand. Si el lote esta over-allocated forzamos
+      //    expand y ocultamos el toggle (no se puede colapsar mientras
+      //    hay un problema).                                        */
+      isOverAllocated ? null : el('div', {
+        class: 'mt-2 pt-2 border-t border-sand flex items-center justify-between gap-2',
+      }, [
+        el('span', { class: 'text-[11px] text-ink-300 font-mono' }, [
+          isExp ? 'Detalle visible' : compactSummary(l, partials, totalAllocated, capacity),
+        ]),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+          type: 'button',
+          onClick: toggleExpand,
+        }, [isExp ? 'Ver menos' : 'Ver más']),
+      ]),
     ]);
+  }
+
+  function compactSummary(l, partials, totalAllocated, capacity) {
+    const parts = [];
+    if (partials.length > 0) {
+      const rejected = partials.filter((p) => p.rejected_at).length;
+      const shipped  = partials.filter((p) => p.shipment_id).length;
+      const pending  = partials.length - rejected - shipped;
+      parts.push(`${partials.length} parcial(es)`);
+      if (shipped > 0)  parts.push(`${shipped} despachado(s)`);
+      if (rejected > 0) parts.push(`${rejected} rechazado(s)`);
+      if (pending > 0)  parts.push(`${pending} pendiente(s)`);
+    }
+    const assignCount = (l.assignments || []).length;
+    if (assignCount > 0) {
+      const pct = capacity > 0 ? Math.round((totalAllocated / capacity) * 100) : 0;
+      parts.push(`${assignCount} pedido(s) · ${pct}%`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : 'Sin parciales ni asignaciones';
   }
 
   function partialsSection(lot, partials) {
