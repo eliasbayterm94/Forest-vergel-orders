@@ -133,27 +133,6 @@ function tplRejected(order, ref) {
   return { subject, text };
 }
 
-function tplCreated(order, ref) {
-  const subject = `[${order.order_code}] Nuevo pedido pendiente — ${ref.name}`;
-  const text = [
-    `Forest creó un pedido nuevo. Pendiente de revisión en El Vergel.`,
-    '',
-    `Pedido: ${order.order_code}`,
-    `Referencia: ${ref.name}`,
-    ...metaLines(order),
-    `Proceso: ${order.process_type}`,
-    order.physical_aspect ? `Aspecto: ${order.physical_aspect}` : '',
-    `Solicitado: ${fmtKg(order.kg_green_required)} kg verde (${fmtKg(greenToCherry(order.kg_green_required))} kg cereza)`,
-    `Fecha máxima de entrega: ${order.max_delivery_date}`,
-    order.comments ? '' : null,
-    order.comments ? `Comentarios:` : null,
-    order.comments ? order.comments : null,
-    '',
-    'Acción El Vergel: revisar y aceptar / rechazar en /finca/inbox.',
-  ].filter((s) => s !== null && s !== '').join('\n');
-  return { subject, text };
-}
-
 function tplCompleted(order, ref) {
   const subject = `[${order.order_code}] Pedido completado — ${ref.name}`;
   const text = [
@@ -167,15 +146,6 @@ function tplCompleted(order, ref) {
   return { subject, text };
 }
 
-async function notifyDemandCreated(order, ref) {
-  const { subject, text } = tplCreated(order, ref);
-  return dispatch({
-    event_type: 'demand_created',
-    subject, text,
-    related_order_id: order.id,
-    recipients: farmAndAdminRecipients(),
-  });
-}
 async function notifyDemandAccepted(order, ref) {
   const { subject, text } = tplAccepted(order, ref);
   return dispatch({ event_type: 'demand_accepted', subject, text, related_order_id: order.id });
@@ -191,5 +161,5 @@ async function notifyOrderCompleted(order, ref) {
 
 module.exports = {
   parseList, allRecipients, farmAndAdminRecipients, dispatch, logEmail,
-  notifyDemandCreated, notifyDemandAccepted, notifyDemandRejected, notifyOrderCompleted,
+  notifyDemandAccepted, notifyDemandRejected, notifyOrderCompleted,
 };

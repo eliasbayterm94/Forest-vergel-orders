@@ -178,14 +178,8 @@ export function chrome(content) {
         class: 'topbar-help-btn',
         title: 'Atajos de teclado (?)',
         onClick: () => {
-          // Disparar el shortcut "?" simula ayuda. Inline import para
-          // no crear ciclo con shortcuts.js si el orden cambia.
-          import('../ui/shortcuts.js').then((m) => {
-            // showHelp no esta exportado, asi que disparamos un evento
-            // sintetico que el listener global maneja.
-            const ev = new KeyboardEvent('keydown', { key: '?' });
-            document.dispatchEvent(ev);
-          });
+          // Reenvio sintetico al listener global que ya monto shortcuts.js
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
         },
       }, ['?']),
       el('span', { class: 'topbar-status-dot' }),
