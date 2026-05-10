@@ -185,9 +185,11 @@ export function orderRow(o, opts = {}) {
     }, [a.label]),
   );
 
-  const rollup = opts.rollup;
+  const rollup = opts.rollup || { ready: 0, drying: 0, fermentation: 0, total: 0, lots: [] };
   const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
-  const showProgress = rollup && accepted > 0
+  // Mostrar cobertura para pedidos ya aceptados o en producción, incluso
+  // cuando no hay ningún lote todavía (asi Forest ve el "0 cubierto").
+  const showProgress = accepted > 0
     && ['Accepted', 'PartiallyAccepted', 'InProduction', 'Completed'].includes(o.status);
 
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
@@ -210,6 +212,7 @@ export function orderRow(o, opts = {}) {
     el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
       meta('Verde', fmtKg(o.kg_green_required)),
       o.kg_green_accepted != null ? meta('Aceptado', fmtKg(o.kg_green_accepted)) : null,
+      showProgress ? meta('Asignado', fmtKg(rollup.total)) : null,
       meta('Cereza', fmtKg(o.kg_cherry_required)),
       meta('Entrega', fmtDate(o.max_delivery_date)),
       meta('Drying-start', fmtDate(o.latest_drying_start_date)),
@@ -226,12 +229,13 @@ export function orderRow(o, opts = {}) {
 // lot stage. Order status "InProduction" with rollup.ready > 0 means the
 // finca already has finished bache(s) waiting for shipment.
 function coverageBar(rollup, accepted) {
-  const ready = rollup.ready;
-  const drying = rollup.drying;
-  const ferm = rollup.fermentation;
-  const total = rollup.total;
+  const ready = Number(rollup.ready || 0);
+  const drying = Number(rollup.drying || 0);
+  const ferm = Number(rollup.fermentation || 0);
+  const total = Number(rollup.total || 0);
   const pct = (kg) => Math.max(0, Math.min(100, (kg / accepted) * 100));
   const pending = Math.max(0, accepted - total);
+  const noLotsYet = total <= 0.001;
 
   const segs = [
     { kg: ready,  color: '#5d8b66', label: 'Ready' },
@@ -248,23 +252,33 @@ function coverageBar(rollup, accepted) {
       style: `border-color:${stageColor(l.status)};color:${stageColor(l.status)};`,
     }, [`${l.code} · ${fmtKg(l.kg)}`]));
 
+  let summaryRight;
+  if (noLotsYet) {
+    summaryRight = el('span', { class: 'text-[11px] font-mono text-warn' },
+      [`Sin lotes asignados · ${fmtKg(accepted)} pendiente`]);
+  } else {
+    summaryRight = el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
+      el('strong', { class: 'text-ink-700', text: `${fmtKg(total)}` }),
+      ` / ${fmtKg(accepted)} verde`,
+      pending > 0.001
+        ? el('span', { class: 'text-warn', text: ` · ${fmtKg(pending)} sin asignar` })
+        : el('span', { class: 'text-ok', text: ' · cubierto' }),
+    ]);
+  }
+
   return el('div', { class: 'mt-2 pt-2 border-t border-sand space-y-1' }, [
-    el('div', { class: 'flex items-center gap-2' }, [
+    el('div', { class: 'flex items-center justify-between gap-2 flex-wrap' }, [
       el('span', { class: 'eyebrow text-[10px]', text: 'Cobertura por lotes' }),
-      el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
-        el('strong', { class: 'text-ink-700', text: `${fmtKg(total)}` }),
-        ` / ${fmtKg(accepted)} verde`,
-        pending > 0.001
-          ? el('span', { class: 'text-warn', text: ` · ${fmtKg(pending)} sin asignar` })
-          : el('span', { class: 'text-ok', text: ' · cubierto' }),
-      ]),
+      summaryRight,
     ]),
     el('div', { class: 'flex h-2 rounded-full overflow-hidden bg-sand' },
-      segs.map((s) => el('div', {
-        class: 'h-full',
-        style: `width:${pct(s.kg)}%;background:${s.color};`,
-        title: `${s.label}: ${fmtKg(s.kg)}`,
-      }))),
+      segs.length > 0
+        ? segs.map((s) => el('div', {
+            class: 'h-full',
+            style: `width:${pct(s.kg)}%;background:${s.color};`,
+            title: `${s.label}: ${fmtKg(s.kg)}`,
+          }))
+        : []),
     lotChips.length > 0
       ? el('div', { class: 'flex flex-wrap gap-1' }, lotChips)
       : null,
