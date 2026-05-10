@@ -43,7 +43,7 @@ function forbidden() {
 export function defaultRouteFor(role) {
   if (role === 'forest') return '/forest/dashboard';
   if (role === 'finca')  return '/finca/dashboard';
-  if (role === 'admin')  return '/forest/dashboard';
+  if (role === 'admin')  return '/admin/dashboard';
   return '/login';
 }
 

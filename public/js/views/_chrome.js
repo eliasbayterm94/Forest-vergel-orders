@@ -53,8 +53,13 @@ const FINCA_NAV = [
   { path: '/reports',         label: 'Reportes',          icon: 'chart' },
 ];
 
+const ADMIN_NAV = [
+  { path: '/admin/dashboard', label: 'Dashboard',  icon: 'chart' },
+];
+
 function navSections(role) {
   const sections = [];
+  if (role === 'admin') sections.push({ label: 'Admin', items: ADMIN_NAV });
   if (role === 'forest' || role === 'admin') sections.push({ label: 'Forest', items: FOREST_NAV });
   if (role === 'finca'  || role === 'admin') sections.push({ label: 'El Vergel', items: FINCA_NAV });
   return sections;
