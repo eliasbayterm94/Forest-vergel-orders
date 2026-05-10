@@ -60,10 +60,13 @@ export const api = {
   references:    () => request('GET',  '/api/references-list'),
   referenceSave: (payload) => request('POST', '/api/references-create', { body: payload }),
 
-  ordersList:   (query) => request('GET',  '/api/demand-orders-list', { query }),
-  orderCreate:  (payload) => request('POST', '/api/demand-orders-create', { body: payload }),
-  orderAccept:  (payload) => request('POST', '/api/demand-orders-accept', { body: payload }),
-  orderReject:  (payload) => request('POST', '/api/demand-orders-reject', { body: payload }),
+  ordersList:    (query)  => request('GET',  '/api/demand-orders-list', { query }),
+  orderCreate:   (payload) => request('POST', '/api/demand-orders-create', { body: payload }),
+  orderUpdate:   (payload) => request('POST', '/api/demand-orders-update', { body: payload }),
+  orderCancel:   (payload) => request('POST', '/api/demand-orders-cancel', { body: payload }),
+  orderAccept:   (payload) => request('POST', '/api/demand-orders-accept', { body: payload }),
+  orderReject:   (payload) => request('POST', '/api/demand-orders-reject', { body: payload }),
+  orderUpdatePo: (payload) => request('POST', '/api/demand-orders-update-po', { body: payload }),
 
   lotsList:        (query) => request('GET',  '/api/production-lots-list', { query }),
   lotCreate:       (payload) => request('POST', '/api/production-lots-create', { body: payload }),
@@ -71,6 +74,7 @@ export const api = {
   lotUpdateStatus: (payload) => request('POST', '/api/production-lots-update-status', { body: payload }),
 
   assignmentsCreate: (payload) => request('POST', '/api/lot-assignments-create', { body: payload }),
+  assignmentsUpdate: (payload) => request('POST', '/api/lot-assignments-update', { body: payload }),
   assignmentsDelete: (payload) => request('POST', '/api/lot-assignments-delete', { body: payload }),
 
   capacity: (payload) => request('POST', '/api/capacity-calculate', { body: payload }),

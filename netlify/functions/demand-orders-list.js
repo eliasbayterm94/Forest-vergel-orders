@@ -26,6 +26,8 @@ exports.handler = requireAuth(async (event) => {
     max_delivery_date, physical_aspect, process_type, fermentation_hours,
     comments, status, override_15_day, rejection_reason,
     order_type, client_name, regions, contract_code,
+    external_po_status, external_po_supplier, external_po_code,
+    external_po_date, external_po_notes,
     created_by, created_at, updated_at,
     accepted_at, rejected_at, in_production_at, completed_at, cancelled_at,
     coffee_references ( id, name ),
