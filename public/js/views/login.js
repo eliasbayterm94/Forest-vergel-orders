@@ -60,7 +60,7 @@ export function loginView() {
   return el('div', { class: 'min-h-[100dvh] flex items-center justify-center px-4 py-10', style: { background: 'linear-gradient(160deg, #0c0c0b 0%, #1b203d 100%)' } }, [
     el('div', { class: 'w-full max-w-sm bg-white rounded-2xl shadow-card-2 p-7 sm:p-8' }, [
       el('div', { class: 'flex items-center gap-3 mb-7' }, [
-        el('div', { class: 'ctrm-topbar-logo' }, ['F']),
+        el('div', { class: 'ctrm-topbar-logo' }, ['F×V']),
         el('div', { class: 'flex flex-col' }, [
           el('h1', { class: 'font-display font-bold text-[16px] tracking-loose text-navy uppercase' }, ['Forest ↔ El Vergel']),
           el('p', { class: 'text-[11px] text-ink-500 font-mono tracking-loose' }, ['Production Bridge']),

@@ -106,7 +106,7 @@ export function chrome(content) {
   const sidebar = el('aside', { class: 'sidebar', id: 'app-sidebar' }, [
     el('div', { class: 'sidebar-header' }, [
       el('div', { class: 'sidebar-brand' }, [
-        el('div', { class: 'ctrm-topbar-logo' }, ['F']),
+        el('div', { class: 'ctrm-topbar-logo' }, ['F×V']),
         el('div', { class: 'flex flex-col min-w-0' }, [
           el('span', { class: 'sidebar-brand-title' }, ['Forest ↔ Vergel']),
           el('span', { class: 'text-[10px] font-mono text-white/40 tracking-loose' }, ['Production Bridge']),
@@ -167,7 +167,7 @@ export function chrome(content) {
     }, [iconEl('menu')]),
 
     el('div', { class: 'topbar-brand' }, [
-      el('div', { class: 'ctrm-topbar-logo' }, ['F']),
+      el('div', { class: 'ctrm-topbar-logo' }, ['F×V']),
       el('span', { class: 'topbar-brand-title' }, ['Forest ↔ Vergel']),
     ]),
 
