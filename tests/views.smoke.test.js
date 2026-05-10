@@ -54,6 +54,7 @@ const CANNED = {
   '/api/search':                     { q: '', orders: [], lots: [], shipments: [] },
   '/api/badges':                     { pending_orders: 0, urgent_orders: 0, ready_lots_unshipped: 0 },
   '/api/email-log-list':             { emails: [] },
+  '/api/production-config-get':      { config: { weekly_cherry_capacity_kg: 60000 } },
 };
 
 function pathOf(url) {
@@ -103,6 +104,7 @@ const VIEW_CASES = [
   { file: 'finca-monitoreo.js',    fn: 'fincaMonitoreoView',   session: SESSIONS.finca },
   { file: 'finca-cola.js',         fn: 'fincaColaView',        session: SESSIONS.finca },
   { file: 'admin-dashboard.js',    fn: 'adminDashboardView',   session: SESSIONS.admin },
+  { file: 'admin-config.js',       fn: 'adminConfigView',      session: SESSIONS.admin },
 ];
 
 for (const { file, fn, session } of VIEW_CASES) {

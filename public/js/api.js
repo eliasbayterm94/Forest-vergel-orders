@@ -88,6 +88,10 @@ export const api = {
   badges: () => request('GET', '/api/badges'),
   emailLog: (query) => request('GET', '/api/email-log-list', { query }),
 
+  productionConfigGet:    ()        => request('GET',  '/api/production-config-get'),
+  productionConfigUpdate: (payload) => request('POST', '/api/production-config-update', { body: payload }),
+  processLeadTimeUpdate:  (payload) => request('POST', '/api/process-lead-times-update', { body: payload }),
+
   shipmentsList:   ()        => request('GET',  '/api/shipments-list'),
   shipmentsCreate: (payload) => request('POST', '/api/shipments-create', { body: payload }),
   shipmentsCancel: (payload) => request('POST', '/api/shipments-cancel', { body: payload }),

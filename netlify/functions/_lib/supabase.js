@@ -102,6 +102,26 @@ async function getDriedDivisorsByProcess() {
 
 function clearLeadCache() { _processConfigCache = null; }
 
+// ── production_config singleton ─────────────────────────────────
+let _productionConfigCache = null;
+async function getProductionConfig() {
+  if (_productionConfigCache) return _productionConfigCache;
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from('production_config')
+    .select('weekly_cherry_capacity_kg, updated_at, updated_by')
+    .eq('id', 1).maybeSingle();
+  // Si la migracion 0018 no esta aplicada o la fila no existe, fallback
+  // al default historico de 60000 (mismo valor que estaba hardcoded).
+  if (error || !data) {
+    _productionConfigCache = { weekly_cherry_capacity_kg: 60000 };
+    return _productionConfigCache;
+  }
+  _productionConfigCache = data;
+  return _productionConfigCache;
+}
+function clearProductionConfigCache() { _productionConfigCache = null; }
+
 module.exports = {
   getSupabase,
   getProcessConfig,
@@ -109,4 +129,6 @@ module.exports = {
   getProcessingDaysByProcess,
   getDriedDivisorsByProcess,
   clearLeadCache,
+  getProductionConfig,
+  clearProductionConfigCache,
 };

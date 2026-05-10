@@ -56,7 +56,8 @@ const FINCA_NAV = [
 ];
 
 const ADMIN_NAV = [
-  { path: '/admin/dashboard', label: 'Dashboard',  icon: 'chart' },
+  { path: '/admin/dashboard', label: 'Dashboard',     icon: 'chart' },
+  { path: '/admin/config',    label: 'Configuración', icon: 'book' },
 ];
 
 function navSections(role) {

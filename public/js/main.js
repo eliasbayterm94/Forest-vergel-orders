@@ -15,6 +15,7 @@ import { fincaDespachosView }       from './views/finca-despachos.js';
 import { fincaMonitoreoView }       from './views/finca-monitoreo.js';
 import { fincaColaView }            from './views/finca-cola.js';
 import { adminDashboardView }       from './views/admin-dashboard.js';
+import { adminConfigView }          from './views/admin-config.js';
 
 const FOREST_OR_ADMIN = ['forest', 'admin'];
 const FINCA_OR_ADMIN  = ['finca',  'admin'];
@@ -34,6 +35,7 @@ defineRoute('/finca/lots',         { roles: FINCA_OR_ADMIN,  view: fincaLotsView
 defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
 defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitoreoView });
 defineRoute('/admin/dashboard',    { roles: ['admin'],       view: adminDashboardView });
+defineRoute('/admin/config',       { roles: ['admin'],       view: adminConfigView });
 
 window.addEventListener('app:unauthorized', () => {
   setSession(null);
