@@ -2,6 +2,7 @@
 import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
+import { listView } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
@@ -19,11 +20,43 @@ export async function fincaDespachosView() {
 
   function render() {
     clear(list);
-    if (shipments.length === 0) {
-      list.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Aún no se han creado despachos.' }));
-      return;
-    }
-    for (const s of shipments) list.append(shipmentCard(s));
+    list.append(listView({
+      items: shipments,
+      renderItem: shipmentCard,
+      pageSize: 20,
+      emptyText: 'Aún no se han creado despachos.',
+      searchPlaceholder: 'Buscar código de despacho, lote, pedido...',
+      searchMatch: (s, q) => {
+        const lo = q.toLowerCase();
+        if ((s.shipment_code || '').toLowerCase().includes(lo)) return true;
+        if ((s.notes || '').toLowerCase().includes(lo)) return true;
+        for (const l of s.lots || []) {
+          if ((l.lot_code || '').toLowerCase().includes(lo)) return true;
+          if ((l.reference_name || '').toLowerCase().includes(lo)) return true;
+          for (const a of l.assignments || []) {
+            if ((a.order?.order_code || '').toLowerCase().includes(lo)) return true;
+            if ((a.order?.client_name || '').toLowerCase().includes(lo)) return true;
+          }
+        }
+        return false;
+      },
+      sorts: [
+        { key: 'date_desc', label: 'Fecha: más reciente', getter: (s) => s.shipment_date, dir: 'desc' },
+        { key: 'date_asc',  label: 'Fecha: más antigua',  getter: (s) => s.shipment_date, dir: 'asc' },
+        { key: 'kg_desc',   label: 'Mayor kg verde',      getter: (s) => Number(s.totals?.kg_green || 0), dir: 'desc' },
+      ],
+      defaultSort: 'date_desc',
+      totals: [
+        { label: 'Despachos', value: (arr) => String(arr.length) },
+        { label: 'Lotes',     value: (arr) => String(arr.reduce((s, x) => s + (x.totals?.lot_count || x.lots.length), 0)) },
+        { label: 'Pedidos',   value: (arr) => {
+          const ids = new Set();
+          arr.forEach((s) => s.lots.forEach((l) => l.assignments.forEach((a) => a.order && ids.add(a.order.id))));
+          return String(ids.size);
+        } },
+        { label: 'Verde',     value: (arr) => fmtKg(arr.reduce((s, x) => s + Number(x.totals?.kg_green || 0), 0)) },
+      ],
+    }));
   }
   render();
 

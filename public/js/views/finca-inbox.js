@@ -2,10 +2,14 @@
 import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
+import { listView, sumOf } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { renderCapacityPayload } from './_capacity-panel.js';
+
+const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
+const ORDER_TYPES   = ['Spot', 'Contract', 'FOB'];
 
 export async function fincaInboxView() {
   let orders = [];
@@ -56,14 +60,38 @@ export async function fincaInboxView() {
     const countEl = document.getElementById('pending-count');
     if (countEl) countEl.textContent = `${orders.length} pendiente${orders.length===1?'':'s'}`;
 
-    if (orders.length === 0) {
-      ordersWrap.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Sin pedidos pendientes.' }));
-      return;
-    }
-
-    for (const o of orders) {
-      ordersWrap.append(orderRow(o));
-    }
+    ordersWrap.append(listView({
+      items: orders,
+      renderItem: orderRow,
+      pageSize: 20,
+      emptyText: 'Sin pedidos pendientes.',
+      searchPlaceholder: 'Buscar código, cliente, contrato, referencia...',
+      searchMatch: (o, q) => {
+        const lo = q.toLowerCase();
+        return [o.order_code, o.client_name, o.contract_code, o.reference_name]
+          .some((s) => (s || '').toLowerCase().includes(lo));
+      },
+      filters: [
+        { key: 'process_type', label: 'Proceso',  options: PROCESS_TYPES, getter: (o) => o.process_type },
+        { key: 'order_type',   label: 'Tipo',     options: ORDER_TYPES,   getter: (o) => o.order_type || '' },
+        { key: 'drying_urgency', label: 'Urgencia drying',
+          options: ['past', 'red', 'yellow', 'normal'],
+          optionLabels: { past: 'Vencido', red: 'Crítico', yellow: 'Próximo', normal: 'OK' },
+          getter: (o) => o.drying_urgency },
+      ],
+      sorts: [
+        { key: 'drying_asc', label: 'Inicio drying: más cercano', getter: (o) => o.latest_drying_start_date, dir: 'asc' },
+        { key: 'date_asc',   label: 'Entrega: más cercana',       getter: (o) => o.max_delivery_date, dir: 'asc' },
+        { key: 'kg_desc',    label: 'Mayor kg verde',             getter: (o) => Number(o.kg_green_required||0), dir: 'desc' },
+        { key: 'created_desc', label: 'Más recientes',            getter: (o) => o.created_at, dir: 'desc' },
+      ],
+      defaultSort: 'drying_asc',
+      totals: [
+        { label: 'Pedidos', value: (arr) => String(arr.length) },
+        { label: 'Verde',   value: (arr) => fmtKg(sumOf(arr, 'kg_green_required')) },
+        { label: 'Cereza',  value: (arr) => fmtKg(sumOf(arr, 'kg_cherry_required')) },
+      ],
+    }));
   }
 
   function orderRow(o) {

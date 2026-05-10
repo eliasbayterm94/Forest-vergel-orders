@@ -3,9 +3,18 @@ import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
+import { listView } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
+
+const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
+const LOT_STATUS_LABELS = {
+  InFermentation: 'En fermentación',
+  Drying: 'Secado',
+  Resting: 'Reposo',
+  Ready: 'Listo',
+};
 
 const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
 
@@ -54,11 +63,34 @@ export async function fincaLotsView() {
 
   function render() {
     clear(list);
-    if (lots.length === 0) {
-      list.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Sin lotes activos. Crea uno con el botón de arriba.' }));
-      return;
-    }
-    for (const l of lots) list.append(lotCard(l));
+    list.append(listView({
+      items: lots,
+      renderItem: lotCard,
+      pageSize: 20,
+      emptyText: 'Sin lotes activos. Crea uno con el botón de arriba.',
+      searchPlaceholder: 'Buscar código de lote, referencia...',
+      searchMatch: (l, q) => {
+        const lo = q.toLowerCase();
+        return [l.lot_code, l.reference_name].some((s) => (s || '').toLowerCase().includes(lo));
+      },
+      filters: [
+        { key: 'status',          label: 'Estado',  options: LOT_STATUSES, optionLabels: LOT_STATUS_LABELS, getter: (l) => l.status },
+        { key: 'process_type',    label: 'Proceso', options: ['Natural', 'Honey', 'Lavado'], getter: (l) => l.process_type },
+        { key: 'processing_stage',label: 'Etapa',   options: ['cereza', 'despulpado', 'seco'], getter: (l) => l.processing_stage || '' },
+      ],
+      sorts: [
+        { key: 'start_desc', label: 'Inicio: más reciente', getter: (l) => l.start_date,        dir: 'desc' },
+        { key: 'start_asc',  label: 'Inicio: más antiguo',  getter: (l) => l.start_date,        dir: 'asc' },
+        { key: 'kg_desc',    label: 'Mayor verde esperado', getter: (l) => Number(l.kg_green_expected || 0), dir: 'desc' },
+      ],
+      defaultSort: 'start_desc',
+      totals: [
+        { label: 'Lotes',              value: (arr) => String(arr.length) },
+        { label: 'Cereza fresca',      value: (arr) => fmtKg(arr.reduce((s, l) => s + Number(l.kg_cherry_input || 0), 0)) },
+        { label: 'Verde esperado',     value: (arr) => fmtKg(arr.reduce((s, l) => s + Number(l.kg_green_expected || 0), 0)) },
+        { label: 'Verde real',         value: (arr) => fmtKg(arr.reduce((s, l) => s + Number(l.kg_green_actual || 0), 0)) },
+      ],
+    }));
   }
   render();
 

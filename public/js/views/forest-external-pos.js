@@ -2,6 +2,7 @@
 import { el } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal } from '../ui/modal.js';
+import { listView, sumOf } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
@@ -19,30 +20,49 @@ export async function forestExternalPosView() {
   const res = await api.ordersList({ status: 'Rejected,PartiallyAccepted,InProduction,Completed' });
   const rows = res.orders.filter((o) => Number(o.kg_green_external_needed || 0) > 0);
 
-  // Aggregate by PO status for the summary strip.
-  const totals = {
-    all:       rows.reduce((s, o) => s + Number(o.kg_green_external_needed || 0), 0),
-    pendiente: rows.filter((o) => (o.external_po_status || 'Pendiente') === 'Pendiente')
-                   .reduce((s, o) => s + Number(o.kg_green_external_needed || 0), 0),
-    emitida:   rows.filter((o) => o.external_po_status === 'Emitida')
-                   .reduce((s, o) => s + Number(o.kg_green_external_needed || 0), 0),
-    recibida:  rows.filter((o) => o.external_po_status === 'Recibida')
-                   .reduce((s, o) => s + Number(o.kg_green_external_needed || 0), 0),
-  };
-
   return chrome(el('div', {}, [
     pageTitle('Pedidos a sourcing externo', 'Rechazos y aceptaciones parciales que requieren PO con un tercero'),
 
-    el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5' }, [
-      summaryCard('Total externo', fmtKg(totals.all), `${rows.length} pedido${rows.length===1?'':'s'}`, 'featured'),
-      summaryCard('Pendiente PO',  fmtKg(totals.pendiente), 'Sin emitir',  totals.pendiente > 0 ? 'crit' : 'ok'),
-      summaryCard('PO Emitida',    fmtKg(totals.emitida),   'En tránsito', 'roll'),
-      summaryCard('PO Recibida',   fmtKg(totals.recibida),  'Cerrado',     'ok'),
-    ]),
-
-    rows.length === 0
-      ? el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: 'Nada pendiente. Todos los rechazos están al día.' })
-      : el('div', { class: 'space-y-2' }, rows.map((o) => extRow(o, () => openPoEdit(o)))),
+    listView({
+      items: rows,
+      renderItem: (o) => extRow(o, () => openPoEdit(o)),
+      pageSize: 20,
+      emptyText: 'Nada pendiente. Todos los rechazos están al día.',
+      searchPlaceholder: 'Buscar código, cliente, contrato, proveedor...',
+      searchMatch: (o, q) => {
+        const lo = q.toLowerCase();
+        return [o.order_code, o.client_name, o.contract_code, o.reference_name, o.external_po_supplier, o.external_po_code]
+          .some((s) => (s || '').toLowerCase().includes(lo));
+      },
+      filters: [
+        {
+          key: 'po_status',
+          label: 'Estado PO',
+          options: PO_STATUSES,
+          getter: (o) => o.external_po_status || 'Pendiente',
+        },
+        {
+          key: 'order_status',
+          label: 'Estado pedido',
+          options: ['Rejected', 'PartiallyAccepted'],
+          optionLabels: { Rejected: 'Rechazado', PartiallyAccepted: 'Aceptado parcial' },
+          getter: (o) => o.status,
+        },
+      ],
+      sorts: [
+        { key: 'date_asc',  label: 'Entrega: más cercana', getter: (o) => o.max_delivery_date, dir: 'asc' },
+        { key: 'date_desc', label: 'Entrega: más lejana',  getter: (o) => o.max_delivery_date, dir: 'desc' },
+        { key: 'kg_desc',   label: 'Mayor kg externo',     getter: (o) => Number(o.kg_green_external_needed || 0), dir: 'desc' },
+        { key: 'kg_asc',    label: 'Menor kg externo',     getter: (o) => Number(o.kg_green_external_needed || 0), dir: 'asc' },
+      ],
+      defaultSort: 'date_asc',
+      totals: [
+        { label: 'Pedidos',       value: (arr) => String(arr.length) },
+        { label: 'Total externo', value: (arr) => fmtKg(sumOf(arr, 'kg_green_external_needed')) },
+        { label: 'Pendiente PO',  value: (arr) => fmtKg(sumOfBy(arr, (o) => (o.external_po_status || 'Pendiente') === 'Pendiente' ? Number(o.kg_green_external_needed || 0) : 0)) },
+        { label: 'PO Emitida',    value: (arr) => fmtKg(sumOfBy(arr, (o) => o.external_po_status === 'Emitida' ? Number(o.kg_green_external_needed || 0) : 0)) },
+      ],
+    }),
   ]));
 
   async function openPoEdit(order) {
@@ -56,20 +76,8 @@ export async function forestExternalPosView() {
   }
 }
 
-function summaryCard(label, value, hint, kind) {
-  if (kind === 'featured') {
-    return el('div', { class: 'stat-card featured' }, [
-      el('p', { class: 'stat-label', text: label }),
-      el('p', { class: 'stat-val', text: value }),
-      el('p', { class: 'stat-sub', text: hint }),
-    ]);
-  }
-  const cls = kind ? `stat-val ${kind}` : 'stat-val';
-  return el('div', { class: 'stat-card' }, [
-    el('p', { class: 'stat-label', text: label }),
-    el('p', { class: cls, text: value }),
-    el('p', { class: 'stat-sub', text: hint }),
-  ]);
+function sumOfBy(arr, fn) {
+  return arr.reduce((s, x) => s + Number(fn(x) || 0), 0);
 }
 
 function extRow(o, onEditPo) {
