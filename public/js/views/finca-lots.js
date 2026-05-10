@@ -189,8 +189,8 @@ export async function fincaLotsView() {
           ])
         : null,
 
-      // Parciales (visibles cuando esta en Drying o cuando ya hay alguno)
-      (isDrying || partials.length > 0) ? partialsSection(l, partials, isDrying) : null,
+      // Parciales (visibles cuando esta en Drying, Ready o cuando ya hay alguno)
+      (isDrying || partials.length > 0) ? partialsSection(l, partials) : null,
 
       (l.assignments || []).length > 0
         ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
@@ -201,29 +201,66 @@ export async function fincaLotsView() {
     ]);
   }
 
-  function partialsSection(lot, partials, canEdit) {
+  function partialsSection(lot, partials) {
+    const isDrying = lot.status === 'Drying';
+    const isReady  = lot.status === 'Ready';
     const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
     const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
     const usedLetters = new Set(partials.map((p) => p.parcial_letter));
     const fullySplit = usedLetters.size >= 6;
 
-    const rows = partials.map((p) => el('div', {
-      class: 'flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-sand bg-cream',
-    }, [
-      el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-        el('span', { class: 'ctrm-pill dark', text: `Parcial ${p.parcial_letter}` }),
-        el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
-          `${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → `,
-          el('strong', { class: 'text-navy', text: fmtKg(p.kg_green_yield) }),
-          ' verde',
+    const rows = partials.map((p) => {
+      const isShipped = !!p.shipment_id;
+      const isRejected = !!p.rejected_at;
+
+      let statusBadge = null;
+      if (isShipped) {
+        statusBadge = el('span', { class: 'ctrm-pill ok', text: `En ${p.shipment_code || 'despacho'}` });
+      } else if (isRejected) {
+        statusBadge = el('span', { class: 'ctrm-pill urgency-red', text: 'Rechazado' });
+      } else if (isReady) {
+        statusBadge = el('span', { class: 'ctrm-pill', text: 'Pendiente' });
+      }
+
+      let action = null;
+      if (isDrying && !isShipped && !isRejected) {
+        action = el('button', {
+          class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-sm text-crit',
+          title: 'Quitar parcial',
+          onClick: () => removePartial(lot, p),
+        }, ['×']);
+      } else if (isReady && !isShipped) {
+        action = isRejected
+          ? el('button', {
+              class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-sm',
+              title: 'Restaurar parcial',
+              onClick: () => unrejectPartial(lot, p),
+            }, ['Restaurar'])
+          : el('button', {
+              class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-sm text-crit',
+              title: 'Marcar como rechazado',
+              onClick: () => rejectPartial(lot, p),
+            }, ['Rechazar']);
+      }
+
+      return el('div', {
+        class: `flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-sand ${isRejected ? 'bg-cream opacity-70' : 'bg-cream'}`,
+      }, [
+        el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
+          el('span', { class: 'ctrm-pill dark', text: `Parcial ${p.parcial_letter}` }),
+          el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
+            `${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → `,
+            el('strong', { class: 'text-navy', text: fmtKg(p.kg_green_yield) }),
+            ' verde',
+          ]),
+          statusBadge,
         ]),
-      ]),
-      canEdit ? el('button', {
-        class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-sm text-crit',
-        title: 'Quitar parcial',
-        onClick: () => removePartial(lot, p),
-      }, ['×']) : null,
-    ]));
+        action,
+      ]);
+    });
+
+    const activePartials = partials.filter((p) => !p.rejected_at);
+    const sumGreenActive = activePartials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
 
     return el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
       el('div', { class: 'flex items-center justify-between mb-1.5' }, [
@@ -233,7 +270,7 @@ export async function fincaLotsView() {
             ? el('span', { class: 'text-ink-500', text: ` · ${partials.length}/6` })
             : null,
         ]),
-        canEdit ? el('button', {
+        isDrying ? el('button', {
           class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
           disabled: fullySplit ? 'true' : null,
           onClick: () => addPartial(lot),
@@ -247,8 +284,57 @@ export async function fincaLotsView() {
       }, [
         meta('Σ Seco',  fmtKg(sumDried)),
         meta('Σ Verde', fmtKg(sumGreen)),
+        sumGreenActive !== sumGreen ? meta('Σ Verde activo', fmtKg(sumGreenActive)) : null,
       ]) : null,
     ]);
+  }
+
+  async function rejectPartial(lot, partial) {
+    return openModal(({ close }) => {
+      const reasonInput = el('textarea', {
+        rows: '2', placeholder: 'Motivo (opcional)',
+        class: 'ctrm-textarea',
+      });
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-700' }, [
+          `Rechazar parcial `, el('strong', { text: partial.parcial_letter }),
+          ` de ${lot.bache_code || lot.lot_code} (${fmtKg(partial.kg_green_yield)} verde). ` +
+          `No se incluirá en ningún despacho. Puedes restaurarlo después.`,
+        ]),
+        labelled('Motivo', reasonInput),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-danger',
+            type: 'button',
+            onClick: async () => {
+              try {
+                await api.lotPartialReject({
+                  partial_id: partial.id,
+                  reason: reasonInput.value || null,
+                });
+                toast(`Parcial ${partial.parcial_letter} rechazado`, 'success');
+                close({ ok: true });
+                await reloadLots();
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, ['Rechazar parcial']),
+        ]),
+      ]);
+    }, { title: `Rechazar parcial ${partial.parcial_letter}` });
+  }
+
+  async function unrejectPartial(lot, partial) {
+    const ok = await confirmModal(
+      `Restaurar parcial ${partial.parcial_letter} de ${lot.bache_code || lot.lot_code}? Volverá a estar disponible para despacho.`,
+      { title: 'Restaurar parcial' },
+    );
+    if (!ok) return;
+    try {
+      await api.lotPartialReject({ partial_id: partial.id, undo: true });
+      toast(`Parcial ${partial.parcial_letter} restaurado`, 'success');
+      await reloadLots();
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   async function addPartial(lot) {

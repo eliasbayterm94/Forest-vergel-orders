@@ -134,7 +134,11 @@ export async function fincaDespachosView() {
   }
 
   function createModalBody(close, preselectLotId) {
-    const selected = new Set(preselectLotId ? [preselectLotId] : []);
+    // Selection state:
+    //   wholeLots:  Set<lot_id>     — for lots without partials
+    //   partials:   Set<partial_id> — for partial-mode lots
+    const wholeLots = new Set(preselectLotId ? [preselectLotId] : []);
+    const partialIds = new Set();
 
     const dateInput = el('input', {
       type: 'date', value: new Date().toISOString().slice(0, 10),
@@ -153,50 +157,137 @@ export async function fincaDespachosView() {
       class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono',
     });
 
+    function selectedLots() {
+      // Lots that contribute SOMETHING to this shipment.
+      return readyLots.filter((l) => {
+        if ((l.partials || []).length === 0) return wholeLots.has(l.id);
+        return (l.partials || []).some((p) => partialIds.has(p.id));
+      });
+    }
+    function selectedKg() {
+      let total = 0;
+      for (const l of readyLots) {
+        if ((l.partials || []).length === 0) {
+          if (wholeLots.has(l.id)) total += Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
+        } else {
+          for (const p of l.partials) {
+            if (partialIds.has(p.id)) total += Number(p.kg_green_yield || 0);
+          }
+        }
+      }
+      return total;
+    }
+
     const recountSummary = () => {
       clear(counter);
-      const sel = readyLots.filter((l) => selected.has(l.id));
-      const totalKg = sel.reduce((s, l) => s + Number(l.kg_green_actual ?? l.kg_green_expected ?? 0), 0);
+      const sel = selectedLots();
+      const totalKg = selectedKg();
       const orderIds = new Set();
       sel.forEach((l) => (l.assignments || []).forEach((a) => orderIds.add(a.demand_order_id)));
+      const partialCount = [...partialIds].length;
       counter.append(
-        infoChip('Lotes seleccionados', String(sel.length)),
+        infoChip('Lotes', String(sel.length)),
+        partialCount > 0 ? infoChip('Parciales', String(partialCount)) : null,
         infoChip('kg verde', fmtKg(totalKg)),
         infoChip('Pedidos involucrados', String(orderIds.size)),
       );
     };
 
-    const lotsList = el('div', { class: 'space-y-1.5 max-h-[40vh] overflow-y-auto pr-1' });
+    const lotsList = el('div', { class: 'space-y-1.5 max-h-[50vh] overflow-y-auto pr-1' });
     function renderLots() {
       clear(lotsList);
       readyLots.forEach((l) => {
-        const checked = selected.has(l.id);
-        const cb = el('input', {
-          type: 'checkbox', class: 'h-4 w-4 accent-navy mt-1', checked,
-          onChange: (e) => {
-            if (e.target.checked) selected.add(l.id); else selected.delete(l.id);
+        const totalAlloc = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
+        const partials = l.partials || [];
+        const lotHeader = el('div', { class: 'flex items-center gap-2 flex-wrap mb-1' }, [
+          el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+          el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: l.reference_name || '—' }),
+          el('span', { class: 'ctrm-pill muted', text: l.process_type }),
+          partials.length > 0
+            ? el('span', { class: 'ctrm-pill', text: `${partials.length} parcial(es)` })
+            : null,
+        ]);
+        const lotMeta = el('div', { class: 'text-[11px] text-ink-500 font-mono' }, [
+          `Verde lote: ${fmtKg(l.kg_green_actual ?? l.kg_green_expected ?? 0)}  ·  Asignado: ${fmtKg(totalAlloc)}  ·  ${(l.assignments || []).length} pedido(s)`,
+        ]);
+        const assignmentsLine = (l.assignments || []).length > 0
+          ? el('div', { class: 'flex flex-wrap gap-1 mt-1' },
+              (l.assignments || []).map((a) => el('span', { class: 'ctrm-code text-[10px]' }, [
+                `${a.order?.order_code || '?'}: ${fmtKg(a.kg_green_allocated)}`,
+              ])))
+          : el('p', { class: 'text-[11px] text-warn mt-1', text: '⚠ Sin asignaciones — el despacho no completará ningún pedido.' });
+
+        if (partials.length === 0) {
+          // Whole-lot row
+          const checked = wholeLots.has(l.id);
+          const cb = el('input', {
+            type: 'checkbox', class: 'h-4 w-4 accent-navy mt-1', checked,
+            onChange: (e) => {
+              if (e.target.checked) wholeLots.add(l.id); else wholeLots.delete(l.id);
+              recountSummary();
+            },
+          });
+          lotsList.append(el('label', { class: 'flex items-start gap-3 p-2 rounded-md border border-sand bg-white cursor-pointer hover:border-navy' }, [
+            cb,
+            el('div', { class: 'flex-1 min-w-0' }, [lotHeader, lotMeta, assignmentsLine]),
+          ]));
+          return;
+        }
+
+        // Partial-mode card
+        const partialRows = partials.map((p) => {
+          const isShipped  = !!p.shipment_id;
+          const isRejected = !!p.rejected_at;
+          const disabled   = isShipped || isRejected;
+          const checked    = partialIds.has(p.id);
+          const cb = el('input', {
+            type: 'checkbox', class: 'h-4 w-4 accent-navy',
+            checked, disabled: disabled ? 'true' : null,
+            onChange: (e) => {
+              if (e.target.checked) partialIds.add(p.id); else partialIds.delete(p.id);
+              recountSummary();
+            },
+          });
+          let badge = null;
+          if (isShipped)  badge = el('span', { class: 'ctrm-pill muted', text: `En ${p.shipment_code || 'otro despacho'}` });
+          else if (isRejected) badge = el('span', { class: 'ctrm-pill urgency-red', text: 'Rechazado' });
+          return el('label', {
+            class: `flex items-center gap-3 px-2 py-1.5 rounded-md border ${disabled ? 'border-sand bg-cream opacity-60' : 'border-sand bg-white hover:border-navy cursor-pointer'}`,
+          }, [
+            cb,
+            el('div', { class: 'flex-1 min-w-0 flex items-center gap-2 flex-wrap' }, [
+              el('span', { class: 'ctrm-pill dark', text: `Parcial ${p.parcial_letter}` }),
+              el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
+                `${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → `,
+                el('strong', { class: 'text-navy', text: fmtKg(p.kg_green_yield) }),
+                ' verde',
+              ]),
+              badge,
+            ]),
+          ]);
+        });
+
+        const allBtn = el('button', {
+          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+          type: 'button',
+          onClick: () => {
+            const eligible = partials.filter((p) => !p.shipment_id && !p.rejected_at);
+            const allSelected = eligible.every((p) => partialIds.has(p.id));
+            for (const p of eligible) {
+              if (allSelected) partialIds.delete(p.id); else partialIds.add(p.id);
+            }
+            renderLots();
             recountSummary();
           },
-        });
-        const totalAlloc = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
-        lotsList.append(el('label', { class: 'flex items-start gap-3 p-2 rounded-md border border-sand bg-white cursor-pointer hover:border-navy' }, [
-          cb,
-          el('div', { class: 'flex-1 min-w-0' }, [
-            el('div', { class: 'flex items-center gap-2 flex-wrap mb-0.5' }, [
-              el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
-              el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: l.reference_name || '—' }),
-              el('span', { class: 'ctrm-pill muted', text: l.process_type }),
-            ]),
-            el('div', { class: 'text-[11px] text-ink-500 font-mono' }, [
-              `Verde: ${fmtKg(l.kg_green_actual ?? l.kg_green_expected ?? 0)}  ·  Asignado: ${fmtKg(totalAlloc)}  ·  ${(l.assignments || []).length} pedido(s)`,
-            ]),
-            (l.assignments || []).length > 0
-              ? el('div', { class: 'flex flex-wrap gap-1 mt-1' },
-                  (l.assignments || []).map((a) => el('span', { class: 'ctrm-code text-[10px]' }, [
-                    `${a.order?.order_code || '?'}: ${fmtKg(a.kg_green_allocated)}`,
-                  ])))
-              : el('p', { class: 'text-[11px] text-warn mt-1', text: '⚠ Sin asignaciones — el despacho no completará ningún pedido.' }),
+        }, [partials.filter((p) => !p.shipment_id && !p.rejected_at).every((p) => partialIds.has(p.id))
+            ? 'Quitar todos' : 'Seleccionar todos']);
+
+        lotsList.append(el('div', { class: 'p-2 rounded-md border border-sand bg-white' }, [
+          el('div', { class: 'flex items-start justify-between gap-2 mb-1' }, [
+            el('div', { class: 'flex-1 min-w-0' }, [lotHeader, lotMeta, assignmentsLine]),
+            allBtn,
           ]),
+          el('div', { class: 'space-y-1 mt-2' }, partialRows),
         ]));
       });
     }
@@ -210,7 +301,7 @@ export async function fincaDespachosView() {
       ]),
       labelled('Notas', notesInput),
       el('div', {}, [
-        el('label', { class: 'ctrm-label', text: 'Lotes Listos a incluir' }),
+        el('label', { class: 'ctrm-label', text: 'Lotes / parciales Listos a incluir' }),
         lotsList,
       ]),
       counter,
@@ -220,10 +311,16 @@ export async function fincaDespachosView() {
           class: 'ctrm-btn ctrm-btn-primary',
           type: 'button',
           onClick: async () => {
-            const ids = [...selected];
-            if (ids.length === 0) { toast('Selecciona al menos un lote', 'warning'); return; }
+            const items = buildItems(readyLots, wholeLots, partialIds);
+            if (items.length === 0) { toast('Selecciona al menos un lote o parcial', 'warning'); return; }
+            const partialCount = items.reduce((s, it) => s + (it.partial_ids ? it.partial_ids.length : 0), 0);
+            const wholeCount   = items.filter((it) => !it.partial_ids).length;
+            const summary = [
+              wholeCount   > 0 ? `${wholeCount} lote(s) completos` : null,
+              partialCount > 0 ? `${partialCount} parcial(es)`     : null,
+            ].filter(Boolean).join(' + ');
             const ok = await confirmModal(
-              `Se despacharán ${ids.length} lote(s) y los pedidos asignados podrán completarse. ¿Continuar?`,
+              `Despacho con ${summary}. Los pedidos asignados podrán completarse. ¿Continuar?`,
               { title: 'Confirmar despacho' },
             );
             if (!ok) return;
@@ -232,7 +329,7 @@ export async function fincaDespachosView() {
                 shipment_code: codeInput.value.trim() || undefined,
                 shipment_date: dateInput.value,
                 notes: notesInput.value || undefined,
-                lot_ids: ids,
+                items,
               });
               const compl = (r.completions || []).length;
               toast(
@@ -247,6 +344,24 @@ export async function fincaDespachosView() {
       ]),
     ]);
   }
+}
+
+function buildItems(readyLots, wholeLots, partialIds) {
+  const items = [];
+  for (const l of readyLots) {
+    const partials = l.partials || [];
+    if (partials.length === 0) {
+      if (wholeLots.has(l.id)) {
+        items.push({ production_lot_id: l.id, partial_ids: null });
+      }
+    } else {
+      const selected = partials.filter((p) => partialIds.has(p.id)).map((p) => p.id);
+      if (selected.length > 0) {
+        items.push({ production_lot_id: l.id, partial_ids: selected });
+      }
+    }
+  }
+  return items;
 }
 
 // ── helpers ────────────────────────────────────────────────────────

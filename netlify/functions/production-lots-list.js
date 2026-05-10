@@ -28,7 +28,11 @@ exports.handler = requireAuth(async (event) => {
     production_lot_varieties ( coffee_varieties ( id, name ) ),
     lot_partials (
       id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield,
-      completed_at, notes, created_at
+      completed_at, notes, created_at,
+      rejected_at, rejection_reason,
+      shipment_lots!lot_partial_id (
+        shipment_id, shipments ( shipment_code, shipment_date )
+      )
     ),
     lot_order_assignments (
       id, demand_order_id, kg_green_allocated,
@@ -51,16 +55,24 @@ exports.handler = requireAuth(async (event) => {
     reference_name: l.coffee_references && l.coffee_references.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     partials: (l.lot_partials || [])
-      .map((p) => ({
-        id: p.id,
-        parcial_letter: p.parcial_letter,
-        kg_dried: Number(p.kg_dried),
-        factor_rendimiento: Number(p.factor_rendimiento),
-        kg_green_yield: Number(p.kg_green_yield),
-        completed_at: p.completed_at,
-        notes: p.notes,
-        created_at: p.created_at,
-      }))
+      .map((p) => {
+        const link = (p.shipment_lots || [])[0];
+        return {
+          id: p.id,
+          parcial_letter: p.parcial_letter,
+          kg_dried: Number(p.kg_dried),
+          factor_rendimiento: Number(p.factor_rendimiento),
+          kg_green_yield: Number(p.kg_green_yield),
+          completed_at: p.completed_at,
+          notes: p.notes,
+          created_at: p.created_at,
+          rejected_at: p.rejected_at,
+          rejection_reason: p.rejection_reason,
+          shipment_id:    link ? link.shipment_id : null,
+          shipment_code:  link && link.shipments ? link.shipments.shipment_code : null,
+          shipment_date:  link && link.shipments ? link.shipments.shipment_date : null,
+        };
+      })
       .sort((a, b) => a.parcial_letter.localeCompare(b.parcial_letter)),
     assignments: (l.lot_order_assignments || []).map((a) => ({
       id: a.id,

@@ -3,34 +3,53 @@
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
-const { ok, badReq, notFound, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { ok, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { notifyOrderCompleted } = require('./_lib/notifications');
 const { bogotaToday } = require('./_lib/bogotaTime');
 
 /**
  * POST /shipments-create  (finca, admin)
- * Body:
- *   shipment_code  (optional — server auto-generates DSP-YYYY-NNNN if absent)
- *   shipment_date  'YYYY-MM-DD' (optional — defaults to today Bogota)
+ *
+ * Body (preferred shape):
+ *   shipment_code  (optional, auto DSP-YYYY-NNNN)
+ *   shipment_date  YYYY-MM-DD (default: today Bogota)
  *   notes          string (optional)
- *   lot_ids        [uuid] — Ready lots to include in this shipment (≥1)
+ *   items          [
+ *     { production_lot_id: uuid, partial_ids: null | [uuid] }
+ *   ]
  *
- * Effects:
- *   1. Insert shipment row + shipment_lots links.
- *   2. For each lot, transition to Delivered (sets delivered_date).
- *   3. Cascade: any order whose total assigned kg from delivered lots
- *      now meets kg_green_accepted is marked Completed and the
- *      "order_completed" notification fires.
+ *   - partial_ids null/empty → ship the whole lot. Only allowed when
+ *     the lot has no registered partials.
+ *   - partial_ids array     → ship those specific partials. Required
+ *     when the lot has any partial.
  *
- * Returns: { shipment, completions: [{order_id, notification}] }
+ * Backwards-compat: `lot_ids: [uuid]` is accepted and translates to
+ * items[i] = { production_lot_id, partial_ids: null }.
+ *
+ * After insert each touched lot is evaluated: it's marked Delivered
+ * iff it was shipped whole, OR every one of its partials is now
+ * either shipped or rejected. Order-completion cascade runs on the
+ * lots that became Delivered.
  */
 exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
 
-  const lot_ids = Array.isArray(body.lot_ids) ? [...new Set(body.lot_ids.filter(Boolean))] : [];
-  if (lot_ids.length === 0) return badReq('lot_ids[] required', 'LOT_IDS_REQUIRED');
+  // Normalize input to the items[] shape.
+  let items = Array.isArray(body.items) ? body.items : null;
+  if (!items && Array.isArray(body.lot_ids)) {
+    items = [...new Set(body.lot_ids.filter(Boolean))]
+      .map((production_lot_id) => ({ production_lot_id, partial_ids: null }));
+  }
+  if (!items || items.length === 0) return badReq('items[] (or lot_ids[]) required', 'ITEMS_REQUIRED');
+
+  for (const it of items) {
+    if (!it.production_lot_id) return badReq('items[].production_lot_id required', 'LOT_ID_REQUIRED');
+    if (it.partial_ids != null && !Array.isArray(it.partial_ids)) {
+      return badReq('items[].partial_ids must be array or null', 'INVALID_PARTIAL_IDS');
+    }
+  }
 
   const shipment_code = body.shipment_code ? String(body.shipment_code).trim() : null;
   const shipment_date = body.shipment_date || bogotaToday();
@@ -38,35 +57,104 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const notes = body.notes == null ? null : String(body.notes);
 
   const sb = getSupabase();
+  const lotIds = [...new Set(items.map((i) => i.production_lot_id))];
 
-  // Verify all lots exist, are Ready, and not already shipped.
+  // Load lots with partials and existing shipment links.
   const { data: lots, error: lErr } = await sb
     .from('production_lots')
-    .select('id, lot_code, status, kg_green_actual, kg_green_expected')
-    .in('id', lot_ids);
+    .select(`
+      id, lot_code, bache_code, status,
+      kg_green_actual, kg_green_expected,
+      lot_partials ( id, parcial_letter, kg_green_yield, rejected_at )
+    `)
+    .in('id', lotIds);
   if (lErr) return serverErr('Lot lookup failed', lErr.message);
-  if (!lots || lots.length !== lot_ids.length) {
+  if (!lots || lots.length !== lotIds.length) {
     return badReq('One or more lots not found', 'LOT_NOT_FOUND');
   }
+
   const notReady = lots.filter((l) => l.status !== LOT_STATUS.Ready);
   if (notReady.length > 0) {
     return conflict(
-      `Lots not in Ready state: ${notReady.map((l) => l.lot_code).join(', ')}`,
+      `Lots not in Ready state: ${notReady.map((l) => l.bache_code || l.lot_code).join(', ')}`,
       'LOT_NOT_READY',
     );
   }
+
+  // Pull existing shipment_lots rows for these lots (to detect
+  // already-shipped wholes / partials).
   const { data: existingLinks, error: exErr } = await sb
-    .from('shipment_lots').select('production_lot_id').in('production_lot_id', lot_ids);
+    .from('shipment_lots')
+    .select('production_lot_id, lot_partial_id')
+    .in('production_lot_id', lotIds);
   if (exErr) return serverErr('Existing-link lookup failed', exErr.message);
-  if (existingLinks && existingLinks.length > 0) {
-    const taken = lots.filter((l) => existingLinks.some((x) => x.production_lot_id === l.id));
-    return conflict(
-      `Lots already in another shipment: ${taken.map((l) => l.lot_code).join(', ')}`,
-      'LOT_ALREADY_SHIPPED',
-    );
+
+  const wholeAlreadyShipped = new Set((existingLinks || [])
+    .filter((x) => x.lot_partial_id == null).map((x) => x.production_lot_id));
+  const partialAlreadyShipped = new Set((existingLinks || [])
+    .filter((x) => x.lot_partial_id != null).map((x) => x.lot_partial_id));
+
+  // Validate every item against its lot's partials.
+  const lotById = new Map(lots.map((l) => [l.id, l]));
+  const linkRows = [];   // shipment_lots inserts
+  for (const it of items) {
+    const lot = lotById.get(it.production_lot_id);
+    const partials = lot.lot_partials || [];
+    const wantPartialIds = (it.partial_ids || []).filter(Boolean);
+
+    if (partials.length === 0) {
+      // Whole-lot mode required.
+      if (wantPartialIds.length > 0) {
+        return badReq(
+          `Lote ${lot.bache_code || lot.lot_code} no tiene parciales registrados; ` +
+          `omite partial_ids para despachar el lote completo`,
+          'PARTIAL_IDS_NOT_ALLOWED',
+        );
+      }
+      if (wholeAlreadyShipped.has(lot.id)) {
+        return conflict(
+          `Lote ${lot.bache_code || lot.lot_code} ya esta en otro despacho`,
+          'LOT_ALREADY_SHIPPED',
+        );
+      }
+      linkRows.push({ production_lot_id: lot.id, lot_partial_id: null });
+    } else {
+      // Partial-mode required.
+      if (wantPartialIds.length === 0) {
+        return badReq(
+          `Lote ${lot.bache_code || lot.lot_code} tiene parciales: indica partial_ids`,
+          'PARTIAL_IDS_REQUIRED',
+        );
+      }
+      const partialById = new Map(partials.map((p) => [p.id, p]));
+      for (const pid of wantPartialIds) {
+        const p = partialById.get(pid);
+        if (!p) {
+          return badReq(
+            `Parcial ${pid} no pertenece al lote ${lot.bache_code || lot.lot_code}`,
+            'PARTIAL_NOT_IN_LOT',
+          );
+        }
+        if (p.rejected_at) {
+          return conflict(
+            `Parcial ${p.parcial_letter} del lote ${lot.bache_code || lot.lot_code} esta rechazado`,
+            'PARTIAL_REJECTED',
+          );
+        }
+        if (partialAlreadyShipped.has(p.id)) {
+          return conflict(
+            `Parcial ${p.parcial_letter} del lote ${lot.bache_code || lot.lot_code} ya esta en otro despacho`,
+            'PARTIAL_ALREADY_SHIPPED',
+          );
+        }
+        linkRows.push({ production_lot_id: lot.id, lot_partial_id: p.id });
+      }
+    }
   }
 
-  // Insert shipment
+  if (linkRows.length === 0) return badReq('No partials/lots to ship', 'NOTHING_TO_SHIP');
+
+  // ── Insert shipment + links ────────────────────────────────────
   const { data: ship, error: sErr } = await sb
     .from('shipments').insert({
       shipment_code, shipment_date, notes,
@@ -79,29 +167,48 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     return serverErr('Failed to create shipment', sErr.message);
   }
 
-  // Link lots
-  const linkRows = lot_ids.map((lot_id) => ({ shipment_id: ship.id, production_lot_id: lot_id }));
-  const { error: linkErr } = await sb.from('shipment_lots').insert(linkRows);
+  const insertRows = linkRows.map((r) => ({ ...r, shipment_id: ship.id }));
+  const { error: linkErr } = await sb.from('shipment_lots').insert(insertRows);
   if (linkErr) {
     await sb.from('shipments').delete().eq('id', ship.id);
     return serverErr('Failed to link lots', linkErr.message);
   }
 
-  // Transition each lot to Delivered, then run order-completion cascade.
+  // ── Decide which lots become Delivered ─────────────────────────
   const today = bogotaToday();
   const completions = [];
-  for (const lot of lots) {
+  const lotsThatGotShipped = [...new Set(linkRows.map((r) => r.production_lot_id))];
+
+  for (const lotId of lotsThatGotShipped) {
+    const lot = lotById.get(lotId);
+    const partials = lot.lot_partials || [];
+
+    let shouldDeliver = false;
+    if (partials.length === 0) {
+      shouldDeliver = true;  // Whole-lot mode: this shipment delivers it.
+    } else {
+      // Lot fully accounted for if every partial is shipped (in this
+      // shipment or previously) or rejected.
+      const newlyShippedPartialIds = new Set(
+        linkRows.filter((r) => r.production_lot_id === lotId && r.lot_partial_id != null)
+                .map((r) => r.lot_partial_id));
+      shouldDeliver = partials.every((p) =>
+        p.rejected_at != null ||
+        partialAlreadyShipped.has(p.id) ||
+        newlyShippedPartialIds.has(p.id));
+    }
+
+    if (!shouldDeliver) continue;
+
     const { error: upErr } = await sb
       .from('production_lots')
       .update({ status: LOT_STATUS.Delivered, delivered_date: today })
-      .eq('id', lot.id);
-    if (upErr) return serverErr(`Failed to deliver lot ${lot.lot_code}`, upErr.message);
+      .eq('id', lotId);
+    if (upErr) return serverErr(`Failed to deliver lot ${lot.bache_code || lot.lot_code}`, upErr.message);
 
-    // For each assigned order, check if completion threshold is met.
     const { data: assigns, error: aErr } = await sb
-      .from('lot_order_assignments').select('demand_order_id').eq('production_lot_id', lot.id);
+      .from('lot_order_assignments').select('demand_order_id').eq('production_lot_id', lotId);
     if (aErr) return serverErr('Assignment lookup failed', aErr.message);
-
     for (const a of assigns || []) {
       const result = await maybeCompleteOrder(sb, a.demand_order_id);
       if (result) completions.push(result);
@@ -119,7 +226,6 @@ async function maybeCompleteOrder(sb, order_id) {
   if (error || !order) return null;
   if (order.status !== ORDER_STATUS.InProduction) return null;
 
-  // Sum allocations from lots that have been Delivered.
   const { data: delivered, error: dErr } = await sb
     .from('lot_order_assignments')
     .select('kg_green_allocated, production_lots!inner(status)')

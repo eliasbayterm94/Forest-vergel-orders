@@ -75,6 +75,7 @@ export const api = {
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),
+  lotPartialReject: (payload) => request('POST', '/api/lot-partials-reject', { body: payload }),
 
   assignmentsCreate: (payload) => request('POST', '/api/lot-assignments-create', { body: payload }),
   assignmentsUpdate: (payload) => request('POST', '/api/lot-assignments-update', { body: payload }),

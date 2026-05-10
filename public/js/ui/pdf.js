@@ -118,7 +118,8 @@ export function generateShipmentPdf(shipment) {
     doc.text(lot.reference_name || '—', M + 110, y + 18);
     doc.setFontSize(9);
     doc.setTextColor(149, 181, 206);
-    doc.text(`${lot.process_type || ''} · ${fmtKg(lot.kg_green_actual ?? lot.kg_green_expected)}`, W - M - 12, y + 18, { align: 'right' });
+    const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    doc.text(`${lot.process_type || ''} · ${fmtKg(kgInShipment)}`, W - M - 12, y + 18, { align: 'right' });
 
     y += 36;
 
@@ -133,6 +134,24 @@ export function generateShipmentPdf(shipment) {
       doc.setFontSize(8);
       doc.setTextColor(...INK_500);
       const split = doc.splitTextToSize(metaParts.join('   ·   '), W - M * 2);
+      doc.text(split, M, y);
+      y += split.length * 10 + 6;
+    }
+
+    // Partials in this shipment (only when not shipping the whole lot)
+    const partialsHere = lot.partials_in_shipment || [];
+    if (partialsHere.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(...INK_700);
+      doc.text('Parciales incluidos:', M, y);
+      y += 11;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...INK_500);
+      const lines = partialsHere.map((p) =>
+        `• Parcial ${p.parcial_letter} — ${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → ${fmtKg(p.kg_green_yield)} verde`,
+      );
+      const split = doc.splitTextToSize(lines.join('\n'), W - M * 2);
       doc.text(split, M, y);
       y += split.length * 10 + 6;
     }
