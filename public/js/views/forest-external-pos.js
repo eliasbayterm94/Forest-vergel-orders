@@ -48,6 +48,13 @@ export async function forestExternalPosView() {
           optionLabels: { Rejected: 'Rechazado', PartiallyAccepted: 'Aceptado parcial' },
           getter: (o) => o.status,
         },
+        {
+          key: 'client_name',
+          label: 'Cliente',
+          multi: true,
+          options: [...new Set(rows.map((o) => o.client_name).filter(Boolean))].sort(),
+          getter: (o) => o.client_name || '',
+        },
       ],
       sorts: [
         { key: 'date_asc',  label: 'Entrega: más cercana', getter: (o) => o.max_delivery_date, dir: 'asc' },

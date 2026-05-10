@@ -40,6 +40,7 @@
 //   });
 
 import { el, clear } from './el.js';
+import { renderFilterButton } from './filters-sheet.js';
 
 export function listView(opts) {
   const {
@@ -82,7 +83,12 @@ export function listView(opts) {
     let filtered = items.slice();
     for (const f of filters) {
       const v = _filterValues[f.key];
-      if (v) filtered = filtered.filter((it) => f.getter(it) === v);
+      if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+      if (Array.isArray(v)) {
+        filtered = filtered.filter((it) => v.includes(f.getter(it)));
+      } else {
+        filtered = filtered.filter((it) => f.getter(it) === v);
+      }
     }
     if (searchMatch && _query.trim()) {
       const q = _query.trim();
@@ -133,20 +139,17 @@ export function listView(opts) {
       filterBar.append(inp);
     }
 
-    for (const f of filters) {
-      const sel = el('select', { class: 'ctrm-select' }, [
-        el('option', { value: '' }, [`${f.label}: todos`]),
-        ...f.options.map((opt) => {
-          const label = (f.optionLabels && f.optionLabels[opt]) || opt;
-          return el('option', { value: opt, selected: _filterValues[f.key] === opt }, [label]);
-        }),
-      ]);
-      sel.addEventListener('change', () => {
-        _filterValues[f.key] = sel.value;
-        _page = 0;
-        rerender();
+    if (filters.length > 0) {
+      const fb = renderFilterButton({
+        filters,
+        values: _filterValues,
+        onChange: (newValues) => {
+          _filterValues = newValues;
+          _page = 0;
+          rerender();
+        },
       });
-      filterBar.append(sel);
+      filterBar.append(fb.el);
     }
 
     if (sorts.length > 0) {

@@ -78,6 +78,9 @@ export async function fincaInboxView() {
           options: ['past', 'red', 'yellow', 'normal'],
           optionLabels: { past: 'Vencido', red: 'Crítico', yellow: 'Próximo', normal: 'OK' },
           getter: (o) => o.drying_urgency },
+        { key: 'client_name', label: 'Cliente', multi: true,
+          options: uniqueClients(orders),
+          getter: (o) => o.client_name || '' },
       ],
       sorts: [
         { key: 'drying_asc', label: 'Inicio drying: más cercano', getter: (o) => o.latest_drying_start_date, dir: 'asc' },
@@ -342,4 +345,12 @@ function summaryLine(label, value) {
     el('span', { class: 'text-ink-500 uppercase tracking-loose text-[10px]', text: label }),
     el('strong', { class: 'text-navy', text: value }),
   ]);
+}
+
+function uniqueClients(orders) {
+  const seen = new Set();
+  for (const o of orders || []) {
+    if (o.client_name) seen.add(o.client_name);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b));
 }
