@@ -5,7 +5,8 @@
   "description": "Forest ↔ El Vergel Production Coordination System",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test tests/*.test.js",
+    "test": "node scripts/check-esm.js && node --test tests/*.test.js",
+    "check-esm": "node scripts/check-esm.js",
     "hash-password": "node scripts/hash-password.js",
     "generate-secret": "node scripts/generate-secret.js"
   },
