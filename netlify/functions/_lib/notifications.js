@@ -80,6 +80,15 @@ async function dispatch({ event_type, subject, text, html, related_order_id }) {
 // ----------------------- Templates -----------------------
 function fmtKg(n) { return Number(n || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
 
+function metaLines(order) {
+  const out = [];
+  if (order.order_type)   out.push(`Tipo: ${order.order_type}`);
+  if (order.client_name)  out.push(`Cliente: ${order.client_name}`);
+  if (order.regions && order.regions.length) out.push(`Regiones: ${order.regions.join(', ')}`);
+  if (order.contract_code) out.push(`Código contrato: ${order.contract_code}`);
+  return out;
+}
+
 function tplAccepted(order, ref) {
   const partial = order.kg_green_accepted < order.kg_green_required;
   const subject = partial
@@ -88,6 +97,7 @@ function tplAccepted(order, ref) {
   const text = [
     `Pedido ${order.order_code}`,
     `Referencia: ${ref.name}`,
+    ...metaLines(order),
     `Proceso: ${order.process_type}`,
     `Aspecto: ${order.physical_aspect}`,
     `Solicitado: ${fmtKg(order.kg_green_required)} kg verde (${fmtKg(greenToCherry(order.kg_green_required))} kg cereza)`,
@@ -103,6 +113,7 @@ function tplRejected(order, ref) {
   const text = [
     `Pedido ${order.order_code}`,
     `Referencia: ${ref.name}`,
+    ...metaLines(order),
     `Proceso: ${order.process_type}`,
     `Solicitado: ${fmtKg(order.kg_green_required)} kg verde`,
     `Estado: RECHAZADO por El Vergel`,
@@ -117,6 +128,7 @@ function tplCompleted(order, ref) {
   const text = [
     `Pedido ${order.order_code}`,
     `Referencia: ${ref.name}`,
+    ...metaLines(order),
     `Proceso: ${order.process_type}`,
     `Total entregado: ${fmtKg(order.kg_green_accepted)} kg verde`,
     `Estado: COMPLETADO. Todos los lotes asignados han sido entregados.`,

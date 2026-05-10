@@ -7,6 +7,9 @@ const { bogotaToday, daysBetween } = require('./_lib/bogotaTime');
 const { PROCESS_TYPES, PHYSICAL_ASPECTS } = require('./_lib/schema');
 const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
+const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
+const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
+
 /**
  * POST /demand-orders-create  (forest, admin)
  * Body:
@@ -19,6 +22,11 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
  *   fermentation_hours      number >= 0 (optional)
  *   comments                string (optional)
  *   override_15_day         boolean (required true if delivery <15 days)
+ *
+ *   order_type              'Spot' | 'Contract' | 'FOB' (optional)
+ *   client_name             string (optional)
+ *   regions                 [string] subset of {USA, EU, UK, MENA, AU} (optional)
+ *   contract_code           string (optional)
  */
 exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -36,6 +44,12 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
   const comments         = body.comments == null ? null : String(body.comments);
   const override_15_day  = !!body.override_15_day;
 
+  // New commercial metadata
+  const order_type   = body.order_type   == null ? null : String(body.order_type);
+  const client_name  = body.client_name  == null ? null : String(body.client_name).trim() || null;
+  const regions      = Array.isArray(body.regions) ? body.regions.filter(Boolean) : null;
+  const contract_code = body.contract_code == null ? null : String(body.contract_code).trim() || null;
+
   if (!reference_id) errors.push('reference_id required');
   if (!Number.isFinite(kg_green_required) || kg_green_required <= 0) errors.push('kg_green_required must be > 0');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(max_delivery_date || '')) errors.push('max_delivery_date must be YYYY-MM-DD');
@@ -43,6 +57,8 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
   if (!PROCESS_TYPES.includes(process_type)) errors.push('process_type invalid');
   if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
     errors.push('fermentation_hours must be >= 0');
+  if (order_type != null && !ORDER_TYPES.includes(order_type)) errors.push('order_type invalid');
+  if (regions && !regions.every((r) => REGIONS.includes(r))) errors.push('regions must be subset of USA/EU/UK/MENA/AU');
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
 
   // 15-day rule
@@ -75,6 +91,10 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
       fermentation_hours,
       comments,
       override_15_day,
+      order_type,
+      client_name,
+      regions: regions && regions.length > 0 ? regions : null,
+      contract_code,
       created_by: session.role,
     }).select().single();
   if (insErr) return serverErr('Failed to create demand order', insErr.message);

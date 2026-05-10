@@ -90,9 +90,17 @@ export async function fincaInboxView() {
           el('div', { class: 'flex flex-wrap items-center gap-2 mb-2' }, [
             el('span', { class: 'ctrm-code', text: o.order_code }),
             el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: o.reference_name || '—' }),
+            o.order_type ? el('span', { class: 'ctrm-pill dark', text: o.order_type }) : null,
             el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
             dryingBadge,
           ]),
+          (o.client_name || (o.regions && o.regions.length) || o.contract_code)
+            ? el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-3 gap-y-0.5 mb-1.5' }, [
+                o.client_name  ? meta('Cliente', o.client_name) : null,
+                o.regions && o.regions.length ? meta('Regiones', o.regions.join(' · ')) : null,
+                o.contract_code ? meta('Contrato', o.contract_code) : null,
+              ])
+            : null,
           el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
             meta('Verde', fmtKg(o.kg_green_required)),
             meta('Cereza', fmtKg(o.kg_cherry_required)),

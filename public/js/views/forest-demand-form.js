@@ -10,6 +10,8 @@ import { openReferenceModal } from './forest-references.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
+const ORDER_TYPES      = ['Spot', 'Contract', 'FOB'];
+const REGIONS          = ['USA', 'EU', 'UK', 'MENA', 'AU'];
 const CHERRY_PER_GREEN = 7.65; // Display only; server is the source of truth.
 
 export async function forestDemandFormView() {
@@ -115,6 +117,30 @@ export async function forestDemandFormView() {
     ...PHYSICAL_ASPECTS.map((a) => el('option', { value: a }, [a])),
   ]);
 
+  // ─── Commercial metadata (new fields) ───
+  const orderTypeSelect = el('select', { class: 'ctrm-select' }, [
+    el('option', { value: '', selected: true }, ['Selecciona tipo...']),
+    ...ORDER_TYPES.map((t) => el('option', { value: t }, [t])),
+  ]);
+
+  const clientInput = el('input', {
+    type: 'text', placeholder: 'Cliente (opcional)',
+    class: 'ctrm-input',
+    autocomplete: 'off',
+  });
+
+  const contractInput = el('input', {
+    type: 'text', placeholder: 'Código alfanumérico (opcional)',
+    class: 'ctrm-input mono',
+    autocomplete: 'off',
+  });
+
+  const regionInputs = REGIONS.map((r) => {
+    const cb = el('input', { type: 'checkbox', value: r, class: 'h-4 w-4 accent-navy mr-1.5' });
+    return { region: r, input: cb, node: el('label', { class: 'inline-flex items-center px-2 py-1 rounded-md border border-sand bg-white text-[12px] font-medium text-ink-700 cursor-pointer hover:border-navy' }, [cb, r]) };
+  });
+  const regionsRow = el('div', { class: 'flex flex-wrap gap-2' }, regionInputs.map((r) => r.node));
+
   const commentsInput = el('textarea', {
     rows: '3', placeholder: 'Notas adicionales...',
     class: 'ctrm-textarea',
@@ -136,6 +162,8 @@ export async function forestDemandFormView() {
       if (!aspectSelect.value) { toast('Falta aspecto físico', 'warning'); return; }
       if (!processSelect.value) { toast('Falta proceso', 'warning'); return; }
 
+      const selectedRegions = regionInputs.filter((r) => r.input.checked).map((r) => r.region);
+
       const payload = {
         reference_id: selectedReference.id,
         variety_ids:  selectedVarieties.map((v) => v.id),
@@ -146,6 +174,10 @@ export async function forestDemandFormView() {
         fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
         comments: commentsInput.value || null,
         override_15_day: false,
+        order_type:    orderTypeSelect.value || null,
+        client_name:   clientInput.value.trim() || null,
+        regions:       selectedRegions.length > 0 ? selectedRegions : null,
+        contract_code: contractInput.value.trim() || null,
       };
       await trySubmit(payload);
     },
@@ -157,6 +189,18 @@ export async function forestDemandFormView() {
     section('Aspecto físico', aspectSelect),
     section('Proceso', processSelect),
     section('Horas de fermentación', fermInput),
+
+    // Commercial metadata block
+    el('div', { class: 'pt-3 border-t border-sand' }, [
+      el('p', { class: 'eyebrow mb-3', text: 'Metadatos comerciales (opcionales)' }),
+      el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+        section('Tipo de pedido', orderTypeSelect),
+        section('Cliente', clientInput),
+      ]),
+      el('div', { class: 'mt-3' }, section('Región (multiselección)', regionsRow)),
+      el('div', { class: 'mt-3' }, section('Código de contrato', contractInput)),
+    ]),
+
     section('Comentarios', commentsInput),
     el('div', { class: 'pt-3 flex flex-col sm:flex-row sm:justify-end gap-2 border-t border-sand' }, [
       el('button', {

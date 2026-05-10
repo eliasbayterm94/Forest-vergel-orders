@@ -15,6 +15,10 @@
 
     <!-- Tailwind via CDN (MVP — switch to CLI build before scaling). Tokens map to the CTRM brand palette. -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- jsPDF + autoTable for client-side shipment PDFs. ~110KB, lazy-used only on the Despachos view. -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js" defer></script>
     <script>
       tailwind.config = {
         theme: {

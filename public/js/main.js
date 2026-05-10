@@ -8,6 +8,7 @@ import { forestExternalPosView }    from './views/forest-external-pos.js';
 import { fincaDashboardView }       from './views/finca-dashboard.js';
 import { fincaInboxView }           from './views/finca-inbox.js';
 import { fincaLotsView }            from './views/finca-lots.js';
+import { fincaDespachosView }       from './views/finca-despachos.js';
 
 const FOREST_OR_ADMIN = ['forest', 'admin'];
 const FINCA_OR_ADMIN  = ['finca',  'admin'];
@@ -21,6 +22,7 @@ defineRoute('/forest/external',    { roles: FOREST_OR_ADMIN, view: forestExterna
 defineRoute('/finca/dashboard',    { roles: FINCA_OR_ADMIN,  view: fincaDashboardView });
 defineRoute('/finca/inbox',        { roles: FINCA_OR_ADMIN,  view: fincaInboxView });
 defineRoute('/finca/lots',         { roles: FINCA_OR_ADMIN,  view: fincaLotsView });
+defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
 
 window.addEventListener('app:unauthorized', () => {
   setSession(null);

@@ -30,13 +30,14 @@ const DRIED_LABELS_LEGACY = {
   Lavado:  'Pergamino seco (lavado)',
 };
 
-// New flow skips Resting (Drying → Ready). Legacy lots already in
-// Resting can still advance to Ready via the same map.
+// New flow skips Resting (Drying → Ready) and ends at Ready —
+// the Ready → Delivered transition now happens via Despachos
+// (see finca-despachos.js / shipments-create handler).
 const NEXT_STATUS = {
   InFermentation: 'Drying',
   Drying:         'Ready',
   Resting:        'Ready',  // legacy
-  Ready:          'Delivered',
+  // Ready: no direct next — use Despachos.
 };
 
 export async function fincaLotsView() {
@@ -92,6 +93,11 @@ export async function fincaLotsView() {
             class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
             onClick: () => advanceStatus(l, next),
           }, [`→ ${statusLabel(next)}`]) : null,
+          // Ready lots get a "Despachar" shortcut that jumps to the Despachos view.
+          (l.status === 'Ready') ? el('button', {
+            class: 'ctrm-btn ctrm-btn-yellow ctrm-btn-sm',
+            onClick: () => { location.hash = '/finca/despachos'; },
+          }, ['Despachar']) : null,
           el('button', {
             class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
             onClick: () => assignLot(l),

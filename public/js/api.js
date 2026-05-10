@@ -75,5 +75,8 @@ export const api = {
 
   capacity: (payload) => request('POST', '/api/capacity-calculate', { body: payload }),
 
+  shipmentsList:   ()        => request('GET',  '/api/shipments-list'),
+  shipmentsCreate: (payload) => request('POST', '/api/shipments-create', { body: payload }),
+
   digestTrigger: () => request('POST', '/api/weekly-digest-trigger'),
 };
