@@ -77,7 +77,10 @@ export async function fincaLotsView() {
   function lotCard(l) {
     const next = NEXT_STATUS[l.status];
     const totalAllocated = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
-    const remaining = Number(l.kg_green_actual ?? l.kg_green_expected) - totalAllocated;
+    const capacity  = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
+    const remaining = capacity - totalAllocated;
+    const overflow  = totalAllocated - capacity;       // positive when over-allocated
+    const isOverAllocated = overflow > 0.01;
     const stageLabel = stageLabelOf(l);
 
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
@@ -122,27 +125,148 @@ export async function fincaLotsView() {
             el('span', { class: 'ctrm-pill dark', text: v.name }),
           ))
         : null,
+
+      // Discrepancy banner — appears only when assignments exceed capacity
+      isOverAllocated
+        ? el('div', {
+            class: 'mt-3 rounded-lg bg-crit-bg border-l-4 border-crit p-3 flex flex-wrap items-center justify-between gap-2',
+          }, [
+            el('div', { class: 'text-[12px] text-crit flex items-center gap-2 min-w-0' }, [
+              el('span', { text: '⚠' }),
+              el('div', {}, [
+                el('strong', {}, [`Asignaciones (${fmtKg(totalAllocated)}) exceden capacidad (${fmtKg(capacity)})`]),
+                el('div', { class: 'text-[11px] mt-0.5' }, [`Sobra: ${fmtKg(overflow)} verde. Ajusta antes de despachar.`]),
+              ]),
+            ]),
+            el('button', {
+              class: 'ctrm-btn ctrm-btn-danger ctrm-btn-sm shrink-0',
+              onClick: () => rescaleAssignments(l, capacity, totalAllocated),
+            }, ['Ajustar proporcionalmente']),
+          ])
+        : null,
+
       (l.assignments || []).length > 0
         ? el('div', { class: 'mt-3 border-t border-sand pt-2' }, [
             el('p', { class: 'eyebrow mb-1.5', text: 'Asignaciones' }),
-            el('div', { class: 'space-y-1' }, l.assignments.map((a) =>
-              el('div', { class: 'flex flex-wrap items-center justify-between text-[11px] gap-2 py-1' }, [
-                el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-                  el('span', { class: 'ctrm-code', text: a.order?.order_code || a.demand_order_id }),
-                  el('span', { class: 'text-ink-500', text: a.order?.status ? statusLabel(a.order.status) : '' }),
-                ]),
-                el('div', { class: 'flex items-center gap-3' }, [
-                  el('span', { class: 'font-mono text-ink-700 font-medium' }, [fmtKg(a.kg_green_allocated)]),
-                  el('button', {
-                    class: 'text-crit hover:underline text-[11px]',
-                    onClick: () => removeAssignment(a, l),
-                  }, ['Quitar']),
-                ]),
-              ]),
-            )),
+            el('div', { class: 'space-y-1' }, l.assignments.map((a) => assignmentRow(a, l, capacity))),
           ])
         : null,
     ]);
+  }
+
+  // Single assignment row — shows kg + % of lot + Editar/Quitar.
+  function assignmentRow(a, lot, capacity) {
+    const kg  = Number(a.kg_green_allocated || 0);
+    const pct = capacity > 0 ? (kg / capacity * 100) : null;
+    const pctClass = pct == null ? 'text-ink-500'
+                   : pct > 100 ? 'text-crit font-bold'
+                   : 'text-ink-500';
+    return el('div', { class: 'flex flex-wrap items-center justify-between text-[11px] gap-2 py-1' }, [
+      el('div', { class: 'flex items-center gap-2 min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: a.order?.order_code || a.demand_order_id }),
+        el('span', { class: 'text-ink-500', text: a.order?.status ? statusLabel(a.order.status) : '' }),
+      ]),
+      el('div', { class: 'flex items-center gap-3' }, [
+        el('span', { class: 'font-mono text-ink-700 font-medium' }, [fmtKg(kg)]),
+        pct != null ? el('span', { class: `font-mono text-[10px] ${pctClass}` }, [`(${pct.toFixed(1)}%)`]) : null,
+        el('button', {
+          class: 'text-navy hover:underline text-[11px]',
+          onClick: () => editAssignment(a, lot),
+        }, ['Editar']),
+        el('button', {
+          class: 'text-crit hover:underline text-[11px]',
+          onClick: () => removeAssignment(a, lot),
+        }, ['Quitar']),
+      ]),
+    ]);
+  }
+
+  // ---------- Edit a single assignment's kg ----------
+  async function editAssignment(assignment, lot) {
+    const capacity = Number(lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    const otherSum = (lot.assignments || [])
+      .filter((x) => x.id !== assignment.id)
+      .reduce((s, x) => s + Number(x.kg_green_allocated || 0), 0);
+    const maxAllowed = Math.max(0, capacity - otherSum);
+
+    const result = await openModal(({ close }) => {
+      const input = el('input', {
+        type: 'number', step: '0.01', min: '0.01',
+        value: String(assignment.kg_green_allocated),
+        class: 'ctrm-input mono',
+      });
+      const hint = el('p', { class: 'ctrm-hint', text: '' });
+      const recompute = () => {
+        const v = Number(input.value || 0);
+        const newPct = capacity > 0 ? (v / capacity * 100).toFixed(1) : '—';
+        hint.textContent = `Máximo permitido: ${fmtKg(maxAllowed)}  ·  Esto sería ${newPct}% del lote`;
+      };
+      input.addEventListener('input', recompute);
+      recompute();
+
+      return el('div', { class: 'space-y-3' }, [
+        el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] space-y-1' }, [
+          el('div', {}, [`Pedido: `, el('strong', { text: assignment.order?.order_code || '—' })]),
+          el('div', {}, [`Lote: `,   el('strong', { text: lot.lot_code })]),
+          el('div', {}, [`Capacidad lote: `, el('strong', { text: fmtKg(capacity) })]),
+          el('div', {}, [`Otras asignaciones: `, el('strong', { text: fmtKg(otherSum) })]),
+        ]),
+        el('label', { class: 'ctrm-label', text: 'kg verde a asignar' }),
+        input,
+        hint,
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: () => {
+              const v = Number(input.value);
+              if (!Number.isFinite(v) || v <= 0) { toast('kg debe ser > 0', 'warning'); return; }
+              close({ kg: v });
+            },
+          }, ['Guardar']),
+        ]),
+      ]);
+    }, { title: `Editar asignación ${assignment.order?.order_code || ''}` });
+
+    if (!result) return;
+    try {
+      await api.assignmentsUpdate({ assignment_id: assignment.id, kg_green_allocated: result.kg });
+      toast('Asignación actualizada', 'success');
+      await reloadLots();
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ---------- Rescale all assignments proportionally ----------
+  async function rescaleAssignments(lot, capacity, currentTotal) {
+    if (currentTotal <= 0 || capacity <= 0) { toast('Nada para reescalar', 'warning'); return; }
+    const ratio = capacity / currentTotal;
+    const ok = await confirmModal(
+      `Cada asignación se multiplicará por ${ratio.toFixed(4)} para que sumen exactamente ${fmtKg(capacity)}. ¿Continuar?`,
+      { title: 'Ajustar proporcionalmente', confirmText: 'Ajustar' },
+    );
+    if (!ok) return;
+
+    // Update each assignment. Decreases pass freely (the trigger only blocks increases).
+    let okCount = 0; let errCount = 0;
+    for (const a of lot.assignments || []) {
+      const newKg = Math.round(Number(a.kg_green_allocated || 0) * ratio * 100) / 100;
+      if (newKg <= 0) continue;
+      try {
+        await api.assignmentsUpdate({ assignment_id: a.id, kg_green_allocated: newKg });
+        okCount++;
+      } catch (e) {
+        errCount++;
+        // eslint-disable-next-line no-console
+        console.warn('rescale failed for', a.id, e.message);
+      }
+    }
+    if (errCount === 0) {
+      toast(`${okCount} asignaciones ajustadas`, 'success');
+    } else {
+      toast(`${okCount} ajustadas, ${errCount} fallaron`, 'warning', 4500);
+    }
+    await reloadLots();
   }
 
   async function advanceStatus(lot, target) {
