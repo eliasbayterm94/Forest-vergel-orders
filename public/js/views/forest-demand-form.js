@@ -72,24 +72,28 @@ export async function forestDemandFormView() {
       }
     },
     onCreate: async (text) => {
-      const result = await openReferenceModal({ initialName: text });
-      if (!result) return null;
+      const name = (text || '').trim();
+      if (!name) return null;
       try {
+        // Quick-create: solo nombre + proceso si ya esta elegido en el form.
+        // No abrimos el modal para que el flujo sea de un click — la
+        // referencia se puede completar despues desde /forest/references.
         const r = await api.referenceSave({
-          name: result.name,
-          process_type: result.process_type,
-          fermentation_hours: result.fermentation_hours,
-          notes: result.notes,
+          name,
+          process_type: processSelect.value || null,
+          fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
         });
-        toast(`Referencia creada: ${r.reference.name}`, 'success');
+        toast(`Referencia "${r.reference.name}" lista`, 'success');
         // Append to local list so the dropdown sees it next time it opens
-        allReferences = [...allReferences, r.reference]
-          .sort((a, b) => a.name.localeCompare(b.name));
-        referenceCombo.setItems(allReferences);
+        if (!allReferences.some((x) => x.id === r.reference.id)) {
+          allReferences = [...allReferences, r.reference]
+            .sort((a, b) => a.name.localeCompare(b.name));
+          referenceCombo.setItems(allReferences);
+        }
         return r.reference;
       } catch (e) { toast(e.message, 'error'); return null; }
     },
-    createLabel: '+ Crear referencia',
+    createLabel: '+ Usar este nombre como nueva referencia',
   });
 
   // ----- Numeric / date / textarea inputs -----

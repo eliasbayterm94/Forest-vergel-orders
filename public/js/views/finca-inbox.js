@@ -143,7 +143,21 @@ export async function fincaInboxView() {
                 el('span', { class: 'ctrm-pill dark', text: v.name }),
               ))
             : null,
-          o.comments ? el('p', { class: 'text-[11px] text-ink-500 italic mt-2 border-t border-sand pt-2' }, [o.comments]) : null,
+          o.comments ? el('div', {
+            class: 'mt-3 rounded-md p-2.5 border-l-4',
+            style: 'background:var(--warn-bg);border-left-color:var(--warn);',
+          }, [
+            el('p', {
+              class: 'eyebrow text-[10px] mb-0.5',
+              style: 'color:var(--warn);',
+              text: 'Comentarios de Forest',
+            }),
+            el('p', {
+              class: 'text-[12px] leading-snug whitespace-pre-line',
+              style: 'color:var(--ink-700);',
+              text: o.comments,
+            }),
+          ]) : null,
           el('div', { class: 'flex flex-wrap gap-2 mt-3' }, [
             el('button', {
               class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
