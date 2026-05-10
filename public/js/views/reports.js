@@ -144,15 +144,29 @@ function computeKpis({ orders, lots, shipments, todayStr }) {
     ? (onTime3m.length / completed3m.length) * 100 : null;
 
   // Producción
-  const deliveredLatest = lots
+  const PROCESSES = ['Natural', 'Honey', 'Lavado'];
+  const deliveredAll = lots
     .filter((l) => l.status === 'Delivered' && l.factor_rendimiento != null)
     .sort((a, b) => (b.delivered_date || '').localeCompare(a.delivered_date || ''));
-  const factorMonth = deliveredLatest.length > 0
-    ? deliveredLatest[0].delivered_date.slice(0, 7) : null;
-  const factorRecent = factorMonth
-    ? avg(deliveredLatest.filter((l) => l.delivered_date.slice(0, 7) === factorMonth)
-        .map((l) => Number(l.factor_rendimiento)))
-    : null;
+
+  // Para cada proceso: el "factor reciente" es el promedio del ultimo mes
+  // donde ese proceso tuvo lotes entregados (no necesariamente el mismo
+  // mes para todos).
+  const factorByProcess = {};
+  for (const proc of PROCESSES) {
+    const ls = deliveredAll.filter((l) => l.process_type === proc);
+    if (ls.length === 0) {
+      factorByProcess[proc] = { avg: null, month: null, count: 0 };
+      continue;
+    }
+    const latestMonth = ls[0].delivered_date.slice(0, 7);
+    const inMonth = ls.filter((l) => l.delivered_date.slice(0, 7) === latestMonth);
+    factorByProcess[proc] = {
+      avg: avg(inMonth.map((l) => Number(l.factor_rendimiento))),
+      month: latestMonth,
+      count: inMonth.length,
+    };
+  }
 
   const completedAll3m = orders.filter((o) =>
     o.completed_at && inLast3(o.completed_at) && o.created_at);
@@ -182,7 +196,7 @@ function computeKpis({ orders, lots, shipments, todayStr }) {
     creadosMes, creadosDelta,
     acceptanceRate, acceptanceCreated: created3m.length,
     cumplimientoRate, cumplimientoTotal: completed3m.length,
-    factorRecent, factorMonth,
+    factorByProcess,
     cycleAvg, cycleCount: completedAll3m.length,
     lotsDeliveredMes,
     rejected3mKg, rejected3mCount,
@@ -216,9 +230,7 @@ function renderKpiStrip(k) {
         rateKind(k.cumplimientoRate)),
     ]),
     el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2' }, [
-      kpiCard('Factor reciente',
-        k.factorRecent != null ? k.factorRecent.toFixed(2) : '—',
-        k.factorMonth ? `Promedio ${k.factorMonth}` : 'Sin lotes entregados'),
+      factorByProcessCard(k.factorByProcess),
       kpiCard('Tiempo de ciclo 3m',
         k.cycleAvg != null ? `${k.cycleAvg.toFixed(1)} d` : '—',
         `${k.cycleCount} pedidos completados`),
@@ -238,6 +250,30 @@ function kpiCard(label, value, hint, kind) {
     el('p', { class: 'stat-label', text: label }),
     el('p', { class: valClass, text: String(value) }),
     el('p', { class: 'stat-sub', text: hint }),
+  ]);
+}
+
+// Tarjeta especial: factor por proceso. Reemplaza el "Factor reciente"
+// agregado, que mezclaba procesos distintos y no tenia mucho sentido.
+function factorByProcessCard(byProcess) {
+  const PROCESSES = ['Natural', 'Honey', 'Lavado'];
+  const rows = PROCESSES.map((p) => {
+    const b = byProcess[p] || {};
+    const right = b.avg != null
+      ? el('span', {}, [
+          el('strong', { class: 'text-ink-700 font-mono', text: b.avg.toFixed(2) }),
+          el('span', { class: 'text-ink-300 text-[10px]', text: ` · ${b.month}` }),
+        ])
+      : el('span', { class: 'text-ink-300 font-mono', text: '—' });
+    return el('div', { class: 'flex items-baseline justify-between text-[12px]' }, [
+      el('span', { class: 'text-ink-500', text: p }),
+      right,
+    ]);
+  });
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: 'Factor reciente por proceso' }),
+    el('div', { class: 'space-y-0.5 mt-1' }, rows),
+    el('p', { class: 'stat-sub', text: 'Promedio del último mes con lotes entregados' }),
   ]);
 }
 
@@ -282,21 +318,28 @@ function computeAggregations({ orders, lots, shipments, months }) {
     };
   });
 
-  // 2) Yield por mes
-  const yieldByMonth = months.map((mes) => {
-    const ls = lots.filter((l) =>
-      l.status === 'Delivered'
-      && (l.delivered_date || '').slice(0, 7) === mes
-      && l.factor_rendimiento != null
-    );
-    if (ls.length === 0) return { mes, count: 0, avg: null, min: null, max: null };
-    const factors = ls.map((l) => Number(l.factor_rendimiento));
-    return {
-      mes, count: ls.length,
-      avg: factors.reduce((s, x) => s + x, 0) / factors.length,
-      min: Math.min(...factors), max: Math.max(...factors),
-    };
-  });
+  // 2) Yield por mes y proceso (Natural/Honey/Lavado). El factor varia
+  //    radicalmente entre procesos asi que mezclarlos no informa. Una
+  //    fila por (mes, proceso) con datos.
+  const PROCESSES = ['Natural', 'Honey', 'Lavado'];
+  const yieldByMonth = [];
+  for (const mes of months) {
+    for (const proc of PROCESSES) {
+      const ls = lots.filter((l) =>
+        l.status === 'Delivered'
+        && (l.delivered_date || '').slice(0, 7) === mes
+        && l.process_type === proc
+        && l.factor_rendimiento != null
+      );
+      if (ls.length === 0) continue;
+      const factors = ls.map((l) => Number(l.factor_rendimiento));
+      yieldByMonth.push({
+        mes, proceso: proc, count: ls.length,
+        avg: factors.reduce((s, x) => s + x, 0) / factors.length,
+        min: Math.min(...factors), max: Math.max(...factors),
+      });
+    }
+  }
 
   // 3) Tiempo de ciclo
   const cycleByMonth = months.map((mes) => {
@@ -457,26 +500,30 @@ function buildSections(data, months) {
       }),
     ),
 
-    section('Yield por mes (factor de rendimiento)', sectionTable({
-      headers: ['Mes', 'Lotes entregados', 'Factor promedio', 'Mínimo', 'Máximo'],
-      rows: yieldByMonth.map((r) => [
-        r.mes, String(r.count),
-        r.avg != null ? r.avg.toFixed(2) : '—',
-        r.min != null ? r.min.toFixed(2) : '—',
-        r.max != null ? r.max.toFixed(2) : '—',
-      ]),
-      totals: null,
-      csv: () => csvFromTable(
-        ['Mes','Lotes_entregados','Factor_promedio','Factor_min','Factor_max'],
-        yieldByMonth.map((r) => [
-          r.mes, r.count,
-          r.avg != null ? r.avg.toFixed(2) : '',
-          r.min != null ? r.min.toFixed(2) : '',
-          r.max != null ? r.max.toFixed(2) : '',
-        ]),
-        'yield-por-mes',
-      ),
-    })),
+    section('Yield por mes y proceso (factor de rendimiento)',
+      yieldByMonth.length === 0
+        ? emptyText('Sin lotes entregados con factor en este rango.')
+        : sectionTable({
+            headers: ['Mes', 'Proceso', 'Lotes', 'Factor promedio', 'Mínimo', 'Máximo'],
+            rows: yieldByMonth.map((r) => [
+              r.mes,
+              { value: r.proceso, class: 'text-ink-700' },
+              String(r.count),
+              r.avg.toFixed(2),
+              r.min.toFixed(2),
+              r.max.toFixed(2),
+            ]),
+            totals: null,
+            csv: () => csvFromTable(
+              ['Mes','Proceso','Lotes','Factor_promedio','Factor_min','Factor_max'],
+              yieldByMonth.map((r) => [
+                r.mes, r.proceso, r.count,
+                r.avg.toFixed(2), r.min.toFixed(2), r.max.toFixed(2),
+              ]),
+              'yield-por-mes-proceso',
+            ),
+          }),
+    ),
 
     section('Tiempo de ciclo · pedido → completado', sectionTable({
       headers: ['Mes', 'Pedidos completados', 'Días promedio', 'Mínimo', 'Máximo'],
