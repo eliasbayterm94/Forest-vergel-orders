@@ -96,10 +96,17 @@ export async function fincaDespachosView() {
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: fmtDate(s.shipment_date) }),
           el('span', { class: 'ctrm-pill ok', text: 'Despachado' }),
         ]),
-        el('button', {
-          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
-          onClick: () => downloadPdf(s),
-        }, ['↓ PDF']),
+        el('div', { class: 'flex items-center gap-2' }, [
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+            onClick: () => downloadPdf(s),
+          }, ['↓ PDF']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm text-crit',
+            title: 'Cancelar despacho · revierte lotes y pedidos',
+            onClick: () => cancelShipment(s),
+          }, ['Cancelar']),
+        ]),
       ]),
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
         meta('Lotes',   String(t.lot_count ?? s.lots.length)),
@@ -120,6 +127,28 @@ export async function fincaDespachosView() {
   function downloadPdf(shipment) {
     try {
       generateShipmentPdf(shipment);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  async function cancelShipment(shipment) {
+    const lotCount = shipment.totals?.lot_count ?? shipment.lots.length;
+    const ok = await confirmModal(
+      `¿Cancelar despacho ${shipment.shipment_code}? ` +
+      `Los ${lotCount} lote(s) regresan a Ready y los pedidos completados por este despacho ` +
+      `vuelven a InProduction. Esta acción no se puede deshacer fácilmente.`,
+      { title: 'Cancelar despacho', confirmText: 'Cancelar despacho', danger: true },
+    );
+    if (!ok) return;
+    try {
+      const r = await api.shipmentsCancel({ shipment_id: shipment.id });
+      const c = r.cancelled || {};
+      const lotsBack = (c.lots_reverted_to_ready || []).length;
+      const ordersBack = (c.orders_reverted_to_in_production || []).length;
+      const parts = [`Despacho ${shipment.shipment_code} cancelado`];
+      if (lotsBack > 0) parts.push(`${lotsBack} lote(s) → Ready`);
+      if (ordersBack > 0) parts.push(`${ordersBack} pedido(s) → InProduction`);
+      toast(parts.join(' · '), 'success', 5000);
+      await reload();
     } catch (e) { toast(e.message, 'error'); }
   }
 
