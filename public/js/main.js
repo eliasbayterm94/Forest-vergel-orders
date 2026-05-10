@@ -6,6 +6,7 @@ import { forestDemandFormView }     from './views/forest-demand-form.js';
 import { forestReferencesView }     from './views/forest-references.js';
 import { forestExternalPosView }    from './views/forest-external-pos.js';
 import { reportsView }              from './views/reports.js';
+import { calendarView }             from './views/calendar.js';
 import { fincaDashboardView }       from './views/finca-dashboard.js';
 import { fincaInboxView }           from './views/finca-inbox.js';
 import { fincaLotsView }            from './views/finca-lots.js';
@@ -20,6 +21,7 @@ defineRoute('/forest/demand',      { roles: FOREST_OR_ADMIN, view: forestDemandF
 defineRoute('/forest/references',  { roles: FOREST_OR_ADMIN, view: forestReferencesView });
 defineRoute('/forest/external',    { roles: FOREST_OR_ADMIN, view: forestExternalPosView });
 defineRoute('/reports',            { roles: ['forest', 'finca', 'admin'], view: reportsView });
+defineRoute('/calendar',           { roles: ['forest', 'finca', 'admin'], view: calendarView });
 
 defineRoute('/finca/dashboard',    { roles: FINCA_OR_ADMIN,  view: fincaDashboardView });
 defineRoute('/finca/inbox',        { roles: FINCA_OR_ADMIN,  view: fincaInboxView });
