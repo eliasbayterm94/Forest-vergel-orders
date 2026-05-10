@@ -38,18 +38,20 @@ const RANGES = [
 const DEFAULT_RANGE = '12m';
 
 export async function adminDashboardView() {
-  const [ordersRes, lotsRes, shipsRes, leadRes, refsRes] = await Promise.all([
+  const [ordersRes, lotsRes, shipsRes, leadRes, refsRes, auditRes] = await Promise.all([
     api.ordersList({}),
     api.lotsList({}),
     api.shipmentsList(),
     api.processLeadTimes().catch(() => ({ process_lead_times: [] })),
     api.references().catch(() => ({ references: [] })),
+    api.auditLog({ limit: 30 }).catch(() => ({ events: [] })),
   ]);
   const today     = ordersRes.today;
   const allOrders = ordersRes.orders || [];
   const allLots   = lotsRes.lots || [];
   const allShips  = shipsRes.shipments || [];
   const refs      = refsRes.references || [];
+  const auditEvents = auditRes.events || [];
   const leadByProcess = new Map(
     (leadRes.process_lead_times || []).map((r) => [r.process_type, r]),
   );
@@ -68,7 +70,7 @@ export async function adminDashboardView() {
       ...filtered, today, leadByProcess, range: state.range,
     });
     clear(contentWrap);
-    contentWrap.append(...renderSections(m, state));
+    contentWrap.append(...renderSections(m, state, auditEvents));
     filterBar.refresh();
   }
   redraw();
@@ -338,7 +340,7 @@ function computeMetrics({ orders, lots, shipments, today, leadByProcess, range }
 }
 
 // ─── Sections render ────────────────────────────────────────────────
-function renderSections(m, state) {
+function renderSections(m, state, auditEvents = []) {
   const refLabel = state.refId == null ? '' : ' · referencia filtrada';
   const rangeWord = `${m.rangeLabel}${refLabel}`;
 
@@ -398,7 +400,121 @@ function renderSections(m, state) {
 
     section(`Despachos recientes · ${m.rangeLabel}`,
       recentShipmentsTable(m.recentShipments)),
-  ];
+
+    auditEvents.length > 0
+      ? section('Actividad reciente', auditFeed(auditEvents))
+      : null,
+  ].filter(Boolean);
+}
+
+// ─── Audit feed ─────────────────────────────────────────────────────
+const ENTITY_LABELS = {
+  demand_orders:         'Pedido',
+  production_lots:       'Lote',
+  lot_partials:          'Parcial',
+  lot_order_assignments: 'Asignación',
+  shipments:             'Despacho',
+  shipment_lots:         'Despacho-lote',
+};
+const ACTION_LABELS = { INSERT: 'Creado', UPDATE: 'Editado', DELETE: 'Borrado' };
+const ACTION_KIND   = { INSERT: 'ok',     UPDATE: 'muted',   DELETE: 'crit' };
+// Claves que no aportan al diff humano. Se ocultan del resumen pero
+// el evento sigue siendo visible.
+const HIDE_FIELDS = new Set([
+  'id', 'created_at', 'updated_at',
+  'in_production_at', 'accepted_at', 'rejected_at', 'completed_at',
+  'cancelled_at', 'delivered_date', 'ready_date', 'drying_start_date',
+]);
+
+function auditFeed(events) {
+  return el('div', { class: 'ctrm-card overflow-hidden' },
+    events.map(eventRow));
+}
+
+function eventRow(e) {
+  const label  = ENTITY_LABELS[e.entity_type] || e.entity_type;
+  const action = ACTION_LABELS[e.action] || e.action;
+  const kind   = ACTION_KIND[e.action] || 'muted';
+  const after  = (e.changed_fields || {});
+  const codeAfter = (after.order_code || after.bache_code || after.shipment_code || [])[1];
+  const lotCodeAfter = (after.lot_code || [])[1];
+  const codeFromInsert = codeAfter || lotCodeAfter || '';
+
+  // Filtra solo cambios "interesantes" para el resumen. Para INSERT
+  // mostramos un resumen super corto; para UPDATE listamos los campos
+  // cambiados con before → after.
+  const summary = formatSummary(e, after);
+
+  return el('div', {
+    class: 'flex items-start gap-3 px-3 py-2 border-b border-sand last:border-b-0',
+  }, [
+    el('div', { class: 'shrink-0 text-[10px] font-mono text-ink-300 w-20', text: relTime(e.at) }),
+    el('span', { class: `ctrm-pill ${kind}`, style: 'flex-shrink:0;', text: action }),
+    el('div', { class: 'flex-1 min-w-0' }, [
+      el('div', { class: 'flex items-baseline gap-2 flex-wrap' }, [
+        el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: label }),
+        codeFromInsert
+          ? el('span', { class: 'ctrm-code text-[10px]', text: String(codeFromInsert) })
+          : null,
+        e.actor
+          ? el('span', { class: 'text-[10px] text-ink-300 uppercase tracking-loose', text: `por ${e.actor}` })
+          : null,
+      ]),
+      summary
+        ? el('p', { class: 'text-[11px] font-mono text-ink-500 mt-0.5', text: summary })
+        : null,
+    ]),
+  ]);
+}
+
+function formatSummary(e, after) {
+  const entries = Object.entries(after).filter(([k]) => !HIDE_FIELDS.has(k));
+  if (entries.length === 0) return null;
+
+  if (e.action === 'INSERT') {
+    // Resumen breve de campos clave si existen.
+    const keys = ['kg_green_required', 'kg_green_accepted', 'reference_id',
+                  'process_type', 'status', 'kg_dried', 'parcial_letter',
+                  'kg_green_allocated', 'shipment_date'];
+    const parts = [];
+    for (const k of keys) {
+      const v = after[k];
+      if (v == null) continue;
+      const val = Array.isArray(v) ? v[1] : v;
+      if (val == null || val === '') continue;
+      parts.push(`${k}=${formatVal(val)}`);
+      if (parts.length >= 4) break;
+    }
+    return parts.length > 0 ? parts.join(' · ') : null;
+  }
+
+  if (e.action === 'DELETE') {
+    return 'Registro eliminado';
+  }
+
+  // UPDATE: lista compacta key: before → after
+  const parts = entries.slice(0, 5).map(([k, [before, after]]) =>
+    `${k}: ${formatVal(before)} → ${formatVal(after)}`);
+  if (entries.length > 5) parts.push(`y ${entries.length - 5} más`);
+  return parts.join(' · ');
+}
+
+function formatVal(v) {
+  if (v == null) return '∅';
+  if (Array.isArray(v)) return `[${v.length}]`;
+  if (typeof v === 'object') return '{…}';
+  if (typeof v === 'string' && v.length > 24) return v.slice(0, 24) + '…';
+  return String(v);
+}
+
+function relTime(iso) {
+  const t = new Date(iso).getTime();
+  const diffSec = Math.floor((Date.now() - t) / 1000);
+  if (diffSec < 60) return 'ahora';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
+  if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d`;
+  return new Date(iso).toISOString().slice(5, 10);
 }
 
 // ─── Charts ─────────────────────────────────────────────────────────
