@@ -17,7 +17,7 @@ exports.handler = requireAuth(async (event) => {
   const q = event.queryStringParameters || {};
 
   let query = sb.from('production_lots').select(`
-    id, lot_code, reference_id, process_type, processing_stage,
+    id, lot_code, bache_code, reference_id, process_type, processing_stage,
     kg_cherry_input, kg_despulpado_input,
     kg_green_expected, kg_green_actual,
     kg_dried_output, factor_rendimiento,

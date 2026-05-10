@@ -111,7 +111,7 @@ export function generateShipmentPdf(shipment) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
     doc.setTextColor(...YELLOW);
-    doc.text(lot.lot_code || '—', M + 12, y + 18);
+    doc.text(lot.bache_code || lot.lot_code || '—', M + 12, y + 18);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.setTextColor(255, 255, 255);

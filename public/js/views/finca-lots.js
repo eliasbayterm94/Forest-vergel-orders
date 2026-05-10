@@ -71,7 +71,7 @@ export async function fincaLotsView() {
       searchPlaceholder: 'Buscar código de lote, referencia...',
       searchMatch: (l, q) => {
         const lo = q.toLowerCase();
-        return [l.lot_code, l.reference_name].some((s) => (s || '').toLowerCase().includes(lo));
+        return [l.bache_code, l.lot_code, l.reference_name].some((s) => (s || '').toLowerCase().includes(lo));
       },
       filters: [
         { key: 'status',          label: 'Estado',  options: LOT_STATUSES, optionLabels: LOT_STATUS_LABELS, getter: (l) => l.status },
@@ -118,7 +118,10 @@ export async function fincaLotsView() {
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
-          el('span', { class: 'ctrm-code', text: l.lot_code }),
+          el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+          (l.bache_code && l.bache_code !== l.lot_code)
+            ? el('span', { class: 'text-[10px] text-ink-300 font-mono', text: l.lot_code })
+            : null,
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
           el('span', { class: 'ctrm-pill roll', text: statusLabel(l.status) }),
           stageLabel ? el('span', { class: 'ctrm-pill muted', text: stageLabel }) : null,
@@ -137,6 +140,11 @@ export async function fincaLotsView() {
             class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
             onClick: () => assignLot(l),
           }, ['Asignar pedidos']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+            title: 'Editar código de bache',
+            onClick: () => editBacheCode(l),
+          }, ['Editar bache']),
         ]),
       ]),
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
@@ -239,7 +247,7 @@ export async function fincaLotsView() {
       return el('div', { class: 'space-y-3' }, [
         el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] space-y-1' }, [
           el('div', {}, [`Pedido: `, el('strong', { text: assignment.order?.order_code || '—' })]),
-          el('div', {}, [`Lote: `,   el('strong', { text: lot.lot_code })]),
+          el('div', {}, [`Lote: `,   el('strong', { text: lot.bache_code || lot.lot_code })]),
           el('div', {}, [`Capacidad lote: `, el('strong', { text: fmtKg(capacity) })]),
           el('div', {}, [`Otras asignaciones: `, el('strong', { text: fmtKg(otherSum) })]),
         ]),
@@ -307,7 +315,7 @@ export async function fincaLotsView() {
       yieldValues = await promptYield(lot, target);
       if (yieldValues === undefined) return;
     } else {
-      const ok = await confirmModal(`Avanzar ${lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
+      const ok = await confirmModal(`Avanzar ${lot.bache_code || lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
     }
     try {
@@ -318,7 +326,7 @@ export async function fincaLotsView() {
         if (yieldValues.kg_green_actual    != null) payload.kg_green_actual    = yieldValues.kg_green_actual;
       }
       const r = await api.lotUpdateStatus(payload);
-      toast(`${lot.lot_code} → ${statusLabel(target)}`, 'success');
+      toast(`${lot.bache_code || lot.lot_code} → ${statusLabel(target)}`, 'success');
       if (r.completions && r.completions.length > 0) {
         toast(`${r.completions.length} pedido(s) completado(s)`, 'success', 4500);
       }
@@ -365,7 +373,7 @@ export async function fincaLotsView() {
 
       return el('div', { class: 'space-y-3' }, [
         el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
-          `Avanzando ${lot.lot_code} a `, el('strong', { class: 'text-navy', text: statusLabel(target) }),
+          `Avanzando ${lot.bache_code || lot.lot_code} a `, el('strong', { class: 'text-navy', text: statusLabel(target) }),
           '. Registra peso seco y factor de rendimiento; el verde se calcula automáticamente.',
         ]),
         el('label', { class: 'ctrm-label', text: 'Peso seco (kg)' }),
@@ -413,6 +421,42 @@ export async function fincaLotsView() {
     render();
   }
 
+  // ---------- Edit bache code ----------
+  function editBacheCode(lot) {
+    return openModal(({ close }) => {
+      const inp = el('input', {
+        type: 'text', value: lot.bache_code || '',
+        class: 'ctrm-input mono uppercase',
+        maxlength: '60',
+      });
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-500' }, [
+          `Lote interno: `, el('strong', { class: 'font-mono text-ink-700', text: lot.lot_code }),
+        ]),
+        labelled('Código de bache', inp),
+        el('p', { class: 'ctrm-hint', text: 'Único entre todos los lotes.' }),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: async () => {
+              const v = inp.value.trim();
+              if (!v) { toast('Código requerido', 'warning'); return; }
+              if (v === lot.bache_code) { close(null); return; }
+              try {
+                await api.lotUpdate({ lot_id: lot.id, fields: { bache_code: v } });
+                toast(`Código actualizado a ${v}`, 'success');
+                close({ ok: true });
+                await reloadLots();
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, ['Guardar']),
+        ]),
+      ]);
+    }, { title: 'Editar código de bache' });
+  }
+
   // ---------- Create lot (stage selector + optional pre-assignment) ----------
   function createLot() {
     return openModal(({ close }) => {
@@ -420,6 +464,12 @@ export async function fincaLotsView() {
       let chosenStage = 'cereza';
       let candidateOrders = [];      // lazy-loaded when reference + process settle
       const assignmentInputs = new Map();   // order_id → input element
+
+      const bacheInput = el('input', {
+        type: 'text', placeholder: 'Ej: B-23, BACHE-2026-04',
+        class: 'ctrm-input mono uppercase',
+        maxlength: '60', required: 'true',
+      });
 
       const refCombo = createCombobox({
         placeholder: 'Buscar referencia...',
@@ -560,6 +610,14 @@ export async function fincaLotsView() {
       }
 
       const body = el('div', { class: 'space-y-3' }, [
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Código de bache ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          bacheInput,
+          el('p', { class: 'ctrm-hint', text: 'Único por lote. La finca lo asigna a la llegada de la cereza.' }),
+        ]),
         labelled('Referencia', refCombo.el),
         labelled('Proceso', procSelect),
 
@@ -593,6 +651,8 @@ export async function fincaLotsView() {
             class: 'ctrm-btn ctrm-btn-primary',
             type: 'button',
             onClick: async () => {
+              const bacheCode = bacheInput.value.trim();
+              if (!bacheCode) { toast('Falta código de bache', 'warning'); return; }
               if (!chosenRef) { toast('Selecciona referencia', 'warning'); return; }
               if (!procSelect.value) { toast('Selecciona proceso', 'warning'); return; }
               const kg = Number(kgInput.value);
@@ -616,6 +676,7 @@ export async function fincaLotsView() {
 
               try {
                 const r = await api.lotCreate({
+                  bache_code: bacheCode,
                   reference_id: chosenRef.id,
                   process_type: procSelect.value,
                   processing_stage: chosenStage,
@@ -627,7 +688,7 @@ export async function fincaLotsView() {
                   initial_assignments,
                 });
                 const assignedCount = (r.assignments || []).length;
-                toast(`Lote ${r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
+                toast(`Lote ${r.lot.bache_code || r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
                 close({ ok: true });
                 await reloadLots();
               } catch (e) { toast(e.message, 'error'); }
@@ -671,7 +732,7 @@ export async function fincaLotsView() {
     }
 
     const result = await openModal(({ close }) => assignModalBody(lot, candidates, close), {
-      title: `Asignar lote ${lot.lot_code}`, wide: true,
+      title: `Asignar lote ${lot.bache_code || lot.lot_code}`, wide: true,
     });
     if (!result) return;
 

@@ -31,6 +31,7 @@ export async function fincaDespachosView() {
         if ((s.shipment_code || '').toLowerCase().includes(lo)) return true;
         if ((s.notes || '').toLowerCase().includes(lo)) return true;
         for (const l of s.lots || []) {
+          if ((l.bache_code || '').toLowerCase().includes(lo)) return true;
           if ((l.lot_code || '').toLowerCase().includes(lo)) return true;
           if ((l.reference_name || '').toLowerCase().includes(lo)) return true;
           for (const a of l.assignments || []) {
@@ -182,7 +183,7 @@ export async function fincaDespachosView() {
           cb,
           el('div', { class: 'flex-1 min-w-0' }, [
             el('div', { class: 'flex items-center gap-2 flex-wrap mb-0.5' }, [
-              el('span', { class: 'ctrm-code', text: l.lot_code }),
+              el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
               el('span', { class: 'text-[12px] font-display font-semibold text-navy', text: l.reference_name || '—' }),
               el('span', { class: 'ctrm-pill muted', text: l.process_type }),
             ]),

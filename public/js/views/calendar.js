@@ -90,7 +90,7 @@ export async function calendarView() {
       events.push({
         date: l.drying_start_date.slice(0, 10),
         kind: KIND.DRYING_REAL,
-        title: l.lot_code,
+        title: l.bache_code || l.lot_code,
         subtitle: l.reference_name || '—',
         meta: `${statusLabel(l.status)} · ${l.process_type}`,
         onClick: () => navigate('/finca/lots'),
@@ -100,7 +100,7 @@ export async function calendarView() {
       events.push({
         date: l.ready_date.slice(0, 10),
         kind: KIND.LOTE_LISTO,
-        title: l.lot_code,
+        title: l.bache_code || l.lot_code,
         subtitle: l.reference_name || '—',
         meta: `${fmtKg(l.kg_green_actual ?? l.kg_green_expected ?? 0)}`,
         onClick: () => navigate('/finca/lots'),

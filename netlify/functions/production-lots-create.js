@@ -9,6 +9,7 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
 /**
  * POST /production-lots-create  (finca, admin)
  * Body:
+ *   bache_code             string, unique (required)
  *   reference_id           uuid
  *   process_type           one of PROCESS_TYPES
  *   processing_stage       'cereza' | 'despulpado' | 'seco'
@@ -39,6 +40,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
 
   const errors = [];
+  const bache_code = (body.bache_code == null ? '' : String(body.bache_code)).trim();
   const reference_id = body.reference_id;
   const process_type = body.process_type;
 
@@ -57,6 +59,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const notes = body.notes == null ? null : String(body.notes);
   const initial_assignments = Array.isArray(body.initial_assignments) ? body.initial_assignments : [];
 
+  if (!bache_code) errors.push('bache_code required');
+  else if (bache_code.length > 60) errors.push('bache_code too long (max 60 chars)');
   if (!reference_id) errors.push('reference_id required');
   if (!PROCESS_TYPES.includes(process_type)) errors.push('process_type invalid');
   if (!processing_stage || !INPUT_STAGE_DIVISORS[processing_stage]) {
@@ -87,6 +91,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const { data: lot, error: insErr } = await sb
     .from('production_lots').insert({
+      bache_code,
       reference_id,
       process_type,
       processing_stage,
@@ -97,7 +102,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       notes,
       created_by: session.role,
     }).select().single();
-  if (insErr) return serverErr('Failed to create lot', insErr.message);
+  if (insErr) {
+    if (/bache_code/i.test(insErr.message) && /unique|duplicate/i.test(insErr.message)) {
+      return conflict('Ya existe un lote con ese código de bache', 'BACHE_CODE_TAKEN');
+    }
+    return serverErr('Failed to create lot', insErr.message);
+  }
 
   if (variety_ids.length > 0) {
     const rows = variety_ids.map((variety_id) => ({ production_lot_id: lot.id, variety_id }));

@@ -20,7 +20,7 @@ exports.handler = requireAuth(async (event) => {
       id, shipment_code, shipment_date, notes, created_by, created_at,
       shipment_lots (
         production_lots (
-          id, lot_code, process_type, processing_stage,
+          id, lot_code, bache_code, process_type, processing_stage,
           kg_cherry_input, kg_despulpado_input,
           kg_dried_output, factor_rendimiento,
           kg_green_expected, kg_green_actual,
@@ -50,6 +50,7 @@ exports.handler = requireAuth(async (event) => {
       .map((l) => ({
         id: l.id,
         lot_code: l.lot_code,
+        bache_code: l.bache_code,
         process_type: l.process_type,
         processing_stage: l.processing_stage,
         kg_cherry_input:    l.kg_cherry_input,
