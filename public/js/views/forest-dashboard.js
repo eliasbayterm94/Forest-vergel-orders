@@ -15,15 +15,40 @@ const REGIONS          = ['USA', 'EU', 'UK', 'MENA', 'AU'];
 export async function forestDashboardView() {
   const [ordersRes, lotsRes, refsRes, varsRes] = await Promise.all([
     api.ordersList({}),
-    api.lotsList({ status: 'Ready' }),
+    api.lotsList({ active_only: 'true' }),
     api.references(),
     api.varieties(),
   ]);
   const today = ordersRes.today;
   const orders = ordersRes.orders;
-  const readyLots = lotsRes.lots;
+  const allActiveLots = lotsRes.lots;
+  const readyLots     = allActiveLots.filter((l) => l.status === 'Ready');
   const allReferences = refsRes.references;
   const allVarieties  = varsRes.varieties;
+
+  // Per-order rollup: how much of the accepted kg is already covered by
+  // active lots, broken down by lot stage.
+  const orderRollup = new Map();   // order_id → { ready, drying, fermentation, total, lots: [{code, status, kg}] }
+  for (const lot of allActiveLots) {
+    for (const a of lot.assignments || []) {
+      const oid = a.demand_order_id;
+      const kg = Number(a.kg_green_allocated || 0);
+      if (!orderRollup.has(oid)) orderRollup.set(oid, {
+        ready: 0, drying: 0, fermentation: 0, total: 0, lots: [],
+      });
+      const r = orderRollup.get(oid);
+      r.total += kg;
+      if (lot.status === 'Ready')          r.ready += kg;
+      else if (lot.status === 'Drying')    r.drying += kg;
+      else if (lot.status === 'InFermentation') r.fermentation += kg;
+      r.lots.push({
+        id: lot.id,
+        code: lot.bache_code || lot.lot_code,
+        status: lot.status,
+        kg,
+      });
+    }
+  }
 
   const buckets = {
     pending:    orders.filter((o) => o.status === 'Pending'),
@@ -39,6 +64,7 @@ export async function forestDashboardView() {
 
   // Renderer factory: pending rows get Editar/Cancelar actions; others don't.
   const rowFor = (o) => orderRow(o, {
+    rollup: orderRollup.get(o.id) || null,
     actions: o.status === 'Pending' ? [
       { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
       { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
@@ -159,6 +185,11 @@ export function orderRow(o, opts = {}) {
     }, [a.label]),
   );
 
+  const rollup = opts.rollup;
+  const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
+  const showProgress = rollup && accepted > 0
+    && ['Accepted', 'PartiallyAccepted', 'InProduction', 'Completed'].includes(o.status);
+
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
       el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
@@ -184,10 +215,72 @@ export function orderRow(o, opts = {}) {
       meta('Drying-start', fmtDate(o.latest_drying_start_date)),
       meta('Proceso', o.process_type),
     ]),
+    showProgress ? coverageBar(rollup, accepted) : null,
     actionButtons.length > 0
       ? el('div', { class: 'flex gap-2 mt-3 pt-2 border-t border-sand' }, actionButtons)
       : null,
   ]);
+}
+
+// Visual breakdown of how much of the order is covered by lots, split by
+// lot stage. Order status "InProduction" with rollup.ready > 0 means the
+// finca already has finished bache(s) waiting for shipment.
+function coverageBar(rollup, accepted) {
+  const ready = rollup.ready;
+  const drying = rollup.drying;
+  const ferm = rollup.fermentation;
+  const total = rollup.total;
+  const pct = (kg) => Math.max(0, Math.min(100, (kg / accepted) * 100));
+  const pending = Math.max(0, accepted - total);
+
+  const segs = [
+    { kg: ready,  color: '#5d8b66', label: 'Ready' },
+    { kg: drying, color: '#ddae3e', label: 'Drying' },
+    { kg: ferm,   color: '#7e9ec1', label: 'Fermentación' },
+  ].filter((s) => s.kg > 0);
+
+  const lotChips = (rollup.lots || [])
+    .slice()
+    .sort((a, b) => stageOrder(a.status) - stageOrder(b.status))
+    .map((l) => el('span', {
+      class: `ctrm-code text-[10px]`,
+      title: `${l.code} · ${statusLabel(l.status)} · ${fmtKg(l.kg)} verde`,
+      style: `border-color:${stageColor(l.status)};color:${stageColor(l.status)};`,
+    }, [`${l.code} · ${fmtKg(l.kg)}`]));
+
+  return el('div', { class: 'mt-2 pt-2 border-t border-sand space-y-1' }, [
+    el('div', { class: 'flex items-center gap-2' }, [
+      el('span', { class: 'eyebrow text-[10px]', text: 'Cobertura por lotes' }),
+      el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
+        el('strong', { class: 'text-ink-700', text: `${fmtKg(total)}` }),
+        ` / ${fmtKg(accepted)} verde`,
+        pending > 0.001
+          ? el('span', { class: 'text-warn', text: ` · ${fmtKg(pending)} sin asignar` })
+          : el('span', { class: 'text-ok', text: ' · cubierto' }),
+      ]),
+    ]),
+    el('div', { class: 'flex h-2 rounded-full overflow-hidden bg-sand' },
+      segs.map((s) => el('div', {
+        class: 'h-full',
+        style: `width:${pct(s.kg)}%;background:${s.color};`,
+        title: `${s.label}: ${fmtKg(s.kg)}`,
+      }))),
+    lotChips.length > 0
+      ? el('div', { class: 'flex flex-wrap gap-1' }, lotChips)
+      : null,
+  ]);
+}
+
+function stageOrder(status) {
+  return { Ready: 0, Drying: 1, InFermentation: 2 }[status] ?? 99;
+}
+
+function stageColor(status) {
+  return {
+    Ready: '#5d8b66',
+    Drying: '#ddae3e',
+    InFermentation: '#7e9ec1',
+  }[status] || '#9aa3ae';
 }
 
 function lotRow(l) {
