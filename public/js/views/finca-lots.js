@@ -309,12 +309,13 @@ export async function fincaLotsView() {
             type: 'button',
             onClick: async () => {
               try {
-                await api.lotPartialReject({
+                const r = await api.lotPartialReject({
                   partial_id: partial.id,
                   reason: reasonInput.value || null,
                 });
                 toast(`Parcial ${partial.parcial_letter} rechazado`, 'success');
                 close({ ok: true });
+                if (r.over_allocation) await maybeRebalance(r.over_allocation);
                 await reloadLots();
               } catch (e) { toast(e.message, 'error'); }
             },
@@ -322,6 +323,38 @@ export async function fincaLotsView() {
         ]),
       ]);
     }, { title: `Rechazar parcial ${partial.parcial_letter}` });
+  }
+
+  async function maybeRebalance(over) {
+    // Tras rechazar, el lote queda con asignaciones que exceden la
+    // capacidad efectiva. Ofrecemos rebalanceo proporcional.
+    const ok = await confirmModal(
+      `Después de rechazar, las asignaciones del bache ${over.bache_code} ` +
+      `(${fmtKg(over.total_allocated)}) exceden la capacidad efectiva ` +
+      `(${fmtKg(over.capacity)}) por ${fmtKg(over.overflow)}. ` +
+      `¿Reescalar proporcionalmente para que cuadren?`,
+      { title: 'Asignaciones quedan sobre-asignadas', confirmText: 'Reescalar', danger: true },
+    );
+    if (!ok) {
+      toast('Asignaciones sin ajustar — los pedidos pueden completarse con kg fantasma', 'warning', 5000);
+      return;
+    }
+    const ratio = over.capacity / over.total_allocated;
+    let okCount = 0; let errCount = 0;
+    for (const a of over.assignments) {
+      const newKg = Math.round(a.kg_green_allocated * ratio * 100) / 100;
+      if (newKg <= 0) continue;
+      try {
+        await api.assignmentsUpdate({ assignment_id: a.id, kg_green_allocated: newKg });
+        okCount++;
+      } catch (e) {
+        errCount++;
+        // eslint-disable-next-line no-console
+        console.warn('rebalance failed for', a.id, e.message);
+      }
+    }
+    if (errCount === 0) toast(`${okCount} asignaciones reescaladas`, 'success');
+    else toast(`${okCount} reescaladas, ${errCount} fallaron`, 'warning', 4500);
   }
 
   async function unrejectPartial(lot, partial) {

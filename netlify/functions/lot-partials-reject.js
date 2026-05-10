@@ -29,7 +29,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   const sb = getSupabase();
   const { data: row, error: loadErr } = await sb
     .from('lot_partials')
-    .select('id, parcial_letter, rejected_at, production_lots!inner(status)')
+    .select('id, parcial_letter, rejected_at, production_lots!inner(id, status)')
     .eq('id', partial_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);
   if (!row) return notFound('Partial not found');
@@ -52,5 +52,55 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     .from('lot_partials').update(update).eq('id', partial_id).select().single();
   if (upErr) return serverErr('Update failed', upErr.message);
 
-  return ok({ partial: upd });
+  // Calcular si el lote queda over-allocated despues del cambio.
+  // Capacidad efectiva = sum(kg_green_yield de partials NO rechazados).
+  // Si no hay parciales (lote legacy) usamos kg_green_actual / expected.
+  const lotId = row.production_lots.id;
+  const overAllocation = await computeOverAllocation(sb, lotId);
+
+  return ok({ partial: upd, over_allocation: overAllocation });
 });
+
+async function computeOverAllocation(sb, lotId) {
+  const { data: lot } = await sb
+    .from('production_lots')
+    .select(`
+      id, bache_code, lot_code,
+      kg_green_actual, kg_green_expected,
+      lot_partials ( id, kg_green_yield, rejected_at ),
+      lot_order_assignments ( id, demand_order_id, kg_green_allocated,
+        demand_orders ( order_code, client_name ) )
+    `)
+    .eq('id', lotId).maybeSingle();
+  if (!lot) return null;
+
+  const partials = lot.lot_partials || [];
+  let capacity;
+  if (partials.length === 0) {
+    capacity = Number(lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+  } else {
+    capacity = partials
+      .filter((p) => !p.rejected_at)
+      .reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+  }
+
+  const assigns = (lot.lot_order_assignments || []).map((a) => ({
+    id: a.id,
+    demand_order_id: a.demand_order_id,
+    order_code: a.demand_orders?.order_code,
+    client_name: a.demand_orders?.client_name,
+    kg_green_allocated: Number(a.kg_green_allocated || 0),
+  }));
+  const totalAllocated = assigns.reduce((s, a) => s + a.kg_green_allocated, 0);
+  const overflow = totalAllocated - capacity;
+  if (overflow <= 0.01) return null;
+
+  return {
+    lot_id: lot.id,
+    bache_code: lot.bache_code || lot.lot_code,
+    capacity,
+    total_allocated: totalAllocated,
+    overflow,
+    assignments: assigns,
+  };
+}
