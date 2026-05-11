@@ -264,6 +264,57 @@
       .filter-option:hover{ background:var(--cream); border-radius:6px; }
       .filter-option-label{ font-size:13px; color:var(--ink-700); }
 
+      /* Tab bar (NN/g-style: active tab merges with panel below) */
+      .tabbar{
+        display:flex; gap:2px; align-items:flex-end;
+        border-bottom:1px solid var(--sand);
+        overflow-x:auto;
+        -webkit-overflow-scrolling:touch;
+        scrollbar-width:none;
+      }
+      .tabbar::-webkit-scrollbar{ display:none; }
+      .tabbar-tab{
+        position:relative;
+        padding:10px 16px;
+        background:var(--cream);
+        border:1px solid var(--sand);
+        border-bottom:none;
+        border-radius:8px 8px 0 0;
+        font-family:var(--font-display);
+        font-weight:600;
+        font-size:11px;
+        color:var(--ink-500);
+        cursor:pointer;
+        text-transform:uppercase;
+        letter-spacing:var(--ls-eyebrow);
+        margin-bottom:-1px;
+        white-space:nowrap;
+        display:inline-flex; align-items:center; gap:6px;
+      }
+      .tabbar-tab:hover{ color:var(--navy); }
+      .tabbar-tab.is-active{
+        background:#fff;
+        color:var(--navy);
+        z-index:1;
+      }
+      .tabbar-tab.is-active::after{
+        /* paint over the panel's top-border so the tab "merges" */
+        content:''; position:absolute; left:0; right:0; bottom:-1px;
+        height:1px; background:#fff;
+      }
+      .tabbar-count{
+        background:var(--ink-100); color:var(--ink-500);
+        font-size:9.5px; padding:1px 6px; border-radius:4px; font-weight:700;
+      }
+      .tabbar-tab.is-active .tabbar-count{
+        background:var(--navy); color:#fff;
+      }
+      .tabbar-panel{
+        background:#fff; border:1px solid var(--sand); border-top:none;
+        border-radius:0 0 10px 10px;
+        padding:14px;
+      }
+
       /* View mode toggle (tabla / cards) */
       .view-mode-toggle{
         display:inline-flex; border:1px solid var(--sand); border-radius:8px;

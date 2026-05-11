@@ -274,9 +274,12 @@ async function triggerDigest() {
 }
 
 // ─── Page title (rendered inside content area) ───────────────────────
-export function pageTitle(title, subtitle) {
-  return el('div', { class: 'mb-5 flex flex-col gap-0.5' }, [
-    el('h1', { class: 'page-h', text: title }),
-    subtitle ? el('p', { class: 'page-sub', text: subtitle }) : null,
+export function pageTitle(title, subtitle, action) {
+  return el('div', { class: 'mb-5 flex items-start justify-between gap-3 flex-wrap' }, [
+    el('div', { class: 'flex flex-col gap-0.5 min-w-0' }, [
+      el('h1', { class: 'page-h', text: title }),
+      subtitle ? el('p', { class: 'page-sub', text: subtitle }) : null,
+    ]),
+    action ? el('div', { class: 'shrink-0' }, [action]) : null,
   ]);
 }
