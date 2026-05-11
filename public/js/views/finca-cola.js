@@ -13,6 +13,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
+import { createViewMode } from '../ui/view-mode.js';
 
 const FILTERS = [
   { key: 'all',         label: 'Todos' },
@@ -137,9 +138,16 @@ export async function fincaColaView() {
       }));
       return;
     }
-    for (const o of shown) list.append(queueRow(o, today, earliest, latest));
+    if (vm.mode() === 'table') {
+      list.append(queueTable(shown, today));
+    } else {
+      for (const o of shown) list.append(queueRow(o, today, earliest, latest));
+    }
   }
-  redraw();
+  const vm = createViewMode('finca-cola', {
+    onChange: () => { redraw(); refreshLegend(); },
+  });
+  // Defer first redraw to after refreshLegend exists below.
 
   const weeklyLoadPanel = capacity?.weekly_load?.length
     ? renderWeeklyLoad(capacity.weekly_load, cherryCap)
@@ -175,14 +183,73 @@ export async function fincaColaView() {
       semanasSobrecargadas > 0 ? 'crit' : 'ok'),
   ]);
 
+  const legendHolder = el('div', { class: 'flex items-center justify-between mb-2' });
+  function refreshLegend() {
+    legendHolder.innerHTML = '';
+    legendHolder.append(
+      vm.mode() === 'cards' ? timelineLegend() : el('span'),
+      vm.toggleEl,
+    );
+  }
+  refreshLegend();
+  redraw();
+
   return chrome(el('div', {}, [
     pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
     kpiStrip,
     weeklyLoadPanel,
     filterRow,
-    timelineLegend(),
+    legendHolder,
     list,
   ]));
+}
+
+// ─── Table renderer ────────────────────────────────────────────────
+function queueTable(orders, today) {
+  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+  const cell = (label, classes, content) => {
+    const td = el('td', { class: classes });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, [
+      el('th', {}, ['Código']),
+      el('th', {}, ['Referencia']),
+      el('th', {}, ['Cliente']),
+      el('th', {}, ['Status']),
+      el('th', { class: 'text-right' }, ['Aceptado']),
+      el('th', { class: 'text-right' }, ['Pendiente']),
+      el('th', {}, ['Drying-start']),
+      el('th', {}, ['Entrega']),
+    ])]),
+    el('tbody', {}, orders.map((o) => {
+      const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
+      const dryColor = isOverdue ? 'text-crit'
+        : (daysBetween(today, o.latest_drying_start_date) <= 5 ? 'text-warn'
+        : 'text-ink-700');
+      return el('tr', {
+        class: 'cursor-pointer hover:bg-cream',
+        onClick: () => navigate('/finca/lots'),
+      }, [
+        cell('Código', 'font-mono text-navy font-semibold', o.order_code),
+        cell('Referencia', '', o.reference_name || '—'),
+        cell('Cliente', '', o.client_name || '—'),
+        cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
+        cell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted || 0)),
+        cell('Pendiente', `text-right font-mono ${o.pending_kg > 0 ? 'text-warn font-bold' : 'text-ink-300'}`,
+          fmtKg(o.pending_kg || 0)),
+        cell('Drying-start', `font-mono text-[11px] ${dryColor}`,
+          o.latest_drying_start_date ? `${fmtDate(o.latest_drying_start_date)} · ${relDate(o.latest_drying_start_date)}` : '—'),
+        cell('Entrega', 'font-mono text-[11px]',
+          o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
+      ]);
+    })),
+  ]);
+  wrap.append(t);
+  return wrap;
 }
 
 function kpiCard(label, value, hint, kind) {

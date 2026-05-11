@@ -264,6 +264,20 @@
       .filter-option:hover{ background:var(--cream); border-radius:6px; }
       .filter-option-label{ font-size:13px; color:var(--ink-700); }
 
+      /* View mode toggle (tabla / cards) */
+      .view-mode-toggle{
+        display:inline-flex; border:1px solid var(--sand); border-radius:8px;
+        background:#fff; overflow:hidden;
+      }
+      .view-mode-btn{
+        padding:6px 12px; font-size:11px; font-family:var(--font-display);
+        font-weight:600; letter-spacing:var(--ls-loose); text-transform:uppercase;
+        color:var(--ink-500); background:transparent; border:none; cursor:pointer;
+        min-height:32px;
+      }
+      .view-mode-btn:hover{ color:var(--navy); }
+      .view-mode-btn.is-active{ background:var(--navy); color:#fff; }
+
       .ctrm-select{
         background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235a5a55' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
         background-repeat:no-repeat; background-position:right 12px center;

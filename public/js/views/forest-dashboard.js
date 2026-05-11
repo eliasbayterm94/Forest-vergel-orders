@@ -1,4 +1,4 @@
-import { el } from '../ui/el.js';
+import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
+import { createViewMode } from '../ui/view-mode.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -72,46 +73,56 @@ export async function forestDashboardView() {
     ] : null,
   });
 
-  return chrome(el('div', {}, [
-    pageTitle('Tablero Forest', `Hoy: ${today}`),
+  const root = el('div', {});
+  const vm = createViewMode('forest-dashboard', { onChange: () => redraw() });
+  function renderList(items, opts) {
+    if (vm.mode() === 'table') return ordersTable(items, orderRollup, opts);
+    return el('div', { class: 'space-y-2' }, items.map(rowFor));
+  }
+  function redraw() {
+    clear(root);
+    root.append(
+      pageTitle('Tablero Forest', `Hoy: ${today}`),
+      statRow([
+        stat('Pendientes',  buckets.pending.length,  'Esperando finca'),
+        stat('En curso',    buckets.inFlight.length, 'Aceptados / producción'),
+        stat('Listos',      readyLots.length,        'Lotes para envío', { kind: 'ok' }),
+        stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO', { kind: buckets.rejected.length + buckets.partial.length > 0 ? 'crit' : 'ok' }),
+      ]),
+      primaryCTA(),
+      el('div', { class: 'flex justify-end mb-3' }, [vm.toggleEl]),
 
-    statRow([
-      stat('Pendientes',  buckets.pending.length,  'Esperando finca'),
-      stat('En curso',    buckets.inFlight.length, 'Aceptados / producción'),
-      stat('Listos',      readyLots.length,        'Lotes para envío', { kind: 'ok' }),
-      stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO', { kind: buckets.rejected.length + buckets.partial.length > 0 ? 'crit' : 'ok' }),
-    ]),
+      section('Urgencias',
+        urgencies.length === 0
+          ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
+          : renderList(urgencies),
+      ),
 
-    primaryCTA(),
+      section('Lotes listos para envío',
+        readyLots.length === 0
+          ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
+          : (vm.mode() === 'table' ? lotsTable(readyLots) : el('div', { class: 'space-y-2' }, readyLots.map(lotRow))),
+      ),
 
-    section('Urgencias',
-      urgencies.length === 0
-        ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
-        : urgencies.map(rowFor),
-    ),
+      section('Pedidos en curso',
+        buckets.inFlight.length === 0
+          ? emptyStateCard({
+              title: 'Sin pedidos activos',
+              description: 'Crea uno para que finca lo revise.',
+              action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
+            })
+          : renderList(buckets.inFlight),
+      ),
 
-    section('Lotes listos para envío',
-      readyLots.length === 0
-        ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
-        : readyLots.map(lotRow),
-    ),
-
-    section('Pedidos en curso',
-      buckets.inFlight.length === 0
-        ? emptyStateCard({
-            title: 'Sin pedidos activos',
-            description: 'Crea uno para que finca lo revise.',
-            action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
-          })
-        : buckets.inFlight.map(rowFor),
-    ),
-
-    section('Pedidos pendientes (esperando finca)',
-      buckets.pending.length === 0
-        ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
-        : buckets.pending.map(rowFor),
-    ),
-  ]));
+      section('Pedidos pendientes (esperando finca)',
+        buckets.pending.length === 0
+          ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
+          : renderList(buckets.pending, { withActions: true }),
+      ),
+    );
+  }
+  redraw();
+  const view = chrome(root);
 
   // ─── Edit modal ──────────────────────────────────────────────────
   async function openEditOrder(order) {
@@ -154,6 +165,89 @@ export async function forestDashboardView() {
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     } catch (e) { toast(e.message || 'Error al cancelar', 'error'); }
   }
+
+  return view;
+}
+
+// ─── Table renderers ────────────────────────────────────────────────
+function ordersTable(orders, rollupMap) {
+  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+  const cell = (label, classes, content) => {
+    const td = el('td', { class: classes });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else if (Array.isArray(content)) td.append(...content.filter(Boolean));
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, [
+      el('th', {}, ['Código']),
+      el('th', {}, ['Referencia']),
+      el('th', {}, ['Cliente']),
+      el('th', {}, ['Status']),
+      el('th', { class: 'text-right' }, ['Aceptado']),
+      el('th', { class: 'text-right' }, ['Asignado']),
+      el('th', {}, ['Entrega']),
+      el('th', {}, ['Drying-start']),
+    ])]),
+    el('tbody', {}, orders.map((o) => {
+      const r = rollupMap?.get(o.id);
+      const total = r ? Number(r.total || 0) : 0;
+      const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
+      return el('tr', {}, [
+        cell('Código', 'font-mono text-navy font-semibold', o.order_code),
+        cell('Referencia', '', o.reference_name || '—'),
+        cell('Cliente', '', o.client_name || '—'),
+        cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
+        cell('Aceptado', 'text-right font-mono', fmtKg(accepted)),
+        cell('Asignado', 'text-right font-mono', accepted > 0 ? `${fmtKg(total)} (${Math.round(total/accepted*100)}%)` : fmtKg(total)),
+        cell('Entrega', 'font-mono text-[11px]',
+          o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
+        cell('Drying-start', 'font-mono text-[11px]',
+          o.latest_drying_start_date
+            ? `${fmtDate(o.latest_drying_start_date)} · ${relDate(o.latest_drying_start_date)}`
+            : '—'),
+      ]);
+    })),
+  ]);
+  wrap.append(t);
+  return wrap;
+}
+
+function lotsTable(lots) {
+  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+  const cell = (label, classes, content) => {
+    const td = el('td', { class: classes });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, [
+      el('th', {}, ['Bache']),
+      el('th', {}, ['Referencia']),
+      el('th', {}, ['Status']),
+      el('th', { class: 'text-right' }, ['Cereza']),
+      el('th', { class: 'text-right' }, ['Verde esp.']),
+      el('th', { class: 'text-right' }, ['Verde real']),
+      el('th', {}, ['Listo']),
+      el('th', { class: 'text-right' }, ['Asignaciones']),
+    ])]),
+    el('tbody', {}, lots.map((l) => el('tr', {}, [
+      cell('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+      cell('Referencia', '', l.reference_name || '—'),
+      cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
+      cell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
+      cell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
+      cell('Verde real', 'text-right font-mono', l.kg_green_actual != null ? fmtKg(l.kg_green_actual) : '—'),
+      cell('Listo', 'font-mono text-[11px]', l.ready_date ? fmtDate(l.ready_date) : '—'),
+      cell('Asignaciones', 'text-right font-mono', String((l.assignments || []).length)),
+    ]))),
+  ]);
+  wrap.append(t);
+  return wrap;
 }
 
 function statRow(items) {

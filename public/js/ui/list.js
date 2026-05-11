@@ -41,11 +41,17 @@
 
 import { el, clear } from './el.js';
 import { renderFilterButton } from './filters-sheet.js';
+import { createViewMode } from './view-mode.js';
 
 export function listView(opts) {
   const {
     items = [],
     renderItem,
+    // Si se pasan tableHeaders + tableRow, listView renderiza como
+    // tabla cuando vm.mode === 'table'. viewModeKey activa el toggle.
+    tableHeaders = null,
+    tableRow = null,
+    viewModeKey = null,
     pageSize = 20,
     emptyText = 'Sin elementos.',
     searchPlaceholder = 'Buscar...',
@@ -62,10 +68,15 @@ export function listView(opts) {
   let _sortKey = defaultSort || (sorts[0] && sorts[0].key) || null;
   let _page = 0;
 
+  // View mode toggle si el caller paso renderers de tabla + un key.
+  const vm = (viewModeKey && tableHeaders && tableRow)
+    ? createViewMode(viewModeKey, { onChange: () => rerender() })
+    : null;
+
   // --- DOM scaffolding --------------------------------------------
   const root = el('div', { class: 'space-y-3' });
 
-  const hasFilterControls = filters.length > 0 || !!searchMatch || sorts.length > 0;
+  const hasFilterControls = filters.length > 0 || !!searchMatch || sorts.length > 0 || vm;
   const filterBar = el('div', { class: 'flex flex-wrap items-center gap-2' });
   if (hasFilterControls) root.append(filterBar);
 
@@ -160,6 +171,10 @@ export function listView(opts) {
       filterBar.append(sortSel);
     }
 
+    if (vm) {
+      filterBar.append(vm.toggleEl);
+    }
+
     if (filters.length > 0 || searchMatch) {
       const reset = el('button', {
         class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
@@ -204,6 +219,16 @@ export function listView(opts) {
       } else {
         listContent.append(el('p', { class: 'text-[12px] text-ink-300 italic px-1', text: String(emptyText) }));
       }
+    } else if (vm && vm.mode() === 'table' && tableHeaders && tableRow) {
+      // Table mode
+      const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+      const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+        el('thead', {}, [el('tr', {}, tableHeaders.map((h) =>
+          el('th', { class: h.cls || '' }, [h.label])))]),
+        el('tbody', {}, paged.map((item) => tableRow(item)).filter(Boolean)),
+      ]);
+      wrap.append(t);
+      listContent.append(wrap);
     } else {
       for (const item of paged) {
         const node = renderItem(item);

@@ -78,6 +78,16 @@ export async function fincaLotsView() {
     list.append(listView({
       items: lots,
       renderItem: lotCard,
+      viewModeKey: 'finca-lots',
+      tableHeaders: [
+        { label: 'Bache' }, { label: 'Referencia' }, { label: 'Status' }, { label: 'Proceso' },
+        { label: 'Cereza',     cls: 'text-right' },
+        { label: 'Verde esp.', cls: 'text-right' },
+        { label: 'Verde real', cls: 'text-right' },
+        { label: 'Asignado',   cls: 'text-right' },
+        { label: 'Parciales',  cls: 'text-right' },
+      ],
+      tableRow: lotTableRow,
       pageSize: 20,
       emptyText: () => emptyStateCard({
         title: 'Sin lotes activos',
@@ -120,6 +130,39 @@ export async function fincaLotsView() {
     ]),
     list,
   ]));
+
+  // ---------- Lot table row (table-mode renderer) ----------
+  function lotTableRow(l) {
+    const totalAllocated = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
+    const cap = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
+    const overflow = totalAllocated - cap;
+    const partials = l.partials || [];
+    const code = l.bache_code || l.lot_code;
+    const tcell = (label, classes, content) => {
+      const td = el('td', { class: classes });
+      td.setAttribute('data-label', label);
+      if (content instanceof Node) td.append(content);
+      else td.append(document.createTextNode(String(content == null ? '—' : content)));
+      return td;
+    };
+    return el('tr', {
+      class: 'cursor-pointer hover:bg-cream',
+      onClick: () => assignLot(l),
+    }, [
+      tcell('Bache', 'font-mono text-navy font-semibold', code),
+      tcell('Referencia', '', l.reference_name || '—'),
+      tcell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
+      tcell('Proceso', 'text-[11px]', l.process_type),
+      tcell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
+      tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
+      tcell('Verde real', 'text-right font-mono', l.kg_green_actual != null ? fmtKg(l.kg_green_actual) : '—'),
+      tcell('Asignado',
+        `text-right font-mono ${overflow > 0.01 ? 'text-crit font-bold' : ''}`,
+        fmtKg(totalAllocated)),
+      tcell('Parciales', 'text-right font-mono',
+        partials.length > 0 ? `${partials.length}/6` : '—'),
+    ]);
+  }
 
   // ---------- Lot card ----------
   function lotCard(l) {

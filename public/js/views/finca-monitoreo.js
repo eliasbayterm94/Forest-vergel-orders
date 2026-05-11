@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
+import { createViewMode } from '../ui/view-mode.js';
 
 const STAGE_ORDER = ['InFermentation', 'Drying', 'Ready', 'Delivered'];
 
@@ -111,6 +112,19 @@ export async function fincaMonitoreoView() {
 
   // ── KPI row + secciones — todo en un wrapper que se redibuja ──────
   const root = el('div', {});
+  const vm = createViewMode('finca-monitoreo', { onChange: () => redraw() });
+  function listOrTable(items, kind) {
+    if (items.length === 0) return null;
+    if (vm.mode() === 'table') {
+      if (kind === 'order') return ordersSinLoteTable(items);
+      if (kind === 'ferm')  return fermentationTable(items);
+      if (kind === 'dry')   return dryingTable(items);
+    }
+    if (kind === 'order') return el('div', { class: 'space-y-2' }, items.map(orderSinLoteRow));
+    if (kind === 'ferm')  return el('div', { class: 'space-y-2' }, items.map(fermentationRow));
+    if (kind === 'dry')   return el('div', { class: 'space-y-2' }, items.map(dryingRow));
+    return null;
+  }
   function redraw() {
     const ordersSh    = ordersSinLote.filter(passesOrder);
     const fermSh      = fermentationOverrun.filter(passesLot);
@@ -127,7 +141,10 @@ export async function fincaMonitoreoView() {
     root.append(
       pageTitle('Monitoreo', `Hoy: ${today}`),
 
-      el('div', { class: 'mb-4' }, [fb.el]),
+      el('div', { class: 'mb-4 flex items-center justify-between gap-2 flex-wrap' }, [
+        fb.el,
+        vm.toggleEl,
+      ]),
 
       statRow([
         stat('Alertas totales', totalAlerts, totalAlerts === 0 ? 'Sin pendientes' : 'Necesitan atencion',
@@ -146,19 +163,19 @@ export async function fincaMonitoreoView() {
       section('Pedidos sin lote',
         ordersSh.length === 0
           ? emptyText('Todos los pedidos en curso tienen lote asignado.')
-          : ordersSh.map(orderSinLoteRow),
+          : listOrTable(ordersSh, 'order'),
       ),
 
       section('Fermentacion vencida',
         fermSh.length === 0
           ? emptyText('Sin lotes en fermentacion >' + FERMENTATION_OVERRUN_DAYS + 'd.')
-          : fermSh.map(fermentationRow),
+          : listOrTable(fermSh, 'ferm'),
       ),
 
       section('Drying vencido',
         dryingSh.length === 0
           ? emptyText('Sin lotes con drying excedido.')
-          : dryingSh.map(dryingRow),
+          : listOrTable(dryingSh, 'dry'),
       ),
     );
   }
@@ -322,4 +339,92 @@ function daysBetween(fromIso, toIso) {
   const a = new Date(fromIso + 'T00:00:00Z');
   const b = new Date(toIso   + 'T00:00:00Z');
   return Math.floor((b - a) / 86400000);
+}
+
+// ─── Table renderers ──────────────────────────────────────────────
+function tableShell(headers, rows) {
+  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, headers.map((h) =>
+      el('th', { class: h.cls || '' }, [h.label])))]),
+    el('tbody', {}, rows),
+  ]);
+  wrap.append(t);
+  return wrap;
+}
+function tcell(label, classes, content) {
+  const td = el('td', { class: classes });
+  td.setAttribute('data-label', label);
+  if (content instanceof Node) td.append(content);
+  else td.append(document.createTextNode(String(content == null ? '—' : content)));
+  return td;
+}
+
+function ordersSinLoteTable(orders) {
+  return tableShell(
+    [
+      { label: 'Pedido' }, { label: 'Referencia' }, { label: 'Cliente' },
+      { label: 'Pendiente', cls: 'text-right' }, { label: 'Aceptado', cls: 'text-right' },
+      { label: 'Entrega' }, { label: 'Proceso' },
+    ],
+    orders.map((o) => el('tr', {
+      class: 'cursor-pointer hover:bg-cream',
+      onClick: () => navigate('/finca/lots'),
+    }, [
+      tcell('Pedido', 'font-mono text-navy font-semibold', o.order_code),
+      tcell('Referencia', '', o.reference_name || '—'),
+      tcell('Cliente', '', o.client_name || '—'),
+      tcell('Pendiente', 'text-right font-mono text-warn font-bold', fmtKg(o.pendiente_kg)),
+      tcell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted)),
+      tcell('Entrega', 'font-mono text-[11px]', fmtDate(o.max_delivery_date)),
+      tcell('Proceso', 'text-[11px]', o.process_type),
+    ])),
+  );
+}
+
+function fermentationTable(lots) {
+  return tableShell(
+    [
+      { label: 'Bache' }, { label: 'Referencia' },
+      { label: 'Días', cls: 'text-right' }, { label: 'Inicio' },
+      { label: 'Cereza', cls: 'text-right' }, { label: 'Verde esp.', cls: 'text-right' },
+      { label: 'Proceso' },
+    ],
+    lots.map((l) => el('tr', {
+      class: 'cursor-pointer hover:bg-cream',
+      onClick: () => navigate('/finca/lots'),
+    }, [
+      tcell('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+      tcell('Referencia', '', l.reference_name || '—'),
+      tcell('Días', 'text-right font-mono text-crit font-bold', `${l.days_in_fermentation}d`),
+      tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.start_date)),
+      tcell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
+      tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
+      tcell('Proceso', 'text-[11px]', l.process_type),
+    ])),
+  );
+}
+
+function dryingTable(lots) {
+  return tableShell(
+    [
+      { label: 'Bache' }, { label: 'Referencia' },
+      { label: 'Días drying', cls: 'text-right' }, { label: 'Esperado', cls: 'text-right' },
+      { label: 'Inicio' }, { label: 'Parciales', cls: 'text-right' },
+      { label: 'Proceso' },
+    ],
+    lots.map((l) => el('tr', {
+      class: 'cursor-pointer hover:bg-cream',
+      onClick: () => navigate('/finca/lots'),
+    }, [
+      tcell('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+      tcell('Referencia', '', l.reference_name || '—'),
+      tcell('Días drying', 'text-right font-mono text-crit font-bold',
+        `${l.days_in_drying}d (+${l.over_days})`),
+      tcell('Esperado', 'text-right font-mono', `${l.drying_days_expected}d`),
+      tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.drying_start_date)),
+      tcell('Parciales', 'text-right font-mono', `${(l.partials || []).length}/6`),
+      tcell('Proceso', 'text-[11px]', l.process_type),
+    ])),
+  );
 }
