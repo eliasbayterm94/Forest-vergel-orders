@@ -108,19 +108,20 @@ export async function forestDashboardView() {
     .filter((o) => o.delivery_urgency === 'red' || o.delivery_urgency === 'past' || o.drying_urgency === 'red' || o.drying_urgency === 'past');
 
   // Renderer factory: pending rows get Editar/Cancelar actions; others don't.
+  const actionsFor = (o) => o.status === 'Pending' ? [
+    { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
+    { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
+  ] : null;
   const rowFor = (o) => orderRow(o, {
     rollup: orderRollup.get(o.id) || null,
     shipments: shipmentsByOrder.get(o.id) || [],
-    actions: o.status === 'Pending' ? [
-      { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
-      { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
-    ] : null,
+    actions: actionsFor(o),
   });
 
   const root = el('div', {});
   const vm = createViewMode('forest-dashboard', { onChange: () => redraw() });
   function renderList(items, opts) {
-    if (vm.mode() === 'table') return ordersTable(items, orderRollup, shipmentsByOrder, opts);
+    if (vm.mode() === 'table') return ordersTable(items, orderRollup, shipmentsByOrder, { ...(opts || {}), actionsFor });
     return el('div', { class: 'space-y-2' }, items.map(rowFor));
   }
 
@@ -343,7 +344,9 @@ export async function forestDashboardView() {
 }
 
 // ─── Table renderers ────────────────────────────────────────────────
-function ordersTable(orders, rollupMap, shipmentsMap) {
+function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
+  const actionsFor = typeof opts.actionsFor === 'function' ? opts.actionsFor : () => null;
+  const anyActions = orders.some((o) => (actionsFor(o) || []).length > 0);
   const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
@@ -364,6 +367,7 @@ function ordersTable(orders, rollupMap, shipmentsMap) {
       el('th', { class: 'text-right' }, ['Despachado']),
       el('th', {}, ['Entrega']),
       el('th', {}, ['Drying-start']),
+      anyActions ? el('th', { class: 'text-right' }, ['Acciones']) : null,
     ])]),
     el('tbody', {}, orders.map((o) => {
       const r = rollupMap?.get(o.id);
@@ -371,6 +375,17 @@ function ordersTable(orders, rollupMap, shipmentsMap) {
       const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
       const ships = shipmentsMap?.get(o.id) || [];
       const shippedKg = ships.reduce((s, x) => s + Number(x.kg || 0), 0);
+      const actions = actionsFor(o) || [];
+      const actionsCell = anyActions
+        ? cell('Acciones', 'text-right', actions.length > 0
+            ? el('div', { class: 'inline-flex gap-1 flex-wrap justify-end' }, actions.map((a) =>
+                el('button', {
+                  class: `ctrm-btn ctrm-btn-${a.variant === 'danger' ? 'danger' : 'soft'} ctrm-btn-xs`,
+                  type: 'button',
+                  onClick: (e) => { e.stopPropagation(); a.onClick(); },
+                }, [a.label])))
+            : '—')
+        : null;
       return el('tr', {}, [
         cell('Código', 'font-mono text-navy font-semibold', o.order_code),
         cell('Referencia', '', o.reference_name || '—'),
@@ -388,6 +403,7 @@ function ordersTable(orders, rollupMap, shipmentsMap) {
           o.latest_drying_start_date
             ? `${fmtDate(o.latest_drying_start_date)} · ${relDate(o.latest_drying_start_date)}`
             : '—'),
+        actionsCell,
       ]);
     })),
   ]);
