@@ -25,11 +25,14 @@ const FILTERS = [
 export async function fincaColaView() {
   const [ordersRes, lotsRes] = await Promise.all([
     api.ordersList({}),
-    api.lotsList({ active_only: 'true' }),
+    api.lotsList({}),   // todos: incluye Delivered para allocByOrder correcto
   ]);
   const today      = ordersRes.today;
   const allOrders  = ordersRes.orders || [];
-  const activeLots = lotsRes.lots || [];
+  const allLots    = lotsRes.lots || [];
+  // Solo los lotes activos se usan para timeline / capacity overlay,
+  // pero allocByOrder cuenta TODOS (incluyendo Delivered).
+  const activeLots = allLots.filter((l) => l.status !== 'Delivered');
 
   // Capacidad semanal calculada via /api/capacity-calculate sobre los
   // pedidos in-flight. Sirve para marcar la semana de cada pedido
@@ -47,9 +50,12 @@ export async function fincaColaView() {
   for (const w of (capacity?.weekly_load || [])) weeklyByKey.set(w.iso_week_key, w);
   const cherryCap = capacity?.weekly_cherry_capacity_kg || 60000;
 
-  // Coverage por pedido: suma de kg verde asignado desde lotes activos.
+  // Coverage por pedido: suma de kg verde asignado desde TODOS los
+  // lotes, incluyendo Delivered. Sin esto un pedido cuyo aceptado ya
+  // fue cubierto en parte por un lote entregado aparece como
+  // "pendiente" la diferencia, induciendo a sobre-asignar.
   const allocByOrder = new Map();
-  for (const lot of activeLots) {
+  for (const lot of allLots) {
     for (const a of lot.assignments || []) {
       allocByOrder.set(a.demand_order_id,
         (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));

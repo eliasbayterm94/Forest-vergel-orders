@@ -17,32 +17,35 @@ const REGIONS          = ['USA', 'EU', 'UK', 'MENA', 'AU'];
 export async function forestDashboardView() {
   const [ordersRes, lotsRes, refsRes, varsRes] = await Promise.all([
     api.ordersList({}),
-    api.lotsList({ active_only: 'true' }),
+    api.lotsList({}),   // todos: incluye Delivered para rollup correcto
     api.references(),
     api.varieties(),
   ]);
   const today = ordersRes.today;
   const orders = ordersRes.orders;
-  const allActiveLots = lotsRes.lots;
-  const readyLots     = allActiveLots.filter((l) => l.status === 'Ready');
+  const allLots = lotsRes.lots;
+  const readyLots = allLots.filter((l) => l.status === 'Ready');
   const allReferences = refsRes.references;
   const allVarieties  = varsRes.varieties;
 
-  // Per-order rollup: how much of the accepted kg is already covered by
-  // active lots, broken down by lot stage.
-  const orderRollup = new Map();   // order_id → { ready, drying, fermentation, total, lots: [{code, status, kg}] }
-  for (const lot of allActiveLots) {
+  // Per-order rollup: cuanto del kg aceptado ya esta cubierto por
+  // lotes (incluyendo Delivered, agrupados como "delivered"). Si no
+  // contamos Delivered, un pedido entregado en parte aparece como
+  // pendiente esa parte y se sobre-asigna.
+  const orderRollup = new Map();
+  for (const lot of allLots) {
     for (const a of lot.assignments || []) {
       const oid = a.demand_order_id;
       const kg = Number(a.kg_green_allocated || 0);
       if (!orderRollup.has(oid)) orderRollup.set(oid, {
-        ready: 0, drying: 0, fermentation: 0, total: 0, lots: [],
+        ready: 0, drying: 0, fermentation: 0, delivered: 0, total: 0, lots: [],
       });
       const r = orderRollup.get(oid);
       r.total += kg;
-      if (lot.status === 'Ready')          r.ready += kg;
-      else if (lot.status === 'Drying')    r.drying += kg;
+      if (lot.status === 'Ready')               r.ready += kg;
+      else if (lot.status === 'Drying')         r.drying += kg;
       else if (lot.status === 'InFermentation') r.fermentation += kg;
+      else if (lot.status === 'Delivered')      r.delivered += kg;
       r.lots.push({
         id: lot.id,
         code: lot.bache_code || lot.lot_code,
@@ -336,6 +339,7 @@ export function orderRow(o, opts = {}) {
 // lot stage. Order status "InProduction" with rollup.ready > 0 means the
 // finca already has finished bache(s) waiting for shipment.
 function coverageBar(rollup, accepted) {
+  const delivered = Number(rollup.delivered || 0);
   const ready = Number(rollup.ready || 0);
   const drying = Number(rollup.drying || 0);
   const ferm = Number(rollup.fermentation || 0);
@@ -345,9 +349,10 @@ function coverageBar(rollup, accepted) {
   const noLotsYet = total <= 0.001;
 
   const segs = [
-    { kg: ready,  color: '#5d8b66', label: 'Ready' },
-    { kg: drying, color: '#ddae3e', label: 'Drying' },
-    { kg: ferm,   color: '#7e9ec1', label: 'Fermentación' },
+    { kg: delivered, color: '#3a6f4a', label: 'Entregado' },
+    { kg: ready,     color: '#5d8b66', label: 'Ready' },
+    { kg: drying,    color: '#ddae3e', label: 'Drying' },
+    { kg: ferm,      color: '#7e9ec1', label: 'Fermentación' },
   ].filter((s) => s.kg > 0);
 
   const lotChips = (rollup.lots || [])
@@ -395,11 +400,12 @@ function coverageBar(rollup, accepted) {
 }
 
 function stageOrder(status) {
-  return { Ready: 0, Drying: 1, InFermentation: 2 }[status] ?? 99;
+  return { Delivered: -1, Ready: 0, Drying: 1, InFermentation: 2 }[status] ?? 99;
 }
 
 function stageColor(status) {
   return {
+    Delivered: '#3a6f4a',
     Ready: '#5d8b66',
     Drying: '#ddae3e',
     InFermentation: '#7e9ec1',
