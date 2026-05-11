@@ -74,23 +74,9 @@ export async function forestDashboardView() {
         code: lot.bache_code || lot.lot_code,
         status: lot.status,
         kg,
-        infusion_name: lot.infusion_name || null,
-        infusion_pct:  lot.infusion_pct  || null,
       });
     }
   }
-
-  // Infusion lookup por pedido para filtros del tab Seguimiento.
-  const infusionsByOrder = new Map();
-  for (const lot of allLots) {
-    if (!lot.infusion_name) continue;
-    for (const a of lot.assignments || []) {
-      const oid = a.demand_order_id;
-      if (!infusionsByOrder.has(oid)) infusionsByOrder.set(oid, new Set());
-      infusionsByOrder.get(oid).add(lot.infusion_name);
-    }
-  }
-  const infusionOptions = [...new Set(allLots.map((l) => l.infusion_name).filter(Boolean))].sort();
 
   // Tracking por pedido: desglose explicito del ciclo de vida.
   //   enProceso        — kg asignados en lotes InFermentation/Drying
@@ -206,8 +192,6 @@ export async function forestDashboardView() {
       optionLabels: { Accepted:'Aceptado', PartiallyAccepted:'Aceptado parcial', InProduction:'En producción',
                       Completed:'Completado', Cancelled:'Cancelado', Rejected:'Rechazado' },
       getter: (o) => o.status },
-    { key: 'infusion',    label: 'Infusión',   multi: true,  options: infusionOptions,
-      getter: (o) => '' /* custom match — uses infusionsByOrder */ },
   ];
 
   function passesSeg(o) {
@@ -215,10 +199,8 @@ export async function forestDashboardView() {
       const v = seguimientoFilters[f.key];
       if (!v || v.length === 0) continue;
       if (f.key === 'region') {
+        // Coincide si alguna region del pedido esta seleccionada
         if (!(o.regions || []).some((r) => v.includes(r))) return false;
-      } else if (f.key === 'infusion') {
-        const set = infusionsByOrder.get(o.id) || new Set();
-        if (!v.some((name) => set.has(name))) return false;
       } else {
         if (!v.includes(f.getter(o))) return false;
       }
@@ -864,9 +846,6 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       onClick: (e) => { e.stopPropagation(); onToggle(o.id); },
     }, [isExp ? '▾ Ocultar' : `▸ Ver lotes (${lotsCount + shipsCount})`]);
 
-    const lotsForOrder = ((rollupMap.get(o.id) || {}).lots || []);
-    const infusionNamesRow = [...new Set(lotsForOrder.map((l) => l.infusion_name).filter(Boolean))];
-
     tbody.append(el('tr', {
       class: `${isClosed ? 'text-ink-500' : ''}`,
     }, [
@@ -874,7 +853,6 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       cell('Referencia', '', o.reference_name || '—'),
       cell('Cliente', '', o.client_name || '—'),
       cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
-      cell('Infusión', 'text-[11px]', infusionNamesRow.length ? infusionNamesRow.join(', ') : '—'),
       cell('Aceptado',  'text-right font-mono', fmtKg(aceptado)),
       cell('En proceso','text-right font-mono', enProceso > 0 ? fmtKg(enProceso) : '—'),
       cell('Listo',     'text-right font-mono', listo > 0 ? fmtKg(listo) : '—'),
@@ -888,7 +866,7 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
 
     if (isExp) {
       const expandRow = el('tr', { class: 'bg-cream' }, [
-        el('td', { colspan: '12', class: 'p-3' }, [
+        el('td', { colspan: '11', class: 'p-3' }, [
           renderLotsBreakdown(o, rollupMap, shipmentsMap),
         ]),
       ]);
@@ -902,7 +880,6 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       el('th', {}, ['Referencia']),
       el('th', {}, ['Cliente']),
       el('th', {}, ['Status']),
-      el('th', {}, ['Infusión']),
       el('th', { class: 'text-right' }, ['Aceptado']),
       el('th', { class: 'text-right' }, ['En proceso']),
       el('th', { class: 'text-right' }, ['Listo']),
@@ -920,10 +897,8 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
 function seguimientoCard(r, rollupMap, shipmentsMap, expandedSet, onToggle) {
   const { o, aceptado, enProceso, listo, despachado, saldo, isClosed } = r;
   const isExp = expandedSet.has(o.id);
-  const lotsForOrder = ((rollupMap.get(o.id) || {}).lots || []);
-  const lotsCount = lotsForOrder.length;
+  const lotsCount = ((rollupMap.get(o.id) || {}).lots || []).length;
   const shipsCount = (shipmentsMap.get(o.id) || []).length;
-  const infusionNames = [...new Set(lotsForOrder.map((l) => l.infusion_name).filter(Boolean))];
   const saldoChip = saldo > 0.001
     ? el('span', { class: 'ctrm-pill warn', text: `Saldo ${fmtKg(saldo)}` })
     : saldo < -0.001
@@ -937,8 +912,6 @@ function seguimientoCard(r, rollupMap, shipmentsMap, expandedSet, onToggle) {
           el('span', { class: 'ctrm-code', text: o.order_code }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
           el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
-          ...infusionNames.map((n) =>
-            el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: n })),
         ]),
         saldoChip,
       ]),
@@ -1018,7 +991,6 @@ function lotsBreakdownTable(lots) {
       el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
         el('th', { class: 'text-left px-3 py-1.5' }, ['Bache']),
         el('th', { class: 'text-left px-3 py-1.5' }, ['Status']),
-        el('th', { class: 'text-left px-3 py-1.5' }, ['Infusión']),
         el('th', { class: 'text-right px-3 py-1.5' }, ['kg verde']),
       ])]),
       el('tbody', {}, lots.map((l) => {
@@ -1033,8 +1005,6 @@ function lotsBreakdownTable(lots) {
           ]),
           el('td', { class: 'px-3 py-1.5', style: `color:${color};font-weight:600;`,
             text: STAGE_LABELS[l.status] || l.status }),
-          el('td', { class: 'px-3 py-1.5 text-ink-700',
-            text: l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—' }),
           el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: fmtKg(l.kg) }),
         ]);
       })),
