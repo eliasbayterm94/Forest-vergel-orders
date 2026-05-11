@@ -1022,7 +1022,8 @@ export async function fincaLotsView() {
             const allocated = allocByOrder.get(o.id) || 0;
             const remaining = Math.max(0, Number(o.kg_green_accepted || 0) - allocated);
             return { ...o, allocated_kg: allocated, remaining_kg: remaining };
-          }).filter((o) => o.remaining_kg > 0.001);
+          });
+          // Aun con remaining = 0 el pedido es candidato (se asigna como excedente).
           renderCandidates();
         } catch (e) {
           assignWrap.innerHTML = '';
@@ -1184,7 +1185,9 @@ export async function fincaLotsView() {
         const accepted = Number(o.kg_green_accepted || 0);
         const remaining = Math.max(0, accepted - allocated);
         return { ...o, allocated_kg: allocated, remaining_kg: remaining };
-      }).filter((o) => o.remaining_kg > 0.001);
+      });
+      // No filtramos por remaining > 0: aun con el pedido al 100%
+      // se puede asignar el resto del lote como excedente.
     } catch (e) { toast(e.message, 'error'); return; }
 
     if (candidates.length === 0) {
@@ -1271,30 +1274,46 @@ function assignModalBody(lot, candidates, close) {
 
   const rows = candidates.map((o) => {
     const inp = el('input', {
-      type: 'number', step: '0.01', min: '0', max: String(o.remaining_kg),
+      type: 'number', step: '0.01', min: '0',
       placeholder: '0',
       class: 'ctrm-input mono w-28 text-right py-1.5',
     });
-    inp.addEventListener('input', () => recalcTotal());
+    const surplusHint = el('span', { class: 'text-[10px] font-mono text-roll ml-1', hidden: 'true' });
+    inp.addEventListener('input', () => {
+      const v = Number(inp.value || 0);
+      const surplus = v - o.remaining_kg;
+      if (surplus > 0.001) {
+        surplusHint.textContent = `excedente +${fmtKg(surplus)}`;
+        surplusHint.removeAttribute('hidden');
+      } else {
+        surplusHint.setAttribute('hidden', 'true');
+      }
+      recalcTotal();
+    });
     inputs.set(o.id, inp);
+    const isFullCovered = o.remaining_kg <= 0.001;
     return el('div', { class: 'flex flex-wrap items-center justify-between gap-2 py-2 border-b border-sand' }, [
       el('div', { class: 'min-w-0' }, [
         el('div', { class: 'flex items-center gap-2 mb-0.5' }, [
           el('span', { class: 'ctrm-code', text: o.order_code }),
           el('span', { class: 'truncate text-[12px] font-display font-semibold text-navy', text: o.reference_name || '' }),
+          isFullCovered ? el('span', { class: 'ctrm-pill ok text-[10px]', text: 'Cubierto' }) : null,
         ]),
         el('div', { class: 'text-[11px] text-ink-500 font-mono' }, [
           `Aceptado ${fmtKg(o.kg_green_accepted)} · Asignado ${fmtKg(o.allocated_kg)} · `,
-          el('strong', { class: 'text-ink-700' }, [`Disponible ${fmtKg(o.remaining_kg)}`]),
+          el('strong', { class: 'text-ink-700' }, [
+            isFullCovered ? 'Solo excedente' : `Disponible ${fmtKg(o.remaining_kg)}`,
+          ]),
           ` · Entrega ${fmtDate(o.max_delivery_date)}`,
         ]),
       ]),
       el('div', { class: 'flex items-center gap-1' }, [
         inp,
+        surplusHint,
         el('button', {
           type: 'button',
           class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
-          onClick: () => { inp.value = String(Math.min(o.remaining_kg, lotRemaining - sumExcept(inputs, o.id))); recalcTotal(); },
+          onClick: () => { inp.value = String(Math.min(o.remaining_kg, lotRemaining - sumExcept(inputs, o.id))); inp.dispatchEvent(new Event('input')); },
         }, ['Llenar']),
       ]),
     ]);
