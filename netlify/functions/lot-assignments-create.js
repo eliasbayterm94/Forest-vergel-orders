@@ -45,9 +45,30 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   const { data, error } = await sb
     .from('lot_order_assignments').insert(rows).select();
   if (error) {
-    // surface DB-trigger errors with a clearer code
-    if (/reference mismatch/i.test(error.message))   return conflict(error.message, 'REFERENCE_MISMATCH');
-    if (/process_type mismatch/i.test(error.message))return conflict(error.message, 'PROCESS_MISMATCH');
+    if (/reference mismatch/i.test(error.message))    return conflict(error.message, 'REFERENCE_MISMATCH');
+    if (/process_type mismatch/i.test(error.message)) return conflict(error.message, 'PROCESS_MISMATCH');
+
+    // Sobrecupo: el trigger devuelve "Total allocated kg (X) exceeds
+    // order kg_green_accepted (Y) for order <uuid>". Re-componemos el
+    // mensaje en español con order_code y kg disponibles.
+    const m = /Total allocated kg \(([\d.]+)\) exceeds order kg_green_accepted \(([\d.]+)\) for order ([a-f0-9-]+)/i
+      .exec(error.message);
+    if (m) {
+      const totalAfter = Number(m[1]);
+      const accepted   = Number(m[2]);
+      const orderId    = m[3];
+      const overflow   = Math.round((totalAfter - accepted) * 100) / 100;
+      const { data: o } = await sb
+        .from('demand_orders').select('order_code').eq('id', orderId).maybeSingle();
+      const code = (o && o.order_code) || orderId.slice(0, 8);
+      const already = Math.round((totalAfter - rows.reduce((s, r) => s + Number(r.kg_green_allocated || 0), 0)) * 100) / 100;
+      return conflict(
+        `Pedido ${code} solo acepta ${accepted} kg verde y ya tiene ${already} asignados de otros lotes. ` +
+        `La asignación que intentas excede en ${overflow} kg.`,
+        'OVER_ALLOCATED',
+        { order_code: code, kg_green_accepted: accepted, kg_already_allocated: already, overflow },
+      );
+    }
     if (/exceeds order kg_green_accepted/i.test(error.message))
       return conflict(error.message, 'OVER_ALLOCATED');
     return serverErr('Insert failed', error.message);

@@ -1000,14 +1000,20 @@ export async function fincaLotsView() {
           return;
         }
         try {
-          const r = await api.ordersList({
-            status: 'Accepted,PartiallyAccepted,InProduction',
-            reference_id: chosenRef.id,
-            process_type: procSelect.value,
-          });
-          // Compute remaining kg per order based on currently visible lots' assignments.
+          // Trae todos los lots (incluyendo Delivered) para que el
+          // remaining_kg del pedido refleje las asignaciones que ya
+          // se cubrieron desde lotes pasados.
+          const [r, allLotsRes] = await Promise.all([
+            api.ordersList({
+              status: 'Accepted,PartiallyAccepted,InProduction,Completed',
+              reference_id: chosenRef.id,
+              process_type: procSelect.value,
+            }),
+            api.lotsList({}),
+          ]);
+          const allLots = allLotsRes.lots || [];
           const allocByOrder = new Map();
-          for (const ll of lots) {
+          for (const ll of allLots) {
             for (const a of ll.assignments || []) {
               allocByOrder.set(a.demand_order_id, (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
             }
@@ -1153,12 +1159,20 @@ export async function fincaLotsView() {
   async function assignLot(lot) {
     let candidates = [];
     try {
-      const r = await api.ordersList({
-        status: 'Accepted,PartiallyAccepted,InProduction',
-        reference_id: lot.reference_id,
-        process_type: lot.process_type,
-      });
-      const allLots = lots;
+      // Pedimos las orders compatibles + TODOS los lots (incluyendo
+      // Delivered) para que allocByOrder cuente las asignaciones que
+      // ya cubrieron parte del pedido desde lotes ya entregados. Sin
+      // esto, remaining_kg sale inflado y el trigger de la BD rechaza
+      // la nueva asignacion por sobrecupo.
+      const [r, allLotsRes] = await Promise.all([
+        api.ordersList({
+          status: 'Accepted,PartiallyAccepted,InProduction,Completed',
+          reference_id: lot.reference_id,
+          process_type: lot.process_type,
+        }),
+        api.lotsList({}),
+      ]);
+      const allLots = allLotsRes.lots || [];
       const allocByOrder = new Map();
       for (const ll of allLots) {
         for (const a of ll.assignments || []) {

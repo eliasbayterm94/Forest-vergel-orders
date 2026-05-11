@@ -133,8 +133,27 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       if (aErr) {
         // Roll back the lot to keep things consistent.
         await sb.from('production_lots').delete().eq('id', lot.id);
-        if (/reference mismatch/i.test(aErr.message))   return conflict(aErr.message, 'REFERENCE_MISMATCH');
-        if (/process_type mismatch/i.test(aErr.message))return conflict(aErr.message, 'PROCESS_MISMATCH');
+        if (/reference mismatch/i.test(aErr.message))    return conflict(aErr.message, 'REFERENCE_MISMATCH');
+        if (/process_type mismatch/i.test(aErr.message)) return conflict(aErr.message, 'PROCESS_MISMATCH');
+
+        // Sobrecupo: re-componer el mensaje en español con order_code.
+        const m = /Total allocated kg \(([\d.]+)\) exceeds order kg_green_accepted \(([\d.]+)\) for order ([a-f0-9-]+)/i
+          .exec(aErr.message);
+        if (m) {
+          const totalAfter = Number(m[1]);
+          const accepted   = Number(m[2]);
+          const orderId    = m[3];
+          const overflow   = Math.round((totalAfter - accepted) * 100) / 100;
+          const { data: o } = await sb
+            .from('demand_orders').select('order_code').eq('id', orderId).maybeSingle();
+          const code = (o && o.order_code) || orderId.slice(0, 8);
+          const already = Math.round((totalAfter - rows.reduce((s, r) => s + Number(r.kg_green_allocated || 0), 0)) * 100) / 100;
+          return conflict(
+            `Pedido ${code} solo acepta ${accepted} kg verde y ya tiene ${already} asignados de otros lotes. ` +
+            `La asignación que intentas excede en ${overflow} kg.`,
+            'OVER_ALLOCATED',
+          );
+        }
         if (/exceeds order kg_green_accepted/i.test(aErr.message))
           return conflict(aErr.message, 'OVER_ALLOCATED');
         return serverErr('Assignment insert failed', aErr.message);
