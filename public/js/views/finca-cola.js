@@ -55,10 +55,15 @@ export async function fincaColaView() {
   // fue cubierto en parte por un lote entregado aparece como
   // "pendiente" la diferencia, induciendo a sobre-asignar.
   const allocByOrder = new Map();
+  const infusionsByOrder = new Map();   // order_id → Set<infusion_name>
   for (const lot of allLots) {
     for (const a of lot.assignments || []) {
       allocByOrder.set(a.demand_order_id,
         (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
+      if (lot.infusion_name) {
+        if (!infusionsByOrder.has(a.demand_order_id)) infusionsByOrder.set(a.demand_order_id, new Set());
+        infusionsByOrder.get(a.demand_order_id).add(lot.infusion_name);
+      }
     }
   }
 
@@ -70,7 +75,8 @@ export async function fincaColaView() {
       const pending   = Math.max(0, accepted - allocated);
       const wkey = o.iso_week_key || null;
       const weekBucket = wkey ? weeklyByKey.get(wkey) : null;
-      return { ...o, allocated_kg: allocated, pending_kg: pending, week_bucket: weekBucket };
+      const infNames = [...(infusionsByOrder.get(o.id) || [])];
+      return { ...o, allocated_kg: allocated, pending_kg: pending, week_bucket: weekBucket, infusion_names: infNames };
     })
     .sort((a, b) => (a.latest_drying_start_date || '').localeCompare(b.latest_drying_start_date || ''));
 
@@ -93,6 +99,16 @@ export async function fincaColaView() {
     { key: 'process_type', label: 'Proceso', multi: true,
       options: ['Natural', 'Honey', 'Lavado'],
       getter: (o) => o.process_type || '' },
+    { key: 'infusion', label: 'Infusión', multi: true,
+      options: [...new Set(allLots.map((l) => l.infusion_name).filter(Boolean))].sort(),
+      // Match: el pedido tiene al menos un lote con infusion seleccionada.
+      // Como nuestro listView filter es "getter(o) === value" o "includes", aqui
+      // devolvemos un array stringificado; el passesSheet de cola hace check
+      // custom abajo.
+      getter: (o) => {
+        const set = infusionsByOrder.get(o.id);
+        return set ? [...set].join('|') : '';
+      } },
   ];
 
   const filterRow = el('div', { class: 'flex items-center gap-2 flex-wrap mb-4' });
@@ -104,7 +120,12 @@ export async function fincaColaView() {
     for (const f of sheetFilters) {
       const v = sheetValues[f.key];
       if (v == null || v.length === 0) continue;
-      if (!v.includes(f.getter(o))) return false;
+      if (f.key === 'infusion') {
+        const orderInfs = infusionsByOrder.get(o.id) || new Set();
+        if (!v.some((sel) => orderInfs.has(sel))) return false;
+      } else {
+        if (!v.includes(f.getter(o))) return false;
+      }
     }
     return true;
   }
@@ -226,6 +247,7 @@ function queueTable(orders, today) {
       el('th', {}, ['Referencia']),
       el('th', {}, ['Cliente']),
       el('th', {}, ['Status']),
+      el('th', {}, ['Infusión']),
       el('th', { class: 'text-right' }, ['Aceptado']),
       el('th', { class: 'text-right' }, ['Pendiente']),
       el('th', {}, ['Drying-start']),
@@ -244,6 +266,9 @@ function queueTable(orders, today) {
         cell('Referencia', '', o.reference_name || '—'),
         cell('Cliente', '', o.client_name || '—'),
         cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
+        cell('Infusión', 'text-[11px]', (o.infusion_names || []).length
+          ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: o.infusion_names.join(', ') })
+          : '—'),
         cell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted || 0)),
         cell('Pendiente', `text-right font-mono ${o.pending_kg > 0 ? 'text-warn font-bold' : 'text-ink-300'}`,
           fmtKg(o.pending_kg || 0)),
@@ -349,6 +374,11 @@ function queueRow(o, today, earliest, latest) {
       el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
         el('span', { class: 'ctrm-code', text: o.order_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
+        ...(o.infusion_names || []).map((n) => el('span', {
+          class: 'ctrm-pill',
+          style: 'background:#fbe6c2;color:#8a5100;',
+          text: n,
+        })),
         el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
         isOverdue ? el('span', { class: 'ctrm-pill urgency-red', text: 'Drying vencido' }) : null,
         o.week_bucket && o.week_bucket.is_overloaded

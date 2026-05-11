@@ -73,6 +73,20 @@ export async function fincaMonitoreoView() {
     .filter((l) => l.over_days != null && l.over_days > DRYING_GRACE_DAYS)
     .sort((a, b) => b.over_days - a.over_days);
 
+  // ── Infusión map (order_id → Set<infusion_name>) ─────────────────
+  const infusionsByOrder = new Map();
+  for (const lot of lots) {
+    if (!lot.infusion_name) continue;
+    for (const a of lot.assignments || []) {
+      if (!infusionsByOrder.has(a.demand_order_id)) infusionsByOrder.set(a.demand_order_id, new Set());
+      infusionsByOrder.get(a.demand_order_id).add(lot.infusion_name);
+    }
+  }
+  for (const o of ordersSinLote) {
+    o.infusion_names = [...(infusionsByOrder.get(o.id) || [])];
+  }
+  const infusionOptions = [...new Set(lots.map((l) => l.infusion_name).filter(Boolean))].sort();
+
   // ── 4. Pipeline (count + kg verde por etapa) ─────────────────────
   const pipeline = {};
   for (const stage of STAGE_ORDER) pipeline[stage] = { count: 0, kg: 0 };
@@ -93,21 +107,30 @@ export async function fincaMonitoreoView() {
     { key: 'process_type', label: 'Proceso', multi: true,
       options: ['Natural', 'Honey', 'Lavado'],
       getter: (o) => o.process_type || '' },
+    { key: 'infusion', label: 'Infusión', multi: true,
+      options: infusionOptions,
+      getter: (o) => '' /* matching is custom — see passesOrder/passesLot */ },
   ];
 
   function passesOrder(o) {
     for (const f of sheetFilters) {
       const v = sheetValues[f.key];
       if (!v || v.length === 0) continue;
+      if (f.key === 'infusion') {
+        const set = infusionsByOrder.get(o.id) || new Set();
+        if (!v.some((name) => set.has(name))) return false;
+        continue;
+      }
       if (!v.includes(f.getter(o))) return false;
     }
     return true;
   }
   function passesLot(l) {
-    // Lotes no tienen client_name; solo aplica process_type.
-    const v = sheetValues.process_type;
-    if (!v || v.length === 0) return true;
-    return v.includes(l.process_type);
+    const proc = sheetValues.process_type;
+    if (proc && proc.length > 0 && !proc.includes(l.process_type)) return false;
+    const inf  = sheetValues.infusion;
+    if (inf && inf.length > 0 && !inf.includes(l.infusion_name)) return false;
+    return true;
   }
 
   // ── KPI row + secciones — todo en un wrapper que se redibuja ──────
@@ -229,6 +252,8 @@ function orderSinLoteRow(o) {
         el('span', { class: 'ctrm-code', text: o.order_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
         el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
+        ...(o.infusion_names || []).map((n) =>
+          el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: n })),
       ]),
       el('button', {
         class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
@@ -252,6 +277,9 @@ function fermentationRow(l) {
         el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: l.reference_name || '—' }),
         el('span', { class: 'ctrm-pill urgency-red', text: `${l.days_in_fermentation}d en fermentacion` }),
+        l.infusion_name
+          ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: `${l.infusion_name} ${l.infusion_pct}%` })
+          : null,
       ]),
       el('button', {
         class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
@@ -274,6 +302,9 @@ function dryingRow(l) {
         el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: l.reference_name || '—' }),
         el('span', { class: 'ctrm-pill urgency-red', text: `+${l.over_days}d sobre esperado` }),
+        l.infusion_name
+          ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: `${l.infusion_name} ${l.infusion_pct}%` })
+          : null,
       ]),
       el('button', {
         class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
@@ -365,7 +396,7 @@ function ordersSinLoteTable(orders) {
     [
       { label: 'Pedido' }, { label: 'Referencia' }, { label: 'Cliente' },
       { label: 'Pendiente', cls: 'text-right' }, { label: 'Aceptado', cls: 'text-right' },
-      { label: 'Entrega' }, { label: 'Proceso' },
+      { label: 'Entrega' }, { label: 'Proceso' }, { label: 'Infusión' },
     ],
     orders.map((o) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
@@ -378,6 +409,7 @@ function ordersSinLoteTable(orders) {
       tcell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted)),
       tcell('Entrega', 'font-mono text-[11px]', fmtDate(o.max_delivery_date)),
       tcell('Proceso', 'text-[11px]', o.process_type),
+      tcell('Infusión', 'text-[11px]', (o.infusion_names || []).join(', ') || '—'),
     ])),
   );
 }
@@ -388,7 +420,7 @@ function fermentationTable(lots) {
       { label: 'Bache' }, { label: 'Referencia' },
       { label: 'Días', cls: 'text-right' }, { label: 'Inicio' },
       { label: 'Cereza', cls: 'text-right' }, { label: 'Verde esp.', cls: 'text-right' },
-      { label: 'Proceso' },
+      { label: 'Proceso' }, { label: 'Infusión' },
     ],
     lots.map((l) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
@@ -401,6 +433,7 @@ function fermentationTable(lots) {
       tcell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
       tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
       tcell('Proceso', 'text-[11px]', l.process_type),
+      tcell('Infusión', 'text-[11px]', l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—'),
     ])),
   );
 }
@@ -411,7 +444,7 @@ function dryingTable(lots) {
       { label: 'Bache' }, { label: 'Referencia' },
       { label: 'Días drying', cls: 'text-right' }, { label: 'Esperado', cls: 'text-right' },
       { label: 'Inicio' }, { label: 'Parciales', cls: 'text-right' },
-      { label: 'Proceso' },
+      { label: 'Proceso' }, { label: 'Infusión' },
     ],
     lots.map((l) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
@@ -425,6 +458,7 @@ function dryingTable(lots) {
       tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.drying_start_date)),
       tcell('Parciales', 'text-right font-mono', `${(l.partials || []).length}/6`),
       tcell('Proceso', 'text-[11px]', l.process_type),
+      tcell('Infusión', 'text-[11px]', l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—'),
     ])),
   );
 }

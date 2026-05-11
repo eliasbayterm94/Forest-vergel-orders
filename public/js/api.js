@@ -56,6 +56,8 @@ export const api = {
 
   varieties:    () => request('GET',  '/api/varieties-list'),
   varietyAdd:   (name) => request('POST', '/api/varieties-create', { body: { name } }),
+  infusions:    () => request('GET',  '/api/infusions-list'),
+  infusionAdd:  (name) => request('POST', '/api/infusions-create', { body: { name } }),
 
   references:    () => request('GET',  '/api/references-list'),
   referenceSave: (payload) => request('POST', '/api/references-create', { body: payload }),

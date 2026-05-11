@@ -82,6 +82,19 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const kg_green_expected = inputToGreen(kg_input_amount, processing_stage);
 
+  // Infusion (opcional): si viene infusion_id, infusion_pct debe ser > 0
+  // y <= 100.
+  let infusion_id = body.infusion_id || null;
+  let infusion_pct = body.infusion_pct == null ? null : Number(body.infusion_pct);
+  if (infusion_id || infusion_pct != null) {
+    if (!infusion_id) errors.push('infusion_pct sin infusion_id');
+    if (infusion_pct == null) errors.push('infusion_id sin infusion_pct');
+    if (infusion_pct != null && (!Number.isFinite(infusion_pct) || infusion_pct <= 0 || infusion_pct > 100)) {
+      errors.push('infusion_pct debe estar en (0, 100]');
+    }
+  }
+  if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
+
   // Map the kg into the appropriate column based on the stage.
   const stageInsert = {
     kg_cherry_input:     processing_stage === 'cereza'     ? kg_input_amount : null,
@@ -100,6 +113,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       fermentation_hours,
       start_date,
       notes,
+      infusion_id,
+      infusion_pct,
       created_by: session.role,
     }).select().single();
   if (insErr) {

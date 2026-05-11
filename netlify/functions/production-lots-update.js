@@ -17,6 +17,7 @@ const ALLOWED = new Set([
   'bache_code',
   'fermentation_hours', 'drying_start_date', 'ready_date', 'delivered_date',
   'kg_dried_output', 'factor_rendimiento', 'kg_green_actual', 'notes',
+  'infusion_id', 'infusion_pct',
 ]);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
@@ -38,6 +39,24 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     update.bache_code = String(update.bache_code).trim();
     if (!update.bache_code) return badReq('bache_code cannot be empty', 'BACHE_CODE_REQUIRED');
     if (update.bache_code.length > 60) return badReq('bache_code too long (max 60)', 'BACHE_CODE_TOO_LONG');
+  }
+
+  // Infusion: ambos o ninguno (consistente con el CHECK de la BD)
+  const hasInfId  = Object.prototype.hasOwnProperty.call(update, 'infusion_id');
+  const hasInfPct = Object.prototype.hasOwnProperty.call(update, 'infusion_pct');
+  if (hasInfId || hasInfPct) {
+    const id  = update.infusion_id;
+    const pct = update.infusion_pct == null ? null : Number(update.infusion_pct);
+    const both = (id != null && id !== '') && (pct != null);
+    const none = (id == null || id === '') && (pct == null);
+    if (!both && !none) {
+      return badReq('infusion_id e infusion_pct deben actualizarse juntos', 'INFUSION_INCONSISTENT');
+    }
+    if (both && (!Number.isFinite(pct) || pct <= 0 || pct > 100)) {
+      return badReq('infusion_pct debe estar en (0, 100]', 'INFUSION_PCT_RANGE');
+    }
+    update.infusion_id  = none ? null : id;
+    update.infusion_pct = none ? null : pct;
   }
 
   const sb = getSupabase();

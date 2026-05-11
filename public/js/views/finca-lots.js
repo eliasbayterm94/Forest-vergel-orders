@@ -54,11 +54,13 @@ export async function fincaLotsView() {
   const refsResP = api.references();
   const varsResP = api.varieties();
   const lotsResP = api.lotsList({ active_only: 'true' });
+  const infResP  = api.infusions().catch(() => ({ infusions: [] }));
 
-  const [refsRes, varsRes, lotsRes] = await Promise.all([refsResP, varsResP, lotsResP]);
+  const [refsRes, varsRes, lotsRes, infRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP]);
   let lots = lotsRes.lots;
   const refs = refsRes.references;
   const allVarieties = varsRes.varieties;
+  let allInfusions = (infRes && infRes.infusions) || [];
 
   // Estado expand/collapse por lote. Por default colapsado en mobile,
   // expandido en desktop. El usuario puede alternar. matchMedia puede
@@ -81,6 +83,7 @@ export async function fincaLotsView() {
       viewModeKey: 'finca-lots',
       tableHeaders: [
         { label: 'Bache' }, { label: 'Referencia' }, { label: 'Status' }, { label: 'Proceso' },
+        { label: 'Infusión' },
         { label: 'Cereza',     cls: 'text-right' },
         { label: 'Verde esp.', cls: 'text-right' },
         { label: 'Verde real', cls: 'text-right' },
@@ -103,6 +106,9 @@ export async function fincaLotsView() {
         { key: 'status',          label: 'Estado',  options: LOT_STATUSES, optionLabels: LOT_STATUS_LABELS, getter: (l) => l.status },
         { key: 'process_type',    label: 'Proceso', options: ['Natural', 'Honey', 'Lavado'], getter: (l) => l.process_type },
         { key: 'processing_stage',label: 'Etapa',   options: ['cereza', 'despulpado', 'seco'], getter: (l) => l.processing_stage || '' },
+        { key: 'infusion_name',   label: 'Infusión', multi: true,
+          options: [...new Set(lots.map((l) => l.infusion_name).filter(Boolean))].sort(),
+          getter: (l) => l.infusion_name || '' },
       ],
       sorts: [
         { key: 'start_desc', label: 'Inicio: más reciente', getter: (l) => l.start_date,        dir: 'desc' },
@@ -153,6 +159,9 @@ export async function fincaLotsView() {
       tcell('Referencia', '', l.reference_name || '—'),
       tcell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
       tcell('Proceso', 'text-[11px]', l.process_type),
+      tcell('Infusión', 'text-[11px]', l.infusion_name
+        ? `${l.infusion_name} ${l.infusion_pct}%`
+        : '—'),
       tcell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
       tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
       tcell('Verde real', 'text-right font-mono', l.kg_green_actual != null ? fmtKg(l.kg_green_actual) : '—'),
@@ -197,6 +206,7 @@ export async function fincaLotsView() {
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
           el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
           stageLabel ? el('span', { class: 'ctrm-pill muted', text: stageLabel }) : null,
+          infusionPill(l),
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           next ? el('button', {
@@ -985,6 +995,62 @@ export async function fincaLotsView() {
         items: allVarieties,
       });
 
+      // Infusion: combobox opcional + input % que aparece solo cuando
+      // hay infusion elegida. La masa base para el calculo es el kg
+      // del stage de entrada (kgInput).
+      let chosenInfusion = null;
+      const infusionPctInput = el('input', {
+        type: 'number', min: '0.5', step: '0.5', max: '100',
+        placeholder: '% sobre el peso de entrada',
+        class: 'ctrm-input mono',
+      });
+      const infusionHint = el('p', { class: 'ctrm-hint mt-1' });
+      const refreshInfusionHint = () => {
+        const pct = Number(infusionPctInput.value || 0);
+        const base = Number(kgInput.value || 0);
+        if (!chosenInfusion) {
+          infusionHint.textContent = 'Opcional. Si se llena, también pide el % sobre el peso de entrada.';
+        } else if (pct > 0 && base > 0) {
+          const insumo = Math.round((base * pct / 100) * 100) / 100;
+          infusionHint.textContent = `${chosenInfusion.name} ${pct}% sobre ${fmtKg(base)} → ${fmtKg(insumo)} de insumo`;
+        } else {
+          infusionHint.textContent = `${chosenInfusion.name}: ingresa el % para ver la cantidad de insumo.`;
+        }
+      };
+      infusionPctInput.addEventListener('input', refreshInfusionHint);
+      const infusionWrap = el('div', { hidden: 'true' }, [
+        el('label', { class: 'ctrm-label', text: '% sobre el peso de entrada' }),
+        infusionPctInput,
+        infusionHint,
+      ]);
+      const infusionCombo = createCombobox({
+        placeholder: 'Buscar infusión... (opcional)',
+        items: allInfusions,
+        onChange: (item) => {
+          chosenInfusion = item || null;
+          if (chosenInfusion) infusionWrap.removeAttribute('hidden');
+          else {
+            infusionWrap.setAttribute('hidden', 'true');
+            infusionPctInput.value = '';
+          }
+          refreshInfusionHint();
+        },
+        onCreate: async (name) => {
+          try {
+            const r = await api.infusionAdd(name.trim());
+            allInfusions = [...allInfusions, r.infusion]
+              .sort((a, b) => a.name.localeCompare(b.name));
+            infusionCombo.setItems(allInfusions);
+            toast(`Infusión "${r.infusion.name}" lista`, 'success');
+            return r.infusion;
+          } catch (e) { toast(e.message, 'error'); return null; }
+        },
+        createLabel: '+ Crear infusión',
+      });
+      refreshInfusionHint();
+      // Si cambia kgInput, recalcular el hint
+      kgInput.addEventListener('input', refreshInfusionHint);
+
       const notesInput = el('textarea', {
         rows: '2',
         class: 'ctrm-textarea',
@@ -1093,6 +1159,11 @@ export async function fincaLotsView() {
         labelled('Fecha de inicio', startInput),
         labelled('Horas de fermentación', fermInput),
         labelled('Variedades', vCombo.el),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Infusión (opcional)' }),
+          infusionCombo.el,
+        ]),
+        infusionWrap,
         labelled('Notas', notesInput),
 
         // Optional pre-assignment
@@ -1130,6 +1201,13 @@ export async function fincaLotsView() {
                 return;
               }
 
+              // Validacion infusion: si hay infusion, debe haber pct > 0
+              const infusionPct = chosenInfusion ? Number(infusionPctInput.value) : null;
+              if (chosenInfusion && (!Number.isFinite(infusionPct) || infusionPct <= 0 || infusionPct > 100)) {
+                toast('Infusión: indica un % entre 0 y 100', 'warning');
+                return;
+              }
+
               try {
                 const r = await api.lotCreate({
                   bache_code: bacheCode,
@@ -1141,6 +1219,8 @@ export async function fincaLotsView() {
                   fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
                   variety_ids: vCombo.getValues().map((v) => v.id),
                   notes: notesInput.value || null,
+                  infusion_id: chosenInfusion ? chosenInfusion.id : null,
+                  infusion_pct: chosenInfusion ? infusionPct : null,
                   initial_assignments,
                 });
                 const assignedCount = (r.assignments || []).length;
@@ -1220,6 +1300,25 @@ export async function fincaLotsView() {
 }
 
 // ───────────────────── helpers ──────────────────────
+// Pill de infusion para mostrar en cards/tablas. Tooltip incluye la
+// cantidad estimada de insumo segun el peso del stage de entrada.
+function infusionPill(lot) {
+  if (!lot.infusion_id || !lot.infusion_pct) return null;
+  const name = lot.infusion_name || 'Infusión';
+  const pct  = Number(lot.infusion_pct);
+  const baseKg = Number(lot.kg_cherry_input ?? lot.kg_despulpado_input ?? lot.kg_dried_output ?? 0);
+  const insumo = baseKg > 0 ? Math.round(baseKg * pct / 100 * 100) / 100 : 0;
+  const tooltip = baseKg > 0
+    ? `${name} ${pct}% sobre ${fmtKg(baseKg)} → ${fmtKg(insumo)} de insumo`
+    : `${name} ${pct}%`;
+  return el('span', {
+    class: 'ctrm-pill',
+    style: 'background:#fbe6c2;color:#8a5100;',
+    title: tooltip,
+    text: `${name} ${pct}%`,
+  });
+}
+
 function stageLabelOf(lot) {
   if (lot.processing_stage === 'cereza')     return 'Inicio: cereza';
   if (lot.processing_stage === 'despulpado') return 'Inicio: despulpado';

@@ -24,7 +24,9 @@ exports.handler = requireAuth(async (event) => {
     status, fermentation_hours,
     start_date, drying_start_date, ready_date, delivered_date,
     notes, created_by, created_at, updated_at,
+    infusion_id, infusion_pct,
     coffee_references ( id, name ),
+    infusions ( id, name ),
     production_lot_varieties ( coffee_varieties ( id, name ) ),
     lot_partials (
       id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield,
@@ -53,6 +55,7 @@ exports.handler = requireAuth(async (event) => {
   const lots = (data || []).map((l) => ({
     ...l,
     reference_name: l.coffee_references && l.coffee_references.name,
+    infusion_name:  l.infusions && l.infusions.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     partials: (l.lot_partials || [])
       .map((p) => {
@@ -81,6 +84,7 @@ exports.handler = requireAuth(async (event) => {
       order: a.demand_orders,
     })),
     coffee_references: undefined,
+    infusions: undefined,
     production_lot_varieties: undefined,
     lot_partials: undefined,
     lot_order_assignments: undefined,
