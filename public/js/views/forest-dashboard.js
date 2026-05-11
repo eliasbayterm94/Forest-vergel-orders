@@ -837,12 +837,18 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       ? fmtKg(saldo)
       : saldo < -0.001 ? `+${fmtKg(-saldo)}` : 'Cerrado';
     const isExp = expandedSet.has(o.id);
+    const lotsCount = ((rollupMap.get(o.id) || {}).lots || []).length;
+    const shipsCount = (shipmentsMap.get(o.id) || []).length;
+
+    const actionBtn = el('button', {
+      type: 'button',
+      class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+      onClick: (e) => { e.stopPropagation(); onToggle(o.id); },
+    }, [isExp ? '▾ Ocultar' : `▸ Ver lotes (${lotsCount + shipsCount})`]);
 
     tbody.append(el('tr', {
-      class: `cursor-pointer hover:bg-cream ${isClosed ? 'text-ink-500' : ''}`,
-      onClick: () => onToggle(o.id),
+      class: `${isClosed ? 'text-ink-500' : ''}`,
     }, [
-      cell('', 'text-[10px] text-ink-300 w-4', isExp ? '▾' : '▸'),
       cell('Código', 'font-mono text-navy font-semibold', o.order_code),
       cell('Referencia', '', o.reference_name || '—'),
       cell('Cliente', '', o.client_name || '—'),
@@ -855,6 +861,7 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       cell('Saldo', saldoCls, saldoLabel),
       cell('Entrega', 'font-mono text-[11px]',
         o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
+      cell('', 'text-right', actionBtn),
     ]));
 
     if (isExp) {
@@ -869,7 +876,6 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
 
   const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
     el('thead', {}, [el('tr', {}, [
-      el('th', { class: 'w-4' }, ['']),
       el('th', {}, ['Código']),
       el('th', {}, ['Referencia']),
       el('th', {}, ['Cliente']),
@@ -880,6 +886,7 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
       el('th', { class: 'text-right' }, ['Despachado']),
       el('th', { class: 'text-right' }, ['Saldo']),
       el('th', {}, ['Entrega']),
+      el('th', { class: 'text-right' }, ['Lotes']),
     ])]),
     tbody,
   ]);
@@ -890,114 +897,137 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
 function seguimientoCard(r, rollupMap, shipmentsMap, expandedSet, onToggle) {
   const { o, aceptado, enProceso, listo, despachado, saldo, isClosed } = r;
   const isExp = expandedSet.has(o.id);
+  const lotsCount = ((rollupMap.get(o.id) || {}).lots || []).length;
+  const shipsCount = (shipmentsMap.get(o.id) || []).length;
   const saldoChip = saldo > 0.001
     ? el('span', { class: 'ctrm-pill warn', text: `Saldo ${fmtKg(saldo)}` })
     : saldo < -0.001
       ? el('span', { class: 'ctrm-pill roll', text: `Excedente +${fmtKg(-saldo)}` })
       : el('span', { class: 'ctrm-pill ok', text: 'Cerrado' });
 
-  return el('div', { class: `ctrm-card ctrm-card-pad ${isClosed ? 'opacity-70' : ''}` }, [
-    el('div', {
-      class: 'flex flex-wrap items-center justify-between gap-2 mb-2 cursor-pointer',
+  return el('div', { class: `ctrm-card ${isClosed ? 'opacity-70' : ''}` }, [
+    el('div', { class: 'ctrm-card-pad' }, [
+      el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+        el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+          el('span', { class: 'ctrm-code', text: o.order_code }),
+          el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
+          el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
+        ]),
+        saldoChip,
+      ]),
+      el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono mb-1' }, [
+        kpiBlock('Aceptado',  fmtKg(aceptado)),
+        kpiBlock('En proceso', enProceso > 0 ? fmtKg(enProceso) : '—'),
+        kpiBlock('Listo',      listo > 0 ? fmtKg(listo) : '—'),
+        kpiBlock('Despachado', despachado > 0 ? fmtKg(despachado) : '—', '#3a6f4a'),
+      ]),
+      o.client_name || (o.regions && o.regions.length)
+        ? el('div', { class: 'text-[11px] text-ink-500 mt-1' }, [
+            o.client_name ? `Cliente: ${o.client_name}` : null,
+            o.regions && o.regions.length ? ` · Regiones: ${o.regions.join(', ')}` : null,
+            o.max_delivery_date ? ` · Entrega: ${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})` : null,
+          ])
+        : null,
+    ]),
+    // Footer expand button (full-width)
+    el('button', {
+      type: 'button',
+      class: 'w-full px-4 py-2.5 border-t border-sand bg-cream hover:bg-sand text-[12px] font-display font-semibold text-navy uppercase tracking-eyebrow flex items-center justify-center gap-2',
       onClick: () => onToggle(o.id),
     }, [
-      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
-        el('span', { class: 'text-ink-300 text-[10px]', text: isExp ? '▾' : '▸' }),
-        el('span', { class: 'ctrm-code', text: o.order_code }),
-        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
-        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
-      ]),
-      saldoChip,
+      el('span', { text: isExp ? '▾' : '▸' }),
+      el('span', { text: isExp ? 'Ocultar lotes' : `Ver lotes asignados (${lotsCount})${shipsCount > 0 ? ` + ${shipsCount} despacho${shipsCount === 1 ? '' : 's'}` : ''}` }),
     ]),
-    el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono mb-1' }, [
-      kpiBlock('Aceptado',  fmtKg(aceptado)),
-      kpiBlock('En proceso', enProceso > 0 ? fmtKg(enProceso) : '—'),
-      kpiBlock('Listo',      listo > 0 ? fmtKg(listo) : '—'),
-      kpiBlock('Despachado', despachado > 0 ? fmtKg(despachado) : '—', '#3a6f4a'),
-    ]),
-    o.client_name || (o.regions && o.regions.length)
-      ? el('div', { class: 'text-[11px] text-ink-500 mt-1' }, [
-          o.client_name ? `Cliente: ${o.client_name}` : null,
-          o.regions && o.regions.length ? ` · Regiones: ${o.regions.join(', ')}` : null,
-          o.max_delivery_date ? ` · Entrega: ${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})` : null,
-        ])
-      : null,
-    isExp ? el('div', { class: 'mt-3 pt-3 border-t border-sand' }, [
+    isExp ? el('div', { class: 'p-3 border-t border-sand bg-cream' }, [
       renderLotsBreakdown(o, rollupMap, shipmentsMap),
     ]) : null,
   ]);
 }
 
-// Desglose de lotes asignados a un pedido + estado individual de cada
-// uno. Asignando → En proceso → Listo → Despachado.
+// Desglose de lotes asignados a un pedido + despachos. Renderiza
+// dos tablas (Lotes / Despachos) por filas con bullet de color por
+// status. Más comprensivo que chips para auditar el flujo del pedido.
+const STAGE_LABELS = {
+  InFermentation: 'Fermentación',
+  Drying: 'Drying',
+  Ready: 'Listo',
+  Delivered: 'Despachado',
+};
+const STAGE_COLORS = {
+  InFermentation: '#7e9ec1',
+  Drying:         '#ddae3e',
+  Ready:          '#5d8b66',
+  Delivered:      '#3a6f4a',
+};
+const STAGE_ORDER = { InFermentation: 1, Drying: 2, Ready: 3, Delivered: 4 };
+
 function renderLotsBreakdown(order, rollupMap, shipmentsMap) {
   const rollup = rollupMap.get(order.id);
   const lots = (rollup && rollup.lots) || [];
   const ships = shipmentsMap.get(order.id) || [];
 
-  // Mapeo lot_code → kg shipped para esa orden (solo si el lote fue
-  // entregado y se identifica por code; aproximacion suficiente para
-  // la subseccion informativa).
-  const shippedByLot = new Map();
-  for (const s of ships) {
-    // shipments don't tie to lot_code at this level; we just show
-    // los despachos como una linea extra.
-  }
-
   if (lots.length === 0 && ships.length === 0) {
     return el('p', { class: 'text-[11px] text-ink-500 italic', text: 'Este pedido aún no tiene lotes asignados.' });
   }
 
-  // Ordenar lotes por status para que el flujo se vea Asignando → En
-  // proceso → Listo → Despachado.
-  const ORDER = { InFermentation: 1, Drying: 2, Ready: 3, Delivered: 4 };
   const sortedLots = lots.slice().sort((a, b) =>
-    (ORDER[a.status] || 99) - (ORDER[b.status] || 99));
+    (STAGE_ORDER[a.status] || 99) - (STAGE_ORDER[b.status] || 99));
 
-  return el('div', { class: 'space-y-2' }, [
-    el('p', { class: 'eyebrow text-[10px] mb-1', text: `Lotes asignados (${lots.length})` }),
-    el('div', { class: 'flex flex-wrap gap-2' }, sortedLots.map((l) => lotStageChip(l))),
-    ships.length > 0
-      ? el('div', { class: 'mt-2' }, [
-          el('p', { class: 'eyebrow text-[10px] mb-1', text: `Despachado (${ships.length})` }),
-          el('div', { class: 'flex flex-wrap gap-2' },
-            ships.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-              .map((s) => el('span', {
-                class: 'ctrm-code text-[10px]',
-                title: `${s.code} · ${fmtDate(s.date)} · ${fmtKg(s.kg)}`,
-                style: 'border-color:#3a6f4a;color:#3a6f4a;',
-              }, [`${s.code} · ${fmtDate(s.date)} · ${fmtKg(s.kg)}`])),
-          ),
-        ])
-      : null,
+  return el('div', { class: 'space-y-3' }, [
+    lots.length > 0 ? el('div', {}, [
+      el('p', { class: 'eyebrow text-[10px] mb-1', text: `Lotes asignados (${lots.length})` }),
+      lotsBreakdownTable(sortedLots),
+    ]) : null,
+    ships.length > 0 ? el('div', {}, [
+      el('p', { class: 'eyebrow text-[10px] mb-1', text: `Despachos (${ships.length})` }),
+      shipsBreakdownTable(ships),
+    ]) : null,
   ]);
 }
 
-function lotStageChip(l) {
-  const STAGE_LABELS = {
-    InFermentation: 'Fermentación',
-    Drying: 'Drying',
-    Ready: 'Listo',
-    Delivered: 'Despachado',
-  };
-  const STAGE_COLORS = {
-    InFermentation: '#7e9ec1',
-    Drying:         '#ddae3e',
-    Ready:          '#5d8b66',
-    Delivered:      '#3a6f4a',
-  };
-  const color = STAGE_COLORS[l.status] || '#9aa3ae';
-  return el('div', {
-    class: 'inline-flex items-center gap-2 px-2 py-1 rounded-md border bg-white',
-    style: `border-color:${color};`,
-  }, [
-    el('span', {
-      class: 'inline-block w-1.5 h-1.5 rounded-full',
-      style: `background:${color};`,
-    }),
-    el('span', { class: 'font-mono font-semibold text-[11px]', style: `color:${color};`, text: l.code }),
-    el('span', { class: 'text-[10px] text-ink-500', text: STAGE_LABELS[l.status] || l.status }),
-    el('span', { class: 'text-[11px] font-mono text-ink-700', text: fmtKg(l.kg) }),
+function lotsBreakdownTable(lots) {
+  return el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
+    el('table', { class: 'w-full text-[11px]' }, [
+      el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+        el('th', { class: 'text-left px-3 py-1.5' }, ['Bache']),
+        el('th', { class: 'text-left px-3 py-1.5' }, ['Status']),
+        el('th', { class: 'text-right px-3 py-1.5' }, ['kg verde']),
+      ])]),
+      el('tbody', {}, lots.map((l) => {
+        const color = STAGE_COLORS[l.status] || '#9aa3ae';
+        return el('tr', { class: 'border-t border-sand' }, [
+          el('td', { class: 'px-3 py-1.5 font-mono font-semibold' }, [
+            el('span', {
+              class: 'inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle',
+              style: `background:${color};`,
+            }),
+            l.code,
+          ]),
+          el('td', { class: 'px-3 py-1.5', style: `color:${color};font-weight:600;`,
+            text: STAGE_LABELS[l.status] || l.status }),
+          el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: fmtKg(l.kg) }),
+        ]);
+      })),
+    ]),
+  ]);
+}
+
+function shipsBreakdownTable(ships) {
+  const sorted = ships.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
+    el('table', { class: 'w-full text-[11px]' }, [
+      el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+        el('th', { class: 'text-left px-3 py-1.5' }, ['Despacho']),
+        el('th', { class: 'text-left px-3 py-1.5' }, ['Fecha']),
+        el('th', { class: 'text-right px-3 py-1.5' }, ['kg verde']),
+      ])]),
+      el('tbody', {}, sorted.map((s) => el('tr', { class: 'border-t border-sand' }, [
+        el('td', { class: 'px-3 py-1.5 font-mono font-semibold', style: 'color:#3a6f4a;',
+          text: s.code }),
+        el('td', { class: 'px-3 py-1.5 font-mono', text: fmtDate(s.date) }),
+        el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: fmtKg(s.kg) }),
+      ]))),
+    ]),
   ]);
 }
 

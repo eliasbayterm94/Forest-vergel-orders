@@ -1,18 +1,7 @@
 // Tab bar visual estilo "panel-merged": el tab activo comparte fondo
-// con el contenedor del contenido. Reemplaza los chip-button selectors
-// donde haya secciones de navegacion dentro de una vista (forest
-// dashboard, etc).
-//
-// API:
-//   const tabs = createTabBar({
-//     tabs: [
-//       { key: 'a', label: 'Tab A', count?: 3 },
-//       { key: 'b', label: 'Tab B' },
-//     ],
-//     activeKey: 'a',
-//     onChange: (key) => {},
-//   });
-//   container.append(tabs.el, tabs.panel);
+// con el contenedor del contenido. Sticky vertical mientras se scrollea
+// el contenido; scroll horizontal con gradientes laterales que indican
+// cuando hay tabs ocultos, y auto-scroll al tab activo.
 
 import { el } from './el.js';
 
@@ -21,7 +10,35 @@ export function createTabBar({ tabs = [], activeKey = null, onChange = () => {} 
 
   const buttons = [];
   const bar = el('div', { class: 'tabbar', role: 'tablist' });
+  const scroll = el('div', {
+    class: 'tabbar-scroll',
+    'data-overflow-left':  'false',
+    'data-overflow-right': 'false',
+  }, [bar]);
+  const wrap = el('div', { class: 'tabbar-wrap' }, [scroll]);
   const panel = el('div', { class: 'tabbar-panel', role: 'tabpanel' });
+
+  function refreshOverflow() {
+    const max = bar.scrollWidth - bar.clientWidth;
+    const x = bar.scrollLeft;
+    scroll.setAttribute('data-overflow-left',  x > 1 ? 'true' : 'false');
+    scroll.setAttribute('data-overflow-right', x < max - 1 ? 'true' : 'false');
+  }
+  bar.addEventListener('scroll', refreshOverflow, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(refreshOverflow).observe(bar);
+  }
+
+  function scrollActiveIntoView() {
+    const btn = buttons.find((b) => b.classList.contains('is-active'));
+    if (!btn) return;
+    const left = btn.offsetLeft;
+    const right = left + btn.offsetWidth;
+    const viewL = bar.scrollLeft;
+    const viewR = viewL + bar.clientWidth;
+    if (left < viewL + 24) bar.scrollLeft = Math.max(0, left - 24);
+    else if (right > viewR - 24) bar.scrollLeft = right - bar.clientWidth + 24;
+  }
 
   function renderTabs() {
     bar.innerHTML = '';
@@ -36,6 +53,7 @@ export function createTabBar({ tabs = [], activeKey = null, onChange = () => {} 
           if (active === t.key) return;
           active = t.key;
           renderTabs();
+          requestAnimationFrame(scrollActiveIntoView);
           onChange(active);
         },
       }, [
@@ -47,11 +65,13 @@ export function createTabBar({ tabs = [], activeKey = null, onChange = () => {} 
       buttons.push(btn);
       bar.append(btn);
     }
+    // Defer overflow + scroll-into-view until after layout
+    requestAnimationFrame(() => { refreshOverflow(); scrollActiveIntoView(); });
   }
   renderTabs();
 
   return {
-    el: bar,
+    el: wrap,
     panel,
     setContent(node) {
       panel.innerHTML = '';
