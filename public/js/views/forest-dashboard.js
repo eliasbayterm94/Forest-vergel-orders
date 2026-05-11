@@ -8,6 +8,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { navigate, currentQuery, updateHashQuery } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { createViewMode } from '../ui/view-mode.js';
+import { renderFilterButton } from '../ui/filters-sheet.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -76,6 +77,23 @@ export async function forestDashboardView() {
     }
   }
 
+  // Tracking por pedido: desglose explicito del ciclo de vida.
+  //   enProceso        — kg asignados en lotes InFermentation/Drying
+  //   readyOrDelivered — kg asignados en lotes Ready o Delivered (de aqui
+  //                      se descuenta lo despachado para obtener "listo")
+  //   despachado se calcula desde shipmentsByOrder.
+  const trackingByOrder = new Map();
+  for (const lot of allLots) {
+    for (const a of lot.assignments || []) {
+      const oid = a.demand_order_id;
+      const kg = Number(a.kg_green_allocated || 0);
+      if (!trackingByOrder.has(oid)) trackingByOrder.set(oid, { enProceso: 0, readyOrDelivered: 0 });
+      const t = trackingByOrder.get(oid);
+      if (lot.status === 'InFermentation' || lot.status === 'Drying') t.enProceso += kg;
+      else if (lot.status === 'Ready' || lot.status === 'Delivered') t.readyOrDelivered += kg;
+    }
+  }
+
   const buckets = {
     pending:    orders.filter((o) => o.status === 'Pending'),
     inFlight:   orders.filter((o) => ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status)),
@@ -107,10 +125,11 @@ export async function forestDashboardView() {
 
   // ── Selector de seccion (focus en una a la vez) ─────────────────
   const SECTIONS = [
-    { key: 'urgencias',  label: 'Urgencias',   count: urgencies.length,    kind: urgencies.length > 0 ? 'crit' : null },
-    { key: 'listos',     label: 'Lotes Listos',count: readyLots.length,    kind: readyLots.length > 0 ? 'ok' : null },
-    { key: 'inflight',   label: 'En curso',    count: buckets.inFlight.length, kind: null },
-    { key: 'pending',    label: 'Pendientes',  count: buckets.pending.length,  kind: buckets.pending.length > 0 ? 'warn' : null },
+    { key: 'urgencias',   label: 'Urgencias',   count: urgencies.length },
+    { key: 'listos',      label: 'Lotes Listos',count: readyLots.length },
+    { key: 'inflight',    label: 'En curso',    count: buckets.inFlight.length },
+    { key: 'pending',     label: 'Pendientes',  count: buckets.pending.length },
+    { key: 'seguimiento', label: 'Seguimiento', count: buckets.inFlight.length + buckets.pending.length },
   ];
   const initialSection = (currentQuery().get('section') && SECTIONS.find((s) => s.key === currentQuery().get('section')))
     ? currentQuery().get('section')
@@ -142,7 +161,98 @@ export async function forestDashboardView() {
         ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
         : renderList(buckets.pending, { withActions: true });
     }
+    if (activeSection === 'seguimiento') {
+      return renderSeguimiento();
+    }
     return null;
+  }
+
+  // ── Seguimiento section ──────────────────────────────────────────
+  let seguimientoFilters = {};
+  let showHistorical = false;
+  const clientOptions = [...new Set(orders.map((o) => o.client_name).filter(Boolean))].sort();
+  const regionOptions = [...new Set(orders.flatMap((o) => o.regions || []).filter(Boolean))].sort();
+  const refOptions    = [...new Set(orders.map((o) => o.reference_name).filter(Boolean))].sort();
+
+  const ACTIVE_STATUSES = ['Accepted', 'PartiallyAccepted', 'InProduction'];
+  const HISTORICAL_STATUSES = ['Completed', 'Cancelled', 'Rejected'];
+
+  const SEG_FILTERS = [
+    { key: 'client_name', label: 'Cliente',    multi: true,  options: clientOptions, getter: (o) => o.client_name || '' },
+    { key: 'region',      label: 'Región',     multi: true,  options: regionOptions, getter: (o) => (o.regions || []).join(',') }, // see below
+    { key: 'reference',   label: 'Referencia', multi: true,  options: refOptions,    getter: (o) => o.reference_name || '' },
+    { key: 'status',      label: 'Status',     multi: true,  options: ['Accepted','PartiallyAccepted','InProduction','Completed','Cancelled','Rejected'],
+      optionLabels: { Accepted:'Aceptado', PartiallyAccepted:'Aceptado parcial', InProduction:'En producción',
+                      Completed:'Completado', Cancelled:'Cancelado', Rejected:'Rechazado' },
+      getter: (o) => o.status },
+  ];
+
+  function passesSeg(o) {
+    for (const f of SEG_FILTERS) {
+      const v = seguimientoFilters[f.key];
+      if (!v || v.length === 0) continue;
+      if (f.key === 'region') {
+        // Coincide si alguna region del pedido esta seleccionada
+        if (!(o.regions || []).some((r) => v.includes(r))) return false;
+      } else {
+        if (!v.includes(f.getter(o))) return false;
+      }
+    }
+    return true;
+  }
+
+  function renderSeguimiento() {
+    const statusPool = showHistorical
+      ? [...ACTIVE_STATUSES, ...HISTORICAL_STATUSES]
+      : ACTIVE_STATUSES;
+    const rows = orders
+      .filter((o) => statusPool.includes(o.status))
+      .filter(passesSeg)
+      .map((o) => {
+        const t = trackingByOrder.get(o.id) || { enProceso: 0, readyOrDelivered: 0 };
+        const ships = shipmentsByOrder.get(o.id) || [];
+        const despachado = ships.reduce((s, x) => s + Number(x.kg || 0), 0);
+        const listo = Math.max(0, t.readyOrDelivered - despachado);
+        const aceptado = Number(o.kg_green_accepted || 0);
+        const saldo = aceptado - (t.enProceso + listo + despachado);
+        const isClosed = o.status === 'Completed' || o.status === 'Cancelled' || o.status === 'Rejected'
+          || (aceptado > 0 && despachado + 0.001 >= aceptado);
+        return { o, aceptado, enProceso: t.enProceso, listo, despachado, saldo, isClosed };
+      })
+      .sort((a, b) => {
+        // Activos primero por max_delivery_date asc, luego histórico
+        const aHist = HISTORICAL_STATUSES.includes(a.o.status);
+        const bHist = HISTORICAL_STATUSES.includes(b.o.status);
+        if (aHist !== bHist) return aHist ? 1 : -1;
+        return (a.o.max_delivery_date || '').localeCompare(b.o.max_delivery_date || '');
+      });
+
+    const fb = renderFilterButton({
+      filters: SEG_FILTERS,
+      values: seguimientoFilters,
+      onChange: (v) => { seguimientoFilters = v; redraw(); },
+    });
+    const histBtn = el('button', {
+      type: 'button',
+      class: showHistorical
+        ? 'ctrm-btn ctrm-btn-primary ctrm-btn-sm'
+        : 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+      onClick: () => { showHistorical = !showHistorical; redraw(); },
+    }, [showHistorical ? '✓ Histórico visible' : 'Mostrar histórico']);
+
+    return el('div', {}, [
+      el('div', { class: 'flex flex-wrap items-center gap-2 mb-3' }, [fb.el, histBtn]),
+      rows.length === 0
+        ? emptyStateCard({
+            title: 'Sin pedidos que mostrar',
+            description: showHistorical
+              ? 'Ningún pedido coincide con el filtro actual.'
+              : 'Cuando se acepten pedidos los verás aquí. Activa "Mostrar histórico" para ver pedidos cerrados.',
+          })
+        : (vm.mode() === 'table'
+            ? seguimientoTable(rows)
+            : el('div', { class: 'space-y-2' }, rows.map((r) => seguimientoCard(r)))),
+    ]);
   }
 
   function redraw() {
@@ -701,5 +811,105 @@ function labelled(label, child) {
   return el('div', {}, [
     el('label', { class: 'ctrm-label', text: label }),
     child,
+  ]);
+}
+
+// ─── Seguimiento: tabla y card ──────────────────────────────────────
+function seguimientoTable(rows) {
+  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+  const cell = (label, classes, content) => {
+    const td = el('td', { class: classes });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, [
+      el('th', {}, ['Código']),
+      el('th', {}, ['Referencia']),
+      el('th', {}, ['Cliente']),
+      el('th', {}, ['Status']),
+      el('th', { class: 'text-right' }, ['Aceptado']),
+      el('th', { class: 'text-right' }, ['En proceso']),
+      el('th', { class: 'text-right' }, ['Listo']),
+      el('th', { class: 'text-right' }, ['Despachado']),
+      el('th', { class: 'text-right' }, ['Saldo']),
+      el('th', {}, ['Entrega']),
+    ])]),
+    el('tbody', {}, rows.map((r) => {
+      const { o, aceptado, enProceso, listo, despachado, saldo, isClosed } = r;
+      const saldoCls = saldo > 0.001
+        ? 'text-right font-mono text-warn'
+        : saldo < -0.001
+          ? 'text-right font-mono text-roll'
+          : 'text-right font-mono text-ok';
+      const saldoLabel = saldo > 0.001
+        ? fmtKg(saldo)
+        : saldo < -0.001
+          ? `+${fmtKg(-saldo)}`   // excedente
+          : 'Cerrado';
+      return el('tr', {
+        class: isClosed ? 'text-ink-500' : '',
+      }, [
+        cell('Código', 'font-mono text-navy font-semibold', o.order_code),
+        cell('Referencia', '', o.reference_name || '—'),
+        cell('Cliente', '', o.client_name || '—'),
+        cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
+        cell('Aceptado',  'text-right font-mono', fmtKg(aceptado)),
+        cell('En proceso','text-right font-mono', enProceso > 0 ? fmtKg(enProceso) : '—'),
+        cell('Listo',     'text-right font-mono', listo > 0 ? fmtKg(listo) : '—'),
+        cell('Despachado','text-right font-mono',
+          despachado > 0 ? el('span', { style: 'color:#3a6f4a;font-weight:600;' }, [fmtKg(despachado)]) : '—'),
+        cell('Saldo', saldoCls, saldoLabel),
+        cell('Entrega', 'font-mono text-[11px]',
+          o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
+      ]);
+    })),
+  ]);
+  wrap.append(t);
+  return wrap;
+}
+
+function seguimientoCard(r) {
+  const { o, aceptado, enProceso, listo, despachado, saldo, isClosed } = r;
+  const saldoChip = saldo > 0.001
+    ? el('span', { class: 'ctrm-pill warn', text: `Saldo ${fmtKg(saldo)}` })
+    : saldo < -0.001
+      ? el('span', { class: 'ctrm-pill roll', text: `Excedente +${fmtKg(-saldo)}` })
+      : el('span', { class: 'ctrm-pill ok', text: 'Cerrado' });
+
+  return el('div', { class: `ctrm-card ctrm-card-pad ${isClosed ? 'opacity-70' : ''}` }, [
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
+        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
+      ]),
+      saldoChip,
+    ]),
+    el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono mb-1' }, [
+      kpiBlock('Aceptado',  fmtKg(aceptado)),
+      kpiBlock('En proceso', enProceso > 0 ? fmtKg(enProceso) : '—'),
+      kpiBlock('Listo',      listo > 0 ? fmtKg(listo) : '—'),
+      kpiBlock('Despachado', despachado > 0 ? fmtKg(despachado) : '—', '#3a6f4a'),
+    ]),
+    o.client_name || (o.regions && o.regions.length)
+      ? el('div', { class: 'text-[11px] text-ink-500 mt-1' }, [
+          o.client_name ? `Cliente: ${o.client_name}` : null,
+          o.regions && o.regions.length ? ` · Regiones: ${o.regions.join(', ')}` : null,
+          o.max_delivery_date ? ` · Entrega: ${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})` : null,
+        ])
+      : null,
+  ]);
+}
+
+function kpiBlock(label, value, color) {
+  return el('div', {
+    class: 'rounded-md border border-sand p-2',
+  }, [
+    el('p', { class: 'text-ink-300 uppercase tracking-loose text-[9px] mb-0.5', text: label }),
+    el('p', { class: 'font-display font-semibold text-navy text-[13px]',
+      style: color ? `color:${color};` : null, text: value }),
   ]);
 }
