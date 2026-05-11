@@ -73,6 +73,7 @@ export const api = {
 
   lotsList:        (query) => request('GET',  '/api/production-lots-list', { query }),
   lotCreate:       (payload) => request('POST', '/api/production-lots-create', { body: payload }),
+  lotCreateBulk:   (payload) => request('POST', '/api/production-lots-create-bulk', { body: payload }),
   lotUpdate:       (payload) => request('POST', '/api/production-lots-update', { body: payload }),
   lotUpdateStatus: (payload) => request('POST', '/api/production-lots-update-status', { body: payload }),
 

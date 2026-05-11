@@ -101,6 +101,7 @@ const VIEW_CASES = [
   { file: 'finca-dashboard.js',    fn: 'fincaDashboardView',   session: SESSIONS.finca },
   { file: 'finca-inbox.js',        fn: 'fincaInboxView',       session: SESSIONS.finca },
   { file: 'finca-lots.js',         fn: 'fincaLotsView',        session: SESSIONS.finca },
+  { file: 'finca-lots-bulk-form.js', fn: 'fincaLotsBulkFormView', session: SESSIONS.finca },
   { file: 'finca-despachos.js',    fn: 'fincaDespachosView',   session: SESSIONS.finca },
   { file: 'finca-monitoreo.js',    fn: 'fincaMonitoreoView',   session: SESSIONS.finca },
   { file: 'finca-cola.js',         fn: 'fincaColaView',        session: SESSIONS.finca },

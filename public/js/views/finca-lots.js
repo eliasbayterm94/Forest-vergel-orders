@@ -8,6 +8,7 @@ import { fmtKg, fmtDate, statusLabel, statusPillKind } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { emptyStateCard } from '../ui/empty.js';
+import { navigate } from '../router.js';
 
 const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
 const LOT_STATUS_LABELS = {
@@ -129,6 +130,11 @@ export async function fincaLotsView() {
   return chrome(el('div', {}, [
     pageTitle('Producción', 'Lotes activos en El Vergel'),
     el('div', { class: 'mb-4 flex justify-end gap-2' }, [
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
+        title: 'Crea varios baches a la vez en una tabla',
+        onClick: () => navigate('/finca/lots-bulk'),
+      }, ['+ Crear varios']),
       el('button', {
         class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
         onClick: () => createLot(),
