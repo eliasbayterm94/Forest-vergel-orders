@@ -93,6 +93,7 @@ const VIEW_CASES = [
   { file: 'login.js',              fn: 'loginView',            session: null },
   { file: 'forest-dashboard.js',   fn: 'forestDashboardView',  session: SESSIONS.forest },
   { file: 'forest-demand-form.js', fn: 'forestDemandFormView', session: SESSIONS.forest },
+  { file: 'forest-demand-bulk-form.js', fn: 'forestDemandBulkFormView', session: SESSIONS.forest },
   { file: 'forest-references.js',  fn: 'forestReferencesView', session: SESSIONS.forest },
   { file: 'forest-external-pos.js',fn: 'forestExternalPosView',session: SESSIONS.forest },
   { file: 'reports.js',            fn: 'reportsView',          session: SESSIONS.admin },

@@ -281,9 +281,15 @@ export async function forestDashboardView() {
       class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px]',
       onClick: () => navigate('/forest/demand'),
     }, ['+ Nuevo pedido']);
+    const ctaAgregarVarios = el('button', {
+      class: 'ctrm-btn ctrm-btn-soft uppercase tracking-eyebrow text-[11px]',
+      title: 'Crea varios pedidos a la vez en una tabla',
+      onClick: () => navigate('/forest/demand-bulk'),
+    }, ['+ Agregar varios']);
+    const ctaGroup = el('div', { class: 'flex flex-wrap gap-2' }, [ctaAgregarVarios, ctaNuevoPedido]);
 
     root.append(
-      pageTitle('Tablero Forest', `Hoy: ${today}`, ctaNuevoPedido),
+      pageTitle('Tablero Forest', `Hoy: ${today}`, ctaGroup),
       statRow([
         stat('Pendientes',  buckets.pending.length,  'Esperando finca'),
         stat('En curso',    buckets.inFlight.length, 'Aceptados / producción'),
