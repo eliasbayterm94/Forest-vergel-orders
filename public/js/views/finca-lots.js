@@ -508,7 +508,7 @@ export async function fincaLotsView() {
         const d = Number(driedInput.value || 0);
         const f = Number(factorInput.value || 0);
         if (d > 0 && f > 0) {
-          greenHint.textContent = `Verde estimado: ${fmtKg((d / f) * 70)}`;
+          greenHint.textContent = `Verde estimado: ${fmtKg(Math.round((d / f) * 70))}`;
         } else {
           greenHint.textContent = 'Verde = (peso seco ÷ factor) × 70';
         }
@@ -785,7 +785,7 @@ export async function fincaLotsView() {
         const seco = Number(driedInput.value || 0);
         const fac  = Number(factorInput.value || 0);
         if (seco > 0 && fac > 0) {
-          greenInput.value = (Math.round((seco / fac) * KG_PER_SACO * 100) / 100).toString();
+          greenInput.value = String(Math.round((seco / fac) * KG_PER_SACO));
         } else {
           greenInput.value = '';
         }

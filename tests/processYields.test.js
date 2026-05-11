@@ -110,14 +110,23 @@ test('KG_PER_SACO is 70', () => {
   assert.equal(KG_PER_SACO, 70);
 });
 
-test('factorYield: 1000 kg seco / factor 145 → 482.76 kg verde', () => {
-  // (1000 / 145) * 70 = 482.7586... → 482.76
-  assert.equal(factorYield(1000, 145), 482.76);
+test('factorYield: 1000 kg seco / factor 145 → 483 kg verde (entero)', () => {
+  // (1000 / 145) * 70 = 482.7586... → redondea half-up a 483
+  assert.equal(factorYield(1000, 145), 483);
 });
 
 test('factorYield: 700 kg seco / factor 100 → 490 kg verde', () => {
   // (700 / 100) * 70 = 490
   assert.equal(factorYield(700, 100), 490);
+});
+
+test('factorYield: redondea 0.5 hacia arriba', () => {
+  // (1.0 / 1.0) * 70 = 70 exacto
+  assert.equal(factorYield(1, 1), 70);
+  // (250 / 138) * 70 = 126.8115942 → 127
+  assert.equal(factorYield(250, 138), 127);
+  // (250 / 150) * 70 = 116.6666... → 117
+  assert.equal(factorYield(250, 150), 117);
 });
 
 test('factorYield: 0 dried → 0 green', () => {

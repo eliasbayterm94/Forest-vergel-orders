@@ -80,7 +80,11 @@ const KG_PER_SACO = 70;
 /**
  * @param {number} kgDried
  * @param {number} factor   factor de rendimiento (>0)
- * @returns {number} kg green, rounded to 2 decimals.
+ * @returns {number} kg green, rounded to nearest integer (half-up).
+ *
+ * El resultado es un entero porque operativamente decimales no
+ * aportan utilidad y la columna lot_partials.kg_green_yield tambien
+ * es numeric(12,0) tras migration 0020.
  */
 function factorYield(kgDried, factor) {
   if (typeof kgDried !== 'number' || !Number.isFinite(kgDried) || kgDried < 0) {
@@ -89,7 +93,7 @@ function factorYield(kgDried, factor) {
   if (typeof factor !== 'number' || !Number.isFinite(factor) || factor <= 0) {
     throw new Error(`factorYield: factor must be a positive number, got ${factor}`);
   }
-  return round2((kgDried / factor) * KG_PER_SACO);
+  return Math.round((kgDried / factor) * KG_PER_SACO);
 }
 
 // ── B) Dried-to-green per-process divisors ──────────────────────────

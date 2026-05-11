@@ -64,15 +64,25 @@ export async function adminDashboardView() {
   const initialRange = RANGES.some((r) => r.key === initialQ.get('range'))
     ? initialQ.get('range') : DEFAULT_RANGE;
   const initialRef = initialQ.get('ref');
+  const initialClient = initialQ.get('client') || null;
+  const initialRegion = initialQ.get('region') || null;
   const state = {
     range: initialRange,
     refId: initialRef && refs.some((r) => r.id === initialRef) ? initialRef : null,
+    clientName: initialClient,
+    region:     initialRegion,
   };
 
-  const filterBar = renderFilterBar(state, refs, () => {
+  // Opciones derivadas de los datos cargados (no hace falta endpoint).
+  const clientOptions = [...new Set(allOrders.map((o) => o.client_name).filter(Boolean))].sort();
+  const regionOptions = [...new Set(allOrders.flatMap((o) => o.regions || []).filter(Boolean))].sort();
+
+  const filterBar = renderFilterBar(state, refs, clientOptions, regionOptions, () => {
     updateHashQuery({
-      range: state.range === DEFAULT_RANGE ? null : state.range,
-      ref:   state.refId,
+      range:  state.range === DEFAULT_RANGE ? null : state.range,
+      ref:    state.refId,
+      client: state.clientName,
+      region: state.region,
     });
     redraw();
   });
@@ -97,7 +107,7 @@ export async function adminDashboardView() {
 }
 
 // ─── Filter bar ─────────────────────────────────────────────────────
-function renderFilterBar(state, refs, onChange) {
+function renderFilterBar(state, refs, clientOptions, regionOptions, onChange) {
   const rangeButtons = RANGES.map((r) => el('button', {
     type: 'button',
     class: 'ctrm-btn ctrm-btn-sm',
@@ -119,12 +129,46 @@ function renderFilterBar(state, refs, onChange) {
     },
   });
 
+  const clientItems = [{ id: '__all__', name: 'Todos los clientes' },
+    ...clientOptions.map((c) => ({ id: c, name: c }))];
+  const initialClientItem = state.clientName
+    ? clientItems.find((c) => c.id === state.clientName) || null : null;
+  const clientCombo = createCombobox({
+    placeholder: 'Filtrar por cliente...',
+    items: clientItems, value: initialClientItem,
+    onChange: (item) => {
+      state.clientName = (!item || item.id === '__all__') ? null : item.id;
+      onChange();
+    },
+  });
+
+  const regionItems = [{ id: '__all__', name: 'Todas las regiones' },
+    ...regionOptions.map((r) => ({ id: r, name: r }))];
+  const initialRegionItem = state.region
+    ? regionItems.find((r) => r.id === state.region) || null : null;
+  const regionCombo = createCombobox({
+    placeholder: 'Filtrar por región...',
+    items: regionItems, value: initialRegionItem,
+    onChange: (item) => {
+      state.region = (!item || item.id === '__all__') ? null : item.id;
+      onChange();
+    },
+  });
+
   const wrap = el('div', {
-    class: 'ctrm-card ctrm-card-pad mb-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3',
+    class: 'ctrm-card ctrm-card-pad mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3',
   }, [
     el('div', {}, [
       el('label', { class: 'ctrm-label', text: 'Referencia' }),
       refCombo.el,
+    ]),
+    el('div', {}, [
+      el('label', { class: 'ctrm-label', text: 'Cliente' }),
+      clientCombo.el,
+    ]),
+    el('div', {}, [
+      el('label', { class: 'ctrm-label', text: 'Región' }),
+      regionCombo.el,
     ]),
     el('div', {}, [
       el('label', { class: 'ctrm-label', text: 'Rango' }),
@@ -146,13 +190,25 @@ function renderFilterBar(state, refs, onChange) {
 }
 
 function applyFilters({ allOrders, allLots, allShips, state }) {
-  if (state.refId == null) {
+  if (state.refId == null && !state.clientName && !state.region) {
     return { orders: allOrders, lots: allLots, shipments: allShips };
   }
-  const orders = allOrders.filter((o) => o.reference_id === state.refId);
-  const lots = allLots.filter((l) => l.reference_id === state.refId);
-  // Un despacho entra si AL MENOS UN lote del despacho es de la referencia
-  // filtrada. Las metricas de kg luego suman solo lo de esa referencia.
+  let orders = allOrders;
+  if (state.refId)      orders = orders.filter((o) => o.reference_id === state.refId);
+  if (state.clientName) orders = orders.filter((o) => o.client_name === state.clientName);
+  if (state.region)     orders = orders.filter((o) => Array.isArray(o.regions) && o.regions.includes(state.region));
+
+  const orderIdSet = new Set(orders.map((o) => o.id));
+  // Lotes que tengan asignacion a alguno de los pedidos filtrados
+  // (los lotes legacy sin asignacion siguen aplicando solo si pasa el
+  // filtro de referencia).
+  let lots = allLots;
+  if (state.refId) lots = lots.filter((l) => l.reference_id === state.refId);
+  if (state.clientName || state.region) {
+    lots = lots.filter((l) => (l.assignments || []).some((a) => orderIdSet.has(a.demand_order_id))
+      || orderIdSet.size === 0);
+  }
+  // Un despacho entra si AL MENOS UN lote del despacho cumple los filtros.
   const shipments = allShips
     .filter((s) => (s.lots || []).some((l) => l.id && lots.some((x) => x.id === l.id)))
     .map((s) => {
@@ -305,13 +361,35 @@ function computeMetrics({ orders, lots, shipments, today, leadByProcess, range }
   const creadosDelta = creadosMesPrev > 0
     ? ((creadosMes - creadosMesPrev) / creadosMesPrev) * 100 : null;
 
-  // Funnel acumulado del rango: solicitado → aceptado → despachado
-  const createdInRange = orders.filter((o) => inRange(o.created_at));
+  // Funnel acumulado del rango con 6 etapas:
+  //   Solicitado → Aceptado → Asignado(Fermentación) → Asignado(Drying)
+  //   → Asignado(Ready) → Despachado
+  // Las etapas "asignado" cuentan kg verde de lot_order_assignments
+  // donde el lote esta en el status indicado y el pedido fue creado
+  // dentro del rango.
+  const createdInRange  = orders.filter((o) => inRange(o.created_at));
   const acceptedInRange = orders.filter((o) => inRange(o.accepted_at));
+  const inRangeOrderIds = new Set(createdInRange.map((o) => o.id));
+
+  let kgFerm = 0, kgDry = 0, kgReady = 0;
+  for (const lot of lots) {
+    if (!['InFermentation', 'Drying', 'Ready'].includes(lot.status)) continue;
+    for (const a of lot.assignments || []) {
+      if (!inRangeOrderIds.has(a.demand_order_id)) continue;
+      const kg = Number(a.kg_green_allocated || 0);
+      if (lot.status === 'InFermentation') kgFerm += kg;
+      else if (lot.status === 'Drying')    kgDry += kg;
+      else if (lot.status === 'Ready')     kgReady += kg;
+    }
+  }
+
   const funnelTotals = {
-    solicitado: sum(createdInRange,  (o) => o.kg_green_required),
-    aceptado:   sum(acceptedInRange, (o) => o.kg_green_accepted),
-    despachado: sum(shipsInRange,    (s) => s.totals?.kg_green || 0),
+    solicitado:    sum(createdInRange,  (o) => o.kg_green_required),
+    aceptado:      sum(acceptedInRange, (o) => o.kg_green_accepted),
+    asignadoFerm:  Math.round(kgFerm),
+    asignadoDry:   Math.round(kgDry),
+    asignadoReady: Math.round(kgReady),
+    despachado:    sum(shipsInRange,    (s) => s.totals?.kg_green || 0),
     creadosCount:    createdInRange.length,
     aceptadosCount:  acceptedInRange.length,
     despachosCount:  shipsInRange.length,
@@ -568,21 +646,27 @@ function formatVal(v) {
 
 // ─── Charts ─────────────────────────────────────────────────────────
 function funnelChart(t) {
-  // Embudo cuantitativo del rango. La barra de cada etapa se mide
-  // contra la siguiente etapa hacia atras (Solicitado=100%, Aceptado=
-  // % del solicitado, Despachado=% del aceptado). Entre etapas se
-  // muestra el "drop-off" en kg y porcentaje.
+  // Embudo cuantitativo del rango. Cada etapa se mide contra la
+  // anterior (Solicitado = 100%). Entre etapas se muestra drop-off.
+  // 6 etapas: 4 internas para visibilidad por status del lote.
   const stages = [
-    { key: 'solicitado', label: 'Solicitado', value: t.solicitado, count: t.creadosCount,
-      sub: 'Pedidos creados',  color: TREND_COLORS.solicitado },
-    { key: 'aceptado',   label: 'Aceptado',   value: t.aceptado,   count: t.aceptadosCount,
-      sub: 'Pedidos aceptados', color: TREND_COLORS.aceptado },
-    { key: 'despachado', label: 'Despachado', value: t.despachado, count: t.despachosCount,
-      sub: 'Despachos creados', color: TREND_COLORS.despachado },
+    { key: 'solicitado',    label: 'Solicitado',    value: t.solicitado,    sub: `${t.creadosCount} pedidos creados`,
+      color: '#7e9ec1' },
+    { key: 'aceptado',      label: 'Aceptado',      value: t.aceptado,      sub: `${t.aceptadosCount} pedidos aceptados`,
+      color: '#ddae3e' },
+    { key: 'asignadoFerm',  label: 'Asignado · Fermentación', value: t.asignadoFerm,
+      sub: 'En InFermentation', color: '#a3b3c8' },
+    { key: 'asignadoDry',   label: 'Asignado · Drying',       value: t.asignadoDry,
+      sub: 'En Drying', color: '#c89c52' },
+    { key: 'asignadoReady', label: 'Asignado · Ready',        value: t.asignadoReady,
+      sub: 'En Ready (sin despachar)', color: '#8fb898' },
+    { key: 'despachado',    label: 'Despachado',    value: t.despachado,    sub: `${t.despachosCount} despachos`,
+      color: '#3a6f4a' },
   ];
   const max = Math.max(t.solicitado, 1);
 
-  if (t.solicitado === 0 && t.aceptado === 0 && t.despachado === 0) {
+  const allZero = stages.every((s) => s.value === 0);
+  if (allZero) {
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('p', { class: 'text-[12px] text-ink-300 italic text-center py-4',
         text: 'Sin actividad en este rango.' }),
@@ -621,7 +705,6 @@ function funnelChart(t) {
         ]),
         el('div', { class: 'flex items-baseline gap-2' }, [
           el('strong', { class: 'font-mono text-ink-700', text: fmtKg(s.value) }),
-          el('span', { class: 'text-[10px] text-ink-300 font-mono', text: `${s.count} pedido(s)` }),
           conv != null
             ? el('span', { class: 'text-[11px] font-mono text-ink-500',
                 text: `${conv.toFixed(0)}% del anterior` })
