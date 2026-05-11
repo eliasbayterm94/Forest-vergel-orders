@@ -21,14 +21,29 @@ const CHERRY_PER_GREEN = 7.65;
 export async function forestDemandBulkFormView() {
   const [refsRes, varsRes] = await Promise.all([api.references(), api.varieties()]);
   const allReferences = refsRes.references || [];
-  const allVarieties  = varsRes.varieties  || [];
+  let allVarieties    = varsRes.varieties  || [];
   const refById = new Map(allReferences.map((r) => [r.id, r]));
+
+  // Datalist compartido por todas las filas. Lo refrescamos cuando se
+  // crean nuevas variedades para que el autocomplete del input refleje
+  // la lista actualizada.
+  const datalistId = 'forest-bulk-variety-list';
+  const datalist = el('datalist', { id: datalistId },
+    allVarieties.map((v) => el('option', { value: v.name })));
+  document.body.append(datalist);
+  function refreshDatalist() {
+    while (datalist.firstChild) datalist.removeChild(datalist.firstChild);
+    for (const v of allVarieties) datalist.append(el('option', { value: v.name }));
+  }
+  function varietyIdByLowerName() {
+    return new Map(allVarieties.map((v) => [v.name.toLowerCase(), v.id]));
+  }
 
   const rows = [];
   const tbody = el('tbody', {});
 
   function addRow(prefill) {
-    const row = createBulkRow({ allReferences, allVarieties, refById, onRemove: () => removeRow(row) }, prefill);
+    const row = createBulkRow({ allReferences, refById, datalistId, onRemove: () => removeRow(row) }, prefill);
     rows.push(row);
     tbody.append(row.tr);
     refreshIndices();
@@ -113,11 +128,11 @@ export async function forestDemandBulkFormView() {
     onSubmit: async (e) => {
       e.preventDefault();
       const allErrors = [];
-      const payloads = [];
+      const partials = [];   // [{ payloadSkeleton, rawVarietyNames }]
       rows.forEach((r, i) => {
         const result = r.validate();
         if (result.errors.length > 0) allErrors.push({ index: i, errors: result.errors });
-        else payloads.push(result.payload);
+        else partials.push(result);
       });
       if (allErrors.length > 0) {
         const first = allErrors[0];
@@ -125,16 +140,59 @@ export async function forestDemandBulkFormView() {
         rows[first.index].focus();
         return;
       }
-      await trySubmit(payloads, false);
+
+      // Resolver variedades: detectar nombres nuevos y, si hay, pedir
+      // confirmacion una sola vez para crearlas todas.
+      let nameToId = varietyIdByLowerName();
+      const unknown = new Map();   // lowercase → original casing
+      for (const p of partials) {
+        for (const name of p.rawVarietyNames) {
+          if (!nameToId.has(name.toLowerCase())) unknown.set(name.toLowerCase(), name);
+        }
+      }
+      if (unknown.size > 0) {
+        const list = [...unknown.values()];
+        const ok = await confirmModal(
+          `Se crearán ${list.length} variedad(es) nueva(s):\n\n${list.map((n) => `• ${n}`).join('\n')}\n\n¿Continuar?`,
+          { title: 'Variedades nuevas', confirmText: 'Crear y continuar', cancelText: 'Volver' },
+        );
+        if (!ok) return;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creando variedades...';
+        try {
+          for (const name of list) {
+            const r = await api.varietyAdd(name);
+            const created = r && r.variety;
+            if (created && !allVarieties.some((v) => v.id === created.id)) {
+              allVarieties = [...allVarieties, created].sort((a, b) => a.name.localeCompare(b.name));
+            }
+          }
+          refreshDatalist();
+          nameToId = varietyIdByLowerName();
+        } catch (e) {
+          toast(e.message || 'Error creando variedades', 'error');
+          submitBtn.disabled = false;
+          updateSubmitLabel();
+          return;
+        }
+      }
+
+      // Construir payloads finales con los variety_ids resueltos.
+      const orders = partials.map((p) => ({
+        ...p.payloadSkeleton,
+        variety_ids: p.rawVarietyNames.map((n) => nameToId.get(n.toLowerCase())).filter(Boolean),
+      }));
+
+      await trySubmit(orders, false);
     },
   }, [
     el('div', { class: 'flex flex-wrap items-center gap-2' }, [
       addRowBtn,
       duplicateBtn,
       el('p', { class: 'text-[11px] text-ink-500 ml-auto' }, [
-        'Si necesitas crear una referencia o variedad nueva, hazlo desde ',
+        'Las variedades nuevas se crean al guardar (se pedirá confirmación). Las referencias se crean desde ',
         el('a', { href: '#/forest/demand', class: 'underline text-navy' }, ['Nuevo pedido']),
-        ' (form completo).',
+        '.',
       ]),
     ]),
     tableWrap,
@@ -192,7 +250,7 @@ export async function forestDemandBulkFormView() {
 }
 
 // ─── Fila de tabla ────────────────────────────────────────────────────
-function createBulkRow({ allReferences, allVarieties, refById, onRemove }, prefill) {
+function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill) {
   const cellCls = 'px-2 py-1.5 align-top';
 
   const idxLabel = el('span', { class: 'text-ink-500 font-mono text-[11px]', text: '1' });
@@ -205,14 +263,9 @@ function createBulkRow({ allReferences, allVarieties, refById, onRemove }, prefi
   const varietyInput = el('input', {
     type: 'text', class: 'ctrm-input w-full text-[12px]',
     placeholder: 'castillo, caturra',
-    title: 'Nombres separados por coma',
-    list: 'forest-bulk-variety-list',
+    title: 'Nombres separados por coma. Si una no existe se crea al guardar.',
+    list: datalistId,
   });
-  // datalist compartido (creado una sola vez por la primera fila)
-  if (!document.getElementById('forest-bulk-variety-list')) {
-    document.body.append(el('datalist', { id: 'forest-bulk-variety-list' },
-      allVarieties.map((v) => el('option', { value: v.name }))));
-  }
 
   const kgInput = el('input', {
     type: 'number', min: '0', step: '0.01',
@@ -362,28 +415,14 @@ function createBulkRow({ allReferences, allVarieties, refById, onRemove }, prefi
     if (!aspectSelect.value) errors.push('Selecciona aspecto físico');
     if (!processSelect.value) errors.push('Selecciona proceso');
 
-    if (errors.length > 0) return { errors, payload: null };
+    if (errors.length > 0) return { errors, payloadSkeleton: null, rawVarietyNames: [] };
 
-    // Map nombres → ids (case-insensitive). Si un nombre no existe, error.
-    const rawNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-    const namesLower = new Map(allVarieties.map((v) => [v.name.toLowerCase(), v.id]));
-    const variety_ids = [];
-    const unknown = [];
-    for (const n of rawNames) {
-      const id = namesLower.get(n.toLowerCase());
-      if (id) variety_ids.push(id);
-      else unknown.push(n);
-    }
-    if (unknown.length > 0) {
-      return { errors: [`Variedad(es) desconocida(s): ${unknown.join(', ')}. Créalas desde "Nuevo pedido".`], payload: null };
-    }
-
+    const rawVarietyNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
     const selectedRegions = regionChips.filter((b) => b.getAttribute('data-on') === 'true')
       .map((b) => b.getAttribute('data-region'));
 
-    const payload = {
+    const payloadSkeleton = {
       reference_id: refSelect.value,
-      variety_ids,
       kg_green_required: kg,
       max_delivery_date: dateInput.value,
       physical_aspect: aspectSelect.value,
@@ -395,7 +434,7 @@ function createBulkRow({ allReferences, allVarieties, refById, onRemove }, prefi
       regions: selectedRegions.length > 0 ? selectedRegions : null,
       contract_code: contractInput.value.trim() || null,
     };
-    return { errors: [], payload };
+    return { errors: [], payloadSkeleton, rawVarietyNames };
   }
 
   function focus() {
