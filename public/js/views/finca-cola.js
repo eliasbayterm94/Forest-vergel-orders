@@ -376,11 +376,20 @@ function queueRow(o, today, earliest, latest) {
 }
 
 function noLotOrPartialButton(o, allocated, pending) {
+  const accepted = Number(o.kg_green_accepted || 0);
+  const surplus = allocated - accepted;
   if (pending > 0.001) {
     return el('button', {
       class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm shrink-0',
       onClick: () => navigate('/finca/lots'),
     }, [allocated > 0.001 ? 'Asignar más' : 'Asignar lote']);
+  }
+  if (surplus > 0.001) {
+    return el('span', {
+      class: 'ctrm-pill roll text-[10px]',
+      title: `Asignado ${allocated} kg verde sobre ${accepted} aceptados`,
+      text: `Excedente +${fmtKg(surplus)}`,
+    });
   }
   return el('span', { class: 'ctrm-pill ok text-[10px]', text: 'Cubierto' });
 }

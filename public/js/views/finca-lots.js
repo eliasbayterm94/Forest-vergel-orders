@@ -1324,16 +1324,27 @@ function assignModalBody(lot, candidates, close) {
         onClick: () => {
           const assignments = [];
           let total = 0;
+          let surplusOrders = [];
           for (const o of candidates) {
             const v = Number(inputs.get(o.id).value || 0);
             if (v > 0) {
-              if (v > o.remaining_kg + 0.001) { toast(`Excede disponible para ${o.order_code}`, 'warning'); return; }
+              if (v > o.remaining_kg + 0.001) {
+                surplusOrders.push({
+                  code: o.order_code,
+                  surplus: Math.round((v - o.remaining_kg) * 100) / 100,
+                });
+              }
               assignments.push({ demand_order_id: o.id, kg_green_allocated: v });
               total += v;
             }
           }
           if (total > lotRemaining + 0.001) { toast('Excede el disponible del lote', 'warning'); return; }
           if (assignments.length === 0) { toast('Ingresa kg para al menos un pedido', 'warning'); return; }
+          if (surplusOrders.length > 0) {
+            const msg = surplusOrders
+              .map((x) => `${x.code} +${fmtKg(x.surplus)}`).join(' · ');
+            toast(`Excedente registrado: ${msg}`, 'info', 4500);
+          }
           close({ assignments });
         },
       }, ['Guardar asignaciones']),

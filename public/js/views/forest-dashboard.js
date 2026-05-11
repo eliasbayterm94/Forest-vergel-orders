@@ -367,9 +367,11 @@ function coverageBar(rollup, accepted) {
     summaryRight = el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
       el('strong', { class: 'text-ink-700', text: `${fmtKg(total)}` }),
       ` / ${fmtKg(accepted)} verde`,
-      pending > 0.001
-        ? el('span', { class: 'text-warn', text: ` · ${fmtKg(pending)} sin asignar` })
-        : el('span', { class: 'text-ok', text: ' · cubierto' }),
+      total > accepted + 0.001
+        ? el('span', { class: 'text-roll', text: ` · Excedente +${fmtKg(total - accepted)}` })
+        : pending > 0.001
+          ? el('span', { class: 'text-warn', text: ` · ${fmtKg(pending)} sin asignar` })
+          : el('span', { class: 'text-ok', text: ' · cubierto' }),
     ]);
   }
 
