@@ -5,7 +5,7 @@ import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
 import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL, relDate } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
-import { navigate } from '../router.js';
+import { navigate, currentQuery, updateHashQuery } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { createViewMode } from '../ui/view-mode.js';
 
@@ -15,18 +15,39 @@ const ORDER_TYPES      = ['Spot', 'Contract', 'FOB'];
 const REGIONS          = ['USA', 'EU', 'UK', 'MENA', 'AU'];
 
 export async function forestDashboardView() {
-  const [ordersRes, lotsRes, refsRes, varsRes] = await Promise.all([
+  const [ordersRes, lotsRes, shipsRes, refsRes, varsRes] = await Promise.all([
     api.ordersList({}),
     api.lotsList({}),   // todos: incluye Delivered para rollup correcto
+    api.shipmentsList(),
     api.references(),
     api.varieties(),
   ]);
   const today = ordersRes.today;
   const orders = ordersRes.orders;
   const allLots = lotsRes.lots;
+  const shipments = shipsRes.shipments || [];
   const readyLots = allLots.filter((l) => l.status === 'Ready');
   const allReferences = refsRes.references;
   const allVarieties  = varsRes.varieties;
+
+  // Despachos por pedido (que despachos cubrieron este pedido y con
+  // cuanto kg). Se calcula desde shipments.lots[].assignments para
+  // mostrar chips inline en cada card de pedido en curso.
+  const shipmentsByOrder = new Map();   // order_id → [{code, date, kg}]
+  for (const s of shipments) {
+    for (const lot of s.lots || []) {
+      for (const a of lot.assignments || []) {
+        const oid = a.order?.id;
+        if (!oid) continue;
+        if (!shipmentsByOrder.has(oid)) shipmentsByOrder.set(oid, []);
+        shipmentsByOrder.get(oid).push({
+          code: s.shipment_code,
+          date: s.shipment_date,
+          kg:   Number(a.kg_green_allocated || 0),
+        });
+      }
+    }
+  }
 
   // Per-order rollup: cuanto del kg aceptado ya esta cubierto por
   // lotes (incluyendo Delivered, agrupados como "delivered"). Si no
@@ -70,6 +91,7 @@ export async function forestDashboardView() {
   // Renderer factory: pending rows get Editar/Cancelar actions; others don't.
   const rowFor = (o) => orderRow(o, {
     rollup: orderRollup.get(o.id) || null,
+    shipments: shipmentsByOrder.get(o.id) || [],
     actions: o.status === 'Pending' ? [
       { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
       { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
@@ -79,11 +101,64 @@ export async function forestDashboardView() {
   const root = el('div', {});
   const vm = createViewMode('forest-dashboard', { onChange: () => redraw() });
   function renderList(items, opts) {
-    if (vm.mode() === 'table') return ordersTable(items, orderRollup, opts);
+    if (vm.mode() === 'table') return ordersTable(items, orderRollup, shipmentsByOrder, opts);
     return el('div', { class: 'space-y-2' }, items.map(rowFor));
   }
+
+  // ── Selector de seccion (focus en una a la vez) ─────────────────
+  const SECTIONS = [
+    { key: 'urgencias',  label: 'Urgencias',   count: urgencies.length,    kind: urgencies.length > 0 ? 'crit' : null },
+    { key: 'listos',     label: 'Lotes Listos',count: readyLots.length,    kind: readyLots.length > 0 ? 'ok' : null },
+    { key: 'inflight',   label: 'En curso',    count: buckets.inFlight.length, kind: null },
+    { key: 'pending',    label: 'Pendientes',  count: buckets.pending.length,  kind: buckets.pending.length > 0 ? 'warn' : null },
+  ];
+  const initialSection = (currentQuery().get('section') && SECTIONS.find((s) => s.key === currentQuery().get('section')))
+    ? currentQuery().get('section')
+    : (urgencies.length > 0 ? 'urgencias' : 'inflight');
+  let activeSection = initialSection;
+
+  function renderSectionContent() {
+    if (activeSection === 'urgencias') {
+      return urgencies.length === 0
+        ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
+        : renderList(urgencies);
+    }
+    if (activeSection === 'listos') {
+      return readyLots.length === 0
+        ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
+        : (vm.mode() === 'table' ? lotsTable(readyLots) : el('div', { class: 'space-y-2' }, readyLots.map(lotRow)));
+    }
+    if (activeSection === 'inflight') {
+      return buckets.inFlight.length === 0
+        ? emptyStateCard({
+            title: 'Sin pedidos activos',
+            description: 'Crea uno para que finca lo revise.',
+            action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
+          })
+        : renderList(buckets.inFlight);
+    }
+    if (activeSection === 'pending') {
+      return buckets.pending.length === 0
+        ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
+        : renderList(buckets.pending, { withActions: true });
+    }
+    return null;
+  }
+
   function redraw() {
     clear(root);
+    const chips = SECTIONS.map((s) => el('button', {
+      type: 'button',
+      class: activeSection === s.key
+        ? 'ctrm-btn ctrm-btn-primary ctrm-btn-sm'
+        : 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+      onClick: () => {
+        activeSection = s.key;
+        updateHashQuery({ section: s.key === initialSection ? null : s.key });
+        redraw();
+      },
+    }, [`${s.label}${s.count > 0 ? ` · ${s.count}` : ''}`]));
+
     root.append(
       pageTitle('Tablero Forest', `Hoy: ${today}`),
       statRow([
@@ -93,35 +168,11 @@ export async function forestDashboardView() {
         stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO', { kind: buckets.rejected.length + buckets.partial.length > 0 ? 'crit' : 'ok' }),
       ]),
       primaryCTA(),
-      el('div', { class: 'flex justify-end mb-3' }, [vm.toggleEl]),
-
-      section('Urgencias',
-        urgencies.length === 0
-          ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
-          : renderList(urgencies),
-      ),
-
-      section('Lotes listos para envío',
-        readyLots.length === 0
-          ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
-          : (vm.mode() === 'table' ? lotsTable(readyLots) : el('div', { class: 'space-y-2' }, readyLots.map(lotRow))),
-      ),
-
-      section('Pedidos en curso',
-        buckets.inFlight.length === 0
-          ? emptyStateCard({
-              title: 'Sin pedidos activos',
-              description: 'Crea uno para que finca lo revise.',
-              action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
-            })
-          : renderList(buckets.inFlight),
-      ),
-
-      section('Pedidos pendientes (esperando finca)',
-        buckets.pending.length === 0
-          ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
-          : renderList(buckets.pending, { withActions: true }),
-      ),
+      el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-3' }, [
+        el('div', { class: 'flex flex-wrap items-center gap-2' }, chips),
+        vm.toggleEl,
+      ]),
+      el('section', { class: 'mb-6' }, [renderSectionContent()]),
     );
   }
   redraw();
@@ -173,7 +224,7 @@ export async function forestDashboardView() {
 }
 
 // ─── Table renderers ────────────────────────────────────────────────
-function ordersTable(orders, rollupMap) {
+function ordersTable(orders, rollupMap, shipmentsMap) {
   const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
@@ -191,6 +242,7 @@ function ordersTable(orders, rollupMap) {
       el('th', {}, ['Status']),
       el('th', { class: 'text-right' }, ['Aceptado']),
       el('th', { class: 'text-right' }, ['Asignado']),
+      el('th', { class: 'text-right' }, ['Despachado']),
       el('th', {}, ['Entrega']),
       el('th', {}, ['Drying-start']),
     ])]),
@@ -198,6 +250,8 @@ function ordersTable(orders, rollupMap) {
       const r = rollupMap?.get(o.id);
       const total = r ? Number(r.total || 0) : 0;
       const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
+      const ships = shipmentsMap?.get(o.id) || [];
+      const shippedKg = ships.reduce((s, x) => s + Number(x.kg || 0), 0);
       return el('tr', {}, [
         cell('Código', 'font-mono text-navy font-semibold', o.order_code),
         cell('Referencia', '', o.reference_name || '—'),
@@ -205,6 +259,10 @@ function ordersTable(orders, rollupMap) {
         cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
         cell('Aceptado', 'text-right font-mono', fmtKg(accepted)),
         cell('Asignado', 'text-right font-mono', accepted > 0 ? `${fmtKg(total)} (${Math.round(total/accepted*100)}%)` : fmtKg(total)),
+        cell('Despachado', 'text-right font-mono',
+          shippedKg > 0
+            ? el('span', { style: 'color:#3a6f4a;font-weight:600;' }, [`${fmtKg(shippedKg)} (${ships.length})`])
+            : '—'),
         cell('Entrega', 'font-mono text-[11px]',
           o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
         cell('Drying-start', 'font-mono text-[11px]',
@@ -329,9 +387,32 @@ export function orderRow(o, opts = {}) {
       meta('Proceso', o.process_type),
     ]),
     showProgress ? coverageBar(rollup, accepted) : null,
+    (opts.shipments && opts.shipments.length > 0)
+      ? shippedChips(opts.shipments)
+      : null,
     actionButtons.length > 0
       ? el('div', { class: 'flex gap-2 mt-3 pt-2 border-t border-sand' }, actionButtons)
       : null,
+  ]);
+}
+
+function shippedChips(shipments) {
+  const sorted = shipments.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const total = sorted.reduce((s, x) => s + Number(x.kg || 0), 0);
+  return el('div', { class: 'mt-2 pt-2 border-t border-sand' }, [
+    el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-1' }, [
+      el('span', { class: 'eyebrow text-[10px]', text: 'Despachado' }),
+      el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
+        el('strong', { class: 'text-forest-dark', text: fmtKg(total) }),
+        ` · ${sorted.length} despacho${sorted.length === 1 ? '' : 's'}`,
+      ]),
+    ]),
+    el('div', { class: 'flex flex-wrap gap-1' }, sorted.map((s) =>
+      el('span', {
+        class: 'ctrm-code text-[10px]',
+        title: `${s.code} · ${fmtDate(s.date)} · ${fmtKg(s.kg)} verde`,
+        style: 'border-color:#3a6f4a;color:#3a6f4a;',
+      }, [`${s.code} · ${fmtKg(s.kg)}`]))),
   ]);
 }
 
