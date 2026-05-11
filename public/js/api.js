@@ -64,6 +64,7 @@ export const api = {
 
   ordersList:    (query)  => request('GET',  '/api/demand-orders-list', { query }),
   orderCreate:   (payload) => request('POST', '/api/demand-orders-create', { body: payload }),
+  orderCreateBulk: (payload) => request('POST', '/api/demand-orders-create-bulk', { body: payload }),
   orderUpdate:   (payload) => request('POST', '/api/demand-orders-update', { body: payload }),
   orderCancel:   (payload) => request('POST', '/api/demand-orders-cancel', { body: payload }),
   orderAccept:   (payload) => request('POST', '/api/demand-orders-accept', { body: payload }),

@@ -6,24 +6,159 @@ import { fmtKg } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
-import { openReferenceModal } from './forest-references.js';
 import { bindValidation, setFieldError, clearFieldError } from '../ui/form-validation.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
 const ORDER_TYPES      = ['Spot', 'Contract', 'FOB'];
 const REGIONS          = ['USA', 'EU', 'UK', 'MENA', 'AU'];
-const CHERRY_PER_GREEN = 7.65; // Display only; server is the source of truth.
+const CHERRY_PER_GREEN = 7.65;
 
 export async function forestDemandFormView() {
   const [refsRes, varsRes] = await Promise.all([api.references(), api.varieties()]);
   let allReferences  = refsRes.references;
   const allVarieties = varsRes.varieties;
 
+  const rows = [];           // array de { node, getPayload, validate, setIndex, remove }
+  const rowsContainer = el('div', { class: 'space-y-3' });
+
+  function refreshIndices() {
+    rows.forEach((r, i) => r.setIndex(i, rows.length));
+  }
+
+  function addRow() {
+    const row = createOrderRow({
+      index: rows.length,
+      total: rows.length + 1,
+      allReferences,
+      allVarieties,
+      onReferenceCreated: (ref) => {
+        if (!allReferences.some((x) => x.id === ref.id)) {
+          allReferences = [...allReferences, ref].sort((a, b) => a.name.localeCompare(b.name));
+          rows.forEach((r) => r.setReferences(allReferences));
+        }
+      },
+      onRemove: () => {
+        if (rows.length === 1) {
+          toast('Debe haber al menos un pedido', 'warning');
+          return;
+        }
+        rowsContainer.removeChild(row.node);
+        const idx = rows.indexOf(row);
+        if (idx >= 0) rows.splice(idx, 1);
+        refreshIndices();
+        updateSubmitLabel();
+      },
+    });
+    rows.push(row);
+    rowsContainer.append(row.node);
+    refreshIndices();
+    updateSubmitLabel();
+    return row;
+  }
+
+  const submitBtn = el('button', {
+    type: 'submit',
+    class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
+  }, ['Crear pedido']);
+
+  function updateSubmitLabel() {
+    submitBtn.textContent = rows.length === 1 ? 'Crear pedido' : `Crear ${rows.length} pedidos`;
+  }
+
+  const addRowBtn = el('button', {
+    type: 'button',
+    class: 'w-full ctrm-btn ctrm-btn-soft py-3 border-dashed',
+    onClick: () => {
+      const row = addRow();
+      row.focus();
+      row.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
+  }, ['+ Agregar otro pedido']);
+
+  const form = el('form', {
+    class: 'space-y-4',
+    onSubmit: async (e) => {
+      e.preventDefault();
+      const allErrors = [];
+      const payloads = [];
+      rows.forEach((r, i) => {
+        const result = r.validate();
+        if (result.errors.length > 0) allErrors.push({ index: i, errors: result.errors });
+        else payloads.push(result.payload);
+      });
+      if (allErrors.length > 0) {
+        const first = allErrors[0];
+        toast(`Pedido ${first.index + 1}: ${first.errors[0]}`, 'warning');
+        rows[first.index].focus();
+        return;
+      }
+      await trySubmit(payloads, false);
+    },
+  }, [
+    rowsContainer,
+    addRowBtn,
+    el('div', { class: 'pt-3 flex flex-col sm:flex-row sm:justify-end gap-2 border-t border-sand' }, [
+      el('button', {
+        type: 'button',
+        class: 'ctrm-btn ctrm-btn-ghost uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
+        onClick: () => navigate('/forest/dashboard'),
+      }, ['Cancelar']),
+      submitBtn,
+    ]),
+  ]);
+
+  async function trySubmit(orders, override) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Enviando...';
+    try {
+      const r = await api.orderCreateBulk({ orders, override_15_day: override });
+      const n = (r.orders || []).length;
+      toast(n === 1 ? `Pedido ${r.orders[0].order_code} creado` : `${n} pedidos creados`, 'success');
+      navigate('/forest/dashboard');
+    } catch (e) {
+      if (e.code === 'FIFTEEN_DAY_RULE') {
+        const offending = (e.detail && e.detail.rows_under_15_days) || [];
+        const lines = offending.map((row) => `• Pedido ${row.index + 1}: ${row.days} día(s)`).join('\n');
+        const ok = await confirmModal(
+          `${offending.length} pedido(s) con entrega a menos de 15 días:\n\n${lines}\n\n¿Ya se confirmó con la planta de producción?`,
+          { title: '⚠️ Plazo corto', confirmText: 'Confirmado, crear', cancelText: 'Volver', danger: true },
+        );
+        if (ok) {
+          await trySubmit(orders, true);
+          return;
+        }
+      } else if (e.code === 'VALIDATION_ERROR' && e.detail && e.detail.row_errors) {
+        const first = e.detail.row_errors[0];
+        toast(`Pedido ${first.index + 1}: ${first.errors[0]}`, 'error');
+        if (rows[first.index]) rows[first.index].focus();
+      } else if (e.code === 'INVALID_REFERENCE' && e.detail && e.detail.row_errors) {
+        const first = e.detail.row_errors[0];
+        toast(`Pedido ${first.index + 1}: referencia inválida`, 'error');
+        if (rows[first.index]) rows[first.index].focus();
+      } else {
+        toast(e.message || 'Error al crear pedidos', 'error');
+      }
+    } finally {
+      submitBtn.disabled = false;
+      updateSubmitLabel();
+    }
+  }
+
+  // Empezar con 1 fila
+  addRow();
+
+  return chrome(el('div', {}, [
+    pageTitle('Nuevo pedido', 'Forest → El Vergel · puedes crear varios a la vez'),
+    form,
+  ]));
+}
+
+// ─── Fila individual ──────────────────────────────────────────────────
+function createOrderRow({ index, allReferences, allVarieties, onReferenceCreated, onRemove }) {
   let selectedReference = null;
   let selectedVarieties = [];
 
-  // ----- Variety multi-combo (per-order, independent of reference) -----
   const varietyCombo = createMultiCombobox({
     placeholder: 'Buscar variedades...',
     items: allVarieties,
@@ -39,7 +174,6 @@ export async function forestDemandFormView() {
     createLabel: '+ Crear variedad',
   });
 
-  // ----- Other inputs (declared first so the reference combo can pre-fill them) -----
   const processSelect = el('select', {
     required: true,
     class: 'ctrm-select',
@@ -53,21 +187,13 @@ export async function forestDemandFormView() {
     class: 'ctrm-input mono',
   });
 
-  // ----- Reference combo (auto-fills proceso + fermentación) -----
   const referenceCombo = createCombobox({
     placeholder: 'Buscar referencia...',
     items: allReferences,
     onChange: (item) => {
       selectedReference = item;
       if (!item) return;
-      // Auto-fill the process select from the reference template
-      if (item.process_type && !processSelect.value) {
-        processSelect.value = item.process_type;
-      } else if (item.process_type) {
-        // Always respect the reference's process unless user explicitly changed it
-        processSelect.value = item.process_type;
-      }
-      // Auto-fill fermentation hours if not set
+      if (item.process_type) processSelect.value = item.process_type;
       if (item.fermentation_hours != null && fermInput.value === '') {
         fermInput.value = String(item.fermentation_hours);
       }
@@ -76,28 +202,19 @@ export async function forestDemandFormView() {
       const name = (text || '').trim();
       if (!name) return null;
       try {
-        // Quick-create: solo nombre + proceso si ya esta elegido en el form.
-        // No abrimos el modal para que el flujo sea de un click — la
-        // referencia se puede completar despues desde /forest/references.
         const r = await api.referenceSave({
           name,
           process_type: processSelect.value || null,
           fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
         });
         toast(`Referencia "${r.reference.name}" lista`, 'success');
-        // Append to local list so the dropdown sees it next time it opens
-        if (!allReferences.some((x) => x.id === r.reference.id)) {
-          allReferences = [...allReferences, r.reference]
-            .sort((a, b) => a.name.localeCompare(b.name));
-          referenceCombo.setItems(allReferences);
-        }
+        if (onReferenceCreated) onReferenceCreated(r.reference);
         return r.reference;
       } catch (e) { toast(e.message, 'error'); return null; }
     },
     createLabel: '+ Usar este nombre como nueva referencia',
   });
 
-  // ----- Numeric / date / textarea inputs -----
   const kgInput = el('input', {
     type: 'number', min: '0', step: '0.01', required: true,
     placeholder: 'Ej: 250',
@@ -114,19 +231,12 @@ export async function forestDemandFormView() {
     class: 'ctrm-input',
   });
 
-  // ── Validación inline ──
   bindValidation(kgInput,
     (v) => Number.isFinite(Number(v)) && Number(v) > 0,
     'Ingresa un número mayor a 0',
   );
-  bindValidation(dateInput,
-    (v) => !!v,
-    'Selecciona una fecha de entrega',
-  );
-  bindValidation(processSelect,
-    (v) => !!v,
-    'Selecciona un proceso',
-  );
+  bindValidation(dateInput, (v) => !!v, 'Selecciona una fecha de entrega');
+  bindValidation(processSelect, (v) => !!v, 'Selecciona un proceso');
 
   const aspectSelect = el('select', {
     required: true,
@@ -136,7 +246,6 @@ export async function forestDemandFormView() {
     ...PHYSICAL_ASPECTS.map((a) => el('option', { value: a }, [a])),
   ]);
 
-  // ─── Commercial metadata (new fields) ───
   const orderTypeSelect = el('select', { class: 'ctrm-select' }, [
     el('option', { value: '', selected: true }, ['Selecciona tipo...']),
     ...ORDER_TYPES.map((t) => el('option', { value: t }, [t])),
@@ -161,124 +270,95 @@ export async function forestDemandFormView() {
   const regionsRow = el('div', { class: 'flex flex-wrap gap-2' }, regionInputs.map((r) => r.node));
 
   const commentsInput = el('textarea', {
-    rows: '3', placeholder: 'Notas adicionales...',
+    rows: '2', placeholder: 'Notas adicionales...',
     class: 'ctrm-textarea',
   });
 
-  const submitBtn = el('button', {
-    type: 'submit',
-    class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
-  }, ['Crear pedido']);
+  const titleEl = el('p', { class: 'font-display font-semibold text-navy text-[14px]', text: `Pedido 1` });
+  const removeBtn = el('button', {
+    type: 'button',
+    class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+    title: 'Quitar este pedido',
+    onClick: () => onRemove && onRemove(),
+  }, ['✕ Quitar']);
 
-  const form = el('form', {
-    class: 'space-y-5 ctrm-card p-4 sm:p-6',
-    onSubmit: async (e) => {
-      e.preventDefault();
-      // Forzar validacion inline en TODOS los campos al submit, asi el
-      // usuario ve los errores marcados sin tener que blur uno por uno.
-      const kg = Number(kgInput.value);
-      const errors = [];
-      if (!selectedReference) errors.push('Selecciona una referencia');
-      if (!Number.isFinite(kg) || kg <= 0) {
-        setFieldError(kgInput, 'Ingresa un número mayor a 0');
-        errors.push('Cantidad inválida');
-      } else clearFieldError(kgInput);
-      if (!dateInput.value) {
-        setFieldError(dateInput, 'Selecciona una fecha de entrega');
-        errors.push('Falta fecha de entrega');
-      } else clearFieldError(dateInput);
-      if (!processSelect.value) {
-        setFieldError(processSelect, 'Selecciona un proceso');
-        errors.push('Falta proceso');
-      } else clearFieldError(processSelect);
-      if (!aspectSelect.value) errors.push('Falta aspecto físico');
-      if (errors.length > 0) {
-        toast(errors[0], 'warning');
-        return;
-      }
-
-      const selectedRegions = regionInputs.filter((r) => r.input.checked).map((r) => r.region);
-
-      const payload = {
-        reference_id: selectedReference.id,
-        variety_ids:  selectedVarieties.map((v) => v.id),
-        kg_green_required: kg,
-        max_delivery_date: dateInput.value,
-        physical_aspect:   aspectSelect.value,
-        process_type:      processSelect.value,
-        fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
-        comments: commentsInput.value || null,
-        override_15_day: false,
-        order_type:    orderTypeSelect.value || null,
-        client_name:   clientInput.value.trim() || null,
-        regions:       selectedRegions.length > 0 ? selectedRegions : null,
-        contract_code: contractInput.value.trim() || null,
-      };
-      await trySubmit(payload);
-    },
-  }, [
-    section('Referencia', referenceCombo.el, 'Selecciona una existente o crea una nueva. Proceso y fermentación se autocompletan desde la referencia.'),
+  const node = el('div', { class: 'ctrm-card p-4 sm:p-5 space-y-4' }, [
+    el('div', { class: 'flex items-center justify-between gap-2 pb-2 border-b border-sand' }, [
+      titleEl,
+      removeBtn,
+    ]),
+    section('Referencia', referenceCombo.el, 'Selecciona una existente o crea una nueva. Proceso y fermentación se autocompletan.'),
     section('Variedades', varietyCombo.el, 'Una o varias. Selección por pedido.'),
-    section('Cantidad (kg verde)', el('div', {}, [kgInput, cherryHint])),
-    section('Fecha máxima de entrega', dateInput),
-    section('Aspecto físico', aspectSelect),
-    section('Proceso', processSelect),
-    section('Horas de fermentación', fermInput),
-
-    // Commercial metadata block
-    el('div', { class: 'pt-3 border-t border-sand' }, [
-      el('p', { class: 'eyebrow mb-3', text: 'Metadatos comerciales (opcionales)' }),
-      el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
-        section('Tipo de pedido', orderTypeSelect),
-        section('Cliente', clientInput),
-      ]),
-      el('div', { class: 'mt-3' }, section('Región (multiselección)', regionsRow)),
-      el('div', { class: 'mt-3' }, section('Código de contrato', contractInput)),
+    el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+      section('Cantidad (kg verde)', el('div', {}, [kgInput, cherryHint])),
+      section('Fecha máxima de entrega', dateInput),
     ]),
-
+    el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+      section('Aspecto físico', aspectSelect),
+      section('Proceso', processSelect),
+    ]),
+    el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+      section('Horas de fermentación', fermInput),
+      section('Tipo de pedido', orderTypeSelect),
+    ]),
+    el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+      section('Cliente', clientInput),
+      section('Código de contrato', contractInput),
+    ]),
+    section('Región (multiselección)', regionsRow),
     section('Comentarios', commentsInput),
-    el('div', { class: 'pt-3 flex flex-col sm:flex-row sm:justify-end gap-2 border-t border-sand' }, [
-      el('button', {
-        type: 'button',
-        class: 'ctrm-btn ctrm-btn-ghost uppercase tracking-eyebrow text-[11px] py-3 px-6 w-full sm:w-auto',
-        onClick: () => navigate('/forest/dashboard'),
-      }, ['Cancelar']),
-      submitBtn,
-    ]),
   ]);
 
-  async function trySubmit(payload) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Enviando...';
-    try {
-      const r = await api.orderCreate(payload);
-      toast(`Pedido ${r.order.order_code} creado`, 'success');
-      navigate('/forest/dashboard');
-    } catch (e) {
-      if (e.code === 'FIFTEEN_DAY_RULE') {
-        const days = e.detail?.days_to_delivery;
-        const ok = await confirmModal(
-          `La fecha de entrega es en ${days} día(s) (menos de 15). ¿Ya se confirmó con la planta de producción la viabilidad de este pedido?`,
-          { title: '⚠️ Plazo corto', confirmText: 'Confirmado, crear', cancelText: 'Volver', danger: true },
-        );
-        if (ok) {
-          payload.override_15_day = true;
-          await trySubmit(payload);
-          return;
-        }
-      } else {
-        toast(e.message || 'Error al crear pedido', 'error');
-      }
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Crear pedido';
-    }
+  function validate() {
+    const errors = [];
+    const kg = Number(kgInput.value);
+    if (!selectedReference) errors.push('Selecciona una referencia');
+    if (!Number.isFinite(kg) || kg <= 0) {
+      setFieldError(kgInput, 'Ingresa un número mayor a 0');
+      errors.push('Cantidad inválida');
+    } else clearFieldError(kgInput);
+    if (!dateInput.value) {
+      setFieldError(dateInput, 'Selecciona una fecha de entrega');
+      errors.push('Falta fecha de entrega');
+    } else clearFieldError(dateInput);
+    if (!processSelect.value) {
+      setFieldError(processSelect, 'Selecciona un proceso');
+      errors.push('Falta proceso');
+    } else clearFieldError(processSelect);
+    if (!aspectSelect.value) errors.push('Falta aspecto físico');
+
+    if (errors.length > 0) return { errors, payload: null };
+
+    const selectedRegions = regionInputs.filter((r) => r.input.checked).map((r) => r.region);
+    const payload = {
+      reference_id: selectedReference.id,
+      variety_ids:  selectedVarieties.map((v) => v.id),
+      kg_green_required: kg,
+      max_delivery_date: dateInput.value,
+      physical_aspect:   aspectSelect.value,
+      process_type:      processSelect.value,
+      fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+      comments: commentsInput.value || null,
+      order_type:    orderTypeSelect.value || null,
+      client_name:   clientInput.value.trim() || null,
+      regions:       selectedRegions.length > 0 ? selectedRegions : null,
+      contract_code: contractInput.value.trim() || null,
+    };
+    return { errors: [], payload };
   }
 
-  return chrome(el('div', {}, [
-    pageTitle('Nuevo pedido', 'Forest → El Vergel'),
-    form,
-  ]));
+  function setIndex(i, total) {
+    titleEl.textContent = total > 1 ? `Pedido ${i + 1} de ${total}` : 'Pedido';
+    removeBtn.style.visibility = total > 1 ? 'visible' : 'hidden';
+  }
+
+  function setReferences(refs) { referenceCombo.setItems(refs); }
+  function focus() {
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => kgInput.focus(), 200);
+  }
+
+  return { node, validate, setIndex, setReferences, focus };
 }
 
 function section(label, child, hint) {
