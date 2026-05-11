@@ -145,13 +145,53 @@ export async function fincaColaView() {
     ? renderWeeklyLoad(capacity.weekly_load, cherryCap)
     : null;
 
+  // ── KPI strip arriba ──────────────────────────────────────────────
+  const totalGreenPending = inFlight.reduce((s, o) => s + Number(o.pending_kg || 0), 0);
+  const totalCherryPending = totalGreenPending * 7.65;
+  const sinLote = inFlight.filter((o) => o.pending_kg > 0.001).length;
+  const vencidos = inFlight.filter((o) =>
+    o.latest_drying_start_date && o.latest_drying_start_date < today).length;
+  const proximos7 = inFlight.filter((o) => {
+    const d = o.latest_drying_start_date;
+    if (!d || d < today) return false;
+    return daysBetween(today, d) <= 7;
+  }).length;
+  const semanasSobrecargadas = (capacity?.weekly_load || [])
+    .filter((w) => w.is_overloaded).length;
+
+  const kpiStrip = el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4' }, [
+    kpiCard('Cereza por procesar',
+      fmtKg(totalCherryPending),
+      `${fmtKg(totalGreenPending)} verde por asignar`,
+      totalGreenPending > 0 ? 'warn' : 'ok'),
+    kpiCard('Pedidos sin lote', String(sinLote),
+      sinLote > 0 ? 'Falta asignar lote' : 'Todos cubiertos',
+      sinLote > 0 ? 'warn' : 'ok'),
+    kpiCard('Drying en ≤7d', String(vencidos + proximos7),
+      `${vencidos} vencidos · ${proximos7} próximos`,
+      vencidos > 0 ? 'crit' : (proximos7 > 0 ? 'warn' : 'ok')),
+    kpiCard('Semanas sobrecargadas', String(semanasSobrecargadas),
+      semanasSobrecargadas > 0 ? `>${fmtKg(cherryCap)}/sem` : 'Capacidad OK',
+      semanasSobrecargadas > 0 ? 'crit' : 'ok'),
+  ]);
+
   return chrome(el('div', {}, [
     pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
+    kpiStrip,
     weeklyLoadPanel,
     filterRow,
     timelineLegend(),
     list,
   ]));
+}
+
+function kpiCard(label, value, hint, kind) {
+  const valClass = kind ? `stat-val ${kind}` : 'stat-val';
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: label }),
+    el('p', { class: valClass, text: String(value) }),
+    el('p', { class: 'stat-sub', text: hint }),
+  ]);
 }
 
 // ─── Weekly load panel ──────────────────────────────────────────────
