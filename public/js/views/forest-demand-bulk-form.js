@@ -20,30 +20,45 @@ const CHERRY_PER_GREEN = 7.65;
 
 export async function forestDemandBulkFormView() {
   const [refsRes, varsRes] = await Promise.all([api.references(), api.varieties()]);
-  const allReferences = refsRes.references || [];
-  let allVarieties    = varsRes.varieties  || [];
-  const refById = new Map(allReferences.map((r) => [r.id, r]));
+  let allReferences = refsRes.references || [];
+  let allVarieties  = varsRes.varieties  || [];
 
-  // Datalist compartido por todas las filas. Lo refrescamos cuando se
-  // crean nuevas variedades para que el autocomplete del input refleje
-  // la lista actualizada.
-  const datalistId = 'forest-bulk-variety-list';
-  const datalist = el('datalist', { id: datalistId },
+  // Datalists compartidos por todas las filas. Los refrescamos cuando
+  // se crean nuevos items para que el autocomplete refleje la lista
+  // actualizada.
+  const varietyDatalistId = 'forest-bulk-variety-list';
+  const refDatalistId     = 'forest-bulk-ref-list';
+  const varietyDatalist = el('datalist', { id: varietyDatalistId },
     allVarieties.map((v) => el('option', { value: v.name })));
-  document.body.append(datalist);
-  function refreshDatalist() {
-    while (datalist.firstChild) datalist.removeChild(datalist.firstChild);
-    for (const v of allVarieties) datalist.append(el('option', { value: v.name }));
+  const refDatalist = el('datalist', { id: refDatalistId },
+    allReferences.map((r) => el('option', { value: r.name })));
+  document.body.append(varietyDatalist, refDatalist);
+
+  function refreshVarietyDatalist() {
+    while (varietyDatalist.firstChild) varietyDatalist.removeChild(varietyDatalist.firstChild);
+    for (const v of allVarieties) varietyDatalist.append(el('option', { value: v.name }));
+  }
+  function refreshRefDatalist() {
+    while (refDatalist.firstChild) refDatalist.removeChild(refDatalist.firstChild);
+    for (const r of allReferences) refDatalist.append(el('option', { value: r.name }));
   }
   function varietyIdByLowerName() {
     return new Map(allVarieties.map((v) => [v.name.toLowerCase(), v.id]));
+  }
+  function refByLowerName() {
+    return new Map(allReferences.map((r) => [r.name.toLowerCase(), r]));
   }
 
   const rows = [];
   const tbody = el('tbody', {});
 
   function addRow(prefill) {
-    const row = createBulkRow({ allReferences, refById, datalistId, onRemove: () => removeRow(row) }, prefill);
+    const row = createBulkRow({
+      varietyDatalistId,
+      refDatalistId,
+      lookupRef: (name) => refByLowerName().get((name || '').toLowerCase()) || null,
+      onRemove: () => removeRow(row),
+    }, prefill);
     rows.push(row);
     tbody.append(row.tr);
     refreshIndices();
@@ -141,47 +156,97 @@ export async function forestDemandBulkFormView() {
         return;
       }
 
-      // Resolver variedades: detectar nombres nuevos y, si hay, pedir
-      // confirmacion una sola vez para crearlas todas.
-      let nameToId = varietyIdByLowerName();
-      const unknown = new Map();   // lowercase → original casing
+      // ── Resolver referencias nuevas ──
+      let refLookup = refByLowerName();
+      const newRefs = new Map();  // lowercase → { name, process_type, fermentation_hours }
       for (const p of partials) {
-        for (const name of p.rawVarietyNames) {
-          if (!nameToId.has(name.toLowerCase())) unknown.set(name.toLowerCase(), name);
+        const raw = p.refRawName.trim();
+        if (!raw) continue;
+        const key = raw.toLowerCase();
+        if (refLookup.has(key)) continue;
+        if (!newRefs.has(key)) {
+          newRefs.set(key, {
+            name: raw,
+            process_type: p.payloadSkeleton.process_type || null,
+            fermentation_hours: p.payloadSkeleton.fermentation_hours,
+          });
         }
       }
-      if (unknown.size > 0) {
-        const list = [...unknown.values()];
+
+      // ── Resolver variedades nuevas ──
+      let varietyLookup = varietyIdByLowerName();
+      const newVarieties = new Map();  // lowercase → original casing
+      for (const p of partials) {
+        for (const name of p.rawVarietyNames) {
+          if (!varietyLookup.has(name.toLowerCase())) newVarieties.set(name.toLowerCase(), name);
+        }
+      }
+
+      // ── Confirmar (un solo modal si hay items nuevos) ──
+      if (newRefs.size > 0 || newVarieties.size > 0) {
+        const parts = [];
+        if (newRefs.size > 0) {
+          parts.push(`Referencias (${newRefs.size}):\n${[...newRefs.values()]
+            .map((r) => `• ${r.name}${r.process_type ? ` (${r.process_type}${r.fermentation_hours != null ? `, ${r.fermentation_hours}h` : ''})` : ''}`)
+            .join('\n')}`);
+        }
+        if (newVarieties.size > 0) {
+          parts.push(`Variedades (${newVarieties.size}):\n${[...newVarieties.values()]
+            .map((n) => `• ${n}`).join('\n')}`);
+        }
         const ok = await confirmModal(
-          `Se crearán ${list.length} variedad(es) nueva(s):\n\n${list.map((n) => `• ${n}`).join('\n')}\n\n¿Continuar?`,
-          { title: 'Variedades nuevas', confirmText: 'Crear y continuar', cancelText: 'Volver' },
+          `Se crearán items nuevos antes de guardar los pedidos:\n\n${parts.join('\n\n')}\n\n¿Continuar?`,
+          { title: 'Items nuevos', confirmText: 'Crear y continuar', cancelText: 'Volver' },
         );
         if (!ok) return;
+
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Creando variedades...';
         try {
-          for (const name of list) {
-            const r = await api.varietyAdd(name);
-            const created = r && r.variety;
-            if (created && !allVarieties.some((v) => v.id === created.id)) {
-              allVarieties = [...allVarieties, created].sort((a, b) => a.name.localeCompare(b.name));
+          if (newRefs.size > 0) {
+            submitBtn.textContent = 'Creando referencias...';
+            for (const r of newRefs.values()) {
+              const resp = await api.referenceSave({
+                name: r.name,
+                process_type: r.process_type,
+                fermentation_hours: r.fermentation_hours,
+              });
+              const created = resp && resp.reference;
+              if (created && !allReferences.some((x) => x.id === created.id)) {
+                allReferences = [...allReferences, created].sort((a, b) => a.name.localeCompare(b.name));
+              }
             }
+            refreshRefDatalist();
+            refLookup = refByLowerName();
           }
-          refreshDatalist();
-          nameToId = varietyIdByLowerName();
+          if (newVarieties.size > 0) {
+            submitBtn.textContent = 'Creando variedades...';
+            for (const name of newVarieties.values()) {
+              const resp = await api.varietyAdd(name);
+              const created = resp && resp.variety;
+              if (created && !allVarieties.some((v) => v.id === created.id)) {
+                allVarieties = [...allVarieties, created].sort((a, b) => a.name.localeCompare(b.name));
+              }
+            }
+            refreshVarietyDatalist();
+            varietyLookup = varietyIdByLowerName();
+          }
         } catch (e) {
-          toast(e.message || 'Error creando variedades', 'error');
+          toast(e.message || 'Error creando items nuevos', 'error');
           submitBtn.disabled = false;
           updateSubmitLabel();
           return;
         }
       }
 
-      // Construir payloads finales con los variety_ids resueltos.
-      const orders = partials.map((p) => ({
-        ...p.payloadSkeleton,
-        variety_ids: p.rawVarietyNames.map((n) => nameToId.get(n.toLowerCase())).filter(Boolean),
-      }));
+      // ── Construir payloads finales ──
+      const orders = partials.map((p) => {
+        const ref = refLookup.get(p.refRawName.toLowerCase());
+        return {
+          ...p.payloadSkeleton,
+          reference_id: ref ? ref.id : null,
+          variety_ids: p.rawVarietyNames.map((n) => varietyLookup.get(n.toLowerCase())).filter(Boolean),
+        };
+      });
 
       await trySubmit(orders, false);
     },
@@ -190,9 +255,7 @@ export async function forestDemandBulkFormView() {
       addRowBtn,
       duplicateBtn,
       el('p', { class: 'text-[11px] text-ink-500 ml-auto' }, [
-        'Las variedades nuevas se crean al guardar (se pedirá confirmación). Las referencias se crean desde ',
-        el('a', { href: '#/forest/demand', class: 'underline text-navy' }, ['Nuevo pedido']),
-        '.',
+        'Si escribes una referencia o variedad nueva, se pedirá confirmación antes de crearla.',
       ]),
     ]),
     tableWrap,
@@ -250,21 +313,24 @@ export async function forestDemandBulkFormView() {
 }
 
 // ─── Fila de tabla ────────────────────────────────────────────────────
-function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill) {
+function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }, prefill) {
   const cellCls = 'px-2 py-1.5 align-top';
 
   const idxLabel = el('span', { class: 'text-ink-500 font-mono text-[11px]', text: '1' });
 
-  const refSelect = el('select', { class: 'ctrm-select w-full text-[12px]' }, [
-    el('option', { value: '' }, ['—']),
-    ...allReferences.map((r) => el('option', { value: r.id }, [r.name])),
-  ]);
+  const refInput = el('input', {
+    type: 'text', class: 'ctrm-input w-full text-[12px]',
+    placeholder: 'Nombre de referencia',
+    title: 'Existente del catálogo, o nueva (se crea al guardar).',
+    list: refDatalistId,
+    autocomplete: 'off',
+  });
 
   const varietyInput = el('input', {
     type: 'text', class: 'ctrm-input w-full text-[12px]',
     placeholder: 'castillo, caturra',
     title: 'Nombres separados por coma. Si una no existe se crea al guardar.',
-    list: datalistId,
+    list: varietyDatalistId,
   });
 
   const kgInput = el('input', {
@@ -323,12 +389,21 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
     placeholder: '—',
   });
 
-  // Auto-fill proceso + fermentación cuando se elige referencia.
-  refSelect.addEventListener('change', () => {
-    const ref = refById.get(refSelect.value);
+  // Auto-fill proceso + fermentación cuando el nombre coincide con una
+  // referencia existente. Si el usuario escribe un nombre nuevo, no
+  // toca proceso/ferm.
+  refInput.addEventListener('change', () => {
+    const ref = lookupRef(refInput.value);
     if (!ref) return;
-    if (ref.process_type && !processSelect.value) processSelect.value = ref.process_type;
-    else if (ref.process_type) processSelect.value = ref.process_type;
+    if (ref.process_type) processSelect.value = ref.process_type;
+    if (ref.fermentation_hours != null && fermInput.value === '') fermInput.value = String(ref.fermentation_hours);
+  });
+  refInput.addEventListener('input', () => {
+    // El "input" event dispara cuando el usuario selecciona una opcion
+    // del datalist (al menos en Chrome/Firefox), asi cubrimos ese caso.
+    const ref = lookupRef(refInput.value);
+    if (!ref) return;
+    if (ref.process_type) processSelect.value = ref.process_type;
     if (ref.fermentation_hours != null && fermInput.value === '') fermInput.value = String(ref.fermentation_hours);
   });
 
@@ -348,7 +423,7 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
 
   const tr = el('tr', { class: 'border-t border-sand align-top' }, [
     el('td', { class: `${cellCls} text-center` }, [idxLabel]),
-    el('td', { class: cellCls }, [refSelect]),
+    el('td', { class: cellCls }, [refInput]),
     el('td', { class: cellCls }, [varietyInput]),
     el('td', { class: cellCls }, [kgInput, kgHint]),
     el('td', { class: cellCls }, [dateInput]),
@@ -366,7 +441,7 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
   if (prefill) applyPrefill(prefill);
 
   function applyPrefill(p) {
-    if (p.reference_id) refSelect.value = p.reference_id;
+    if (p.reference_name) refInput.value = p.reference_name;
     if (p.variety_names) varietyInput.value = p.variety_names;
     if (p.kg) kgInput.value = p.kg;
     if (p.date) dateInput.value = p.date;
@@ -386,7 +461,7 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
 
   function snapshot() {
     return {
-      reference_id: refSelect.value,
+      reference_name: refInput.value,
       variety_names: varietyInput.value,
       kg: kgInput.value,
       date: dateInput.value,
@@ -408,21 +483,21 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
 
   function validate() {
     const errors = [];
-    if (!refSelect.value) errors.push('Selecciona una referencia');
+    const refRawName = refInput.value.trim();
+    if (!refRawName) errors.push('Escribe el nombre de una referencia');
     const kg = Number(kgInput.value);
     if (!Number.isFinite(kg) || kg <= 0) errors.push('Ingresa una cantidad mayor a 0');
     if (!dateInput.value) errors.push('Selecciona una fecha de entrega');
     if (!aspectSelect.value) errors.push('Selecciona aspecto físico');
     if (!processSelect.value) errors.push('Selecciona proceso');
 
-    if (errors.length > 0) return { errors, payloadSkeleton: null, rawVarietyNames: [] };
+    if (errors.length > 0) return { errors, payloadSkeleton: null, rawVarietyNames: [], refRawName: '' };
 
     const rawVarietyNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
     const selectedRegions = regionChips.filter((b) => b.getAttribute('data-on') === 'true')
       .map((b) => b.getAttribute('data-region'));
 
     const payloadSkeleton = {
-      reference_id: refSelect.value,
       kg_green_required: kg,
       max_delivery_date: dateInput.value,
       physical_aspect: aspectSelect.value,
@@ -434,12 +509,12 @@ function createBulkRow({ allReferences, refById, datalistId, onRemove }, prefill
       regions: selectedRegions.length > 0 ? selectedRegions : null,
       contract_code: contractInput.value.trim() || null,
     };
-    return { errors: [], payloadSkeleton, rawVarietyNames };
+    return { errors: [], payloadSkeleton, rawVarietyNames, refRawName };
   }
 
   function focus() {
     tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => refSelect.focus(), 150);
+    setTimeout(() => refInput.focus(), 150);
   }
 
   return { tr, validate, setIndex, focus, snapshot };
