@@ -937,10 +937,12 @@ export async function fincaLotsView() {
       ]);
       procSelect.addEventListener('change', () => maybeRefreshCandidates());
 
-      // Stage selector — visual segmented control
+      // Tipo de café — segmented control. min-w-0 + text wrap por si la
+      // pantalla es muy angosta (mobile <340px) para no desbordar la card.
       const stageButtons = STAGE_OPTIONS.map((opt) => el('button', {
         type: 'button',
-        class: `ctrm-btn flex-1 uppercase tracking-eyebrow text-[10px] ${opt.value === chosenStage ? 'ctrm-btn-primary' : 'ctrm-btn-soft'}`,
+        class: `ctrm-btn flex-1 min-w-0 uppercase tracking-eyebrow text-[10px] px-2 ${opt.value === chosenStage ? 'ctrm-btn-primary' : 'ctrm-btn-soft'}`,
+        style: 'white-space:normal;line-height:1.15;',
         onClick: () => { chosenStage = opt.value; refreshStageUI(); },
       }, [opt.label]));
 
@@ -1077,7 +1079,7 @@ export async function fincaLotsView() {
 
         // Stage selector
         el('div', {}, [
-          el('label', { class: 'ctrm-label', text: 'Etapa de procesamiento' }),
+          el('label', { class: 'ctrm-label', text: 'Tipo de café' }),
           el('div', { class: 'flex gap-2' }, stageButtons),
         ]),
 
