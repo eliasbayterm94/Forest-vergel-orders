@@ -19,6 +19,19 @@ export async function fincaDespachosView() {
 
   const list = el('div', { class: 'space-y-3' });
 
+  // Si Punto Final guardo IDs en sessionStorage, abrimos el modal de
+  // crear despacho preseleccionando esos lotes.
+  try {
+    const raw = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('punto-final-preselect') : null;
+    if (raw) {
+      sessionStorage.removeItem('punto-final-preselect');
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids) && ids.length > 0) {
+        setTimeout(() => openCreateModal(ids), 0);
+      }
+    }
+  } catch { /* silent */ }
+
   function render() {
     clear(list);
     list.append(listView({
@@ -236,21 +249,25 @@ export async function fincaDespachosView() {
     } catch (e) { toast(e.message, 'error'); }
   }
 
-  function openCreateModal(preselectLotId) {
+  function openCreateModal(preselectLotIdOrIds) {
+    // Acepta string (legacy: un solo lot id) o array de ids.
+    const preselectLotIds = Array.isArray(preselectLotIdOrIds)
+      ? preselectLotIdOrIds
+      : (preselectLotIdOrIds ? [preselectLotIdOrIds] : []);
     if (readyLots.length === 0) {
       toast('No hay lotes Listos para despachar.', 'warning', 4500);
       return;
     }
-    return openModal(({ close }) => createModalBody(close, preselectLotId), {
+    return openModal(({ close }) => createModalBody(close, preselectLotIds), {
       title: 'Nuevo despacho', wide: true,
     });
   }
 
-  function createModalBody(close, preselectLotId) {
+  function createModalBody(close, preselectLotIds) {
     // Selection state:
     //   wholeLots:  Set<lot_id>     — for lots without partials
     //   partials:   Set<partial_id> — for partial-mode lots
-    const wholeLots = new Set(preselectLotId ? [preselectLotId] : []);
+    const wholeLots = new Set(Array.isArray(preselectLotIds) ? preselectLotIds : []);
     const partialIds = new Set();
 
     const dateInput = el('input', {

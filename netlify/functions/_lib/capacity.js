@@ -49,6 +49,11 @@ function computeCapacity({
     const kgGreen = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
     const kgGreenRequired = Number(o.kg_green_required ?? 0);
     const latestStart = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDaysByProcess, processingDaysByProcess);
+    // Para la distribución de carga semanal usamos el periodo
+    // acceptance → latest_drying_start_date. Si no hay acceptance (raro),
+    // caemos a hoy para que la carga arranque ya.
+    const acceptedYmd = o.accepted_at ? String(o.accepted_at).slice(0, 10) : null;
+    const planStart = acceptedYmd && acceptedYmd < latestStart ? acceptedYmd : todayYmd;
     return {
       id: o.id,
       order_code: o.order_code,
@@ -62,6 +67,7 @@ function computeCapacity({
       kg_cherry_for_planning: greenToCherry(kgGreen),
       kg_cherry_required: greenToCherry(kgGreenRequired),
       latest_drying_start_date: latestStart,
+      plan_start_date: planStart,
       urgency: urgencyOf(latestStart, todayYmd),
       iso_week_key: isoWeekKey(latestStart),
     };
@@ -126,10 +132,28 @@ function computeCapacity({
   };
 
   for (const o of enrichedOrders) {
-    const b = ensureBucket(o.latest_drying_start_date);
-    b.selected_orders_kg_cherry = round2(b.selected_orders_kg_cherry + o.kg_cherry_for_planning);
-    b.selected_orders_kg_green  = round2(b.selected_orders_kg_green  + o.kg_green_for_planning);
-    b.selected_order_codes.push(o.order_code);
+    // Distribuir la cereza del pedido entre todas las semanas ISO del
+    // periodo [plan_start_date → latest_drying_start_date]. Refleja que
+    // el bache se trabaja desde que se acepta hasta el plazo limite de
+    // empezar a secar. Cada semana del periodo recibe una porcion igual.
+    const weeks = isoWeeksBetween(o.plan_start_date, o.latest_drying_start_date);
+    if (weeks.length === 0) {
+      // Fallback: no hay periodo (plan_start >= latest_start) — todo a
+      // la semana de inicio de drying.
+      const b = ensureBucket(o.latest_drying_start_date);
+      b.selected_orders_kg_cherry = round2(b.selected_orders_kg_cherry + o.kg_cherry_for_planning);
+      b.selected_orders_kg_green  = round2(b.selected_orders_kg_green  + o.kg_green_for_planning);
+      if (!b.selected_order_codes.includes(o.order_code)) b.selected_order_codes.push(o.order_code);
+      continue;
+    }
+    const cherryPerWeek = o.kg_cherry_for_planning / weeks.length;
+    const greenPerWeek  = o.kg_green_for_planning  / weeks.length;
+    for (const wk of weeks) {
+      const b = ensureBucket(wk);
+      b.selected_orders_kg_cherry = round2(b.selected_orders_kg_cherry + cherryPerWeek);
+      b.selected_orders_kg_green  = round2(b.selected_orders_kg_green  + greenPerWeek);
+      if (!b.selected_order_codes.includes(o.order_code)) b.selected_order_codes.push(o.order_code);
+    }
   }
 
   for (const lot of activeLots) {
@@ -179,5 +203,27 @@ function computeCapacity({
 
 function sum(arr) { return arr.reduce((a, b) => a + Number(b || 0), 0); }
 function round2(n) { return Math.round(n * 100) / 100; }
+
+// Devuelve la lista de YYYY-MM-DD (uno por semana ISO) que cubre el
+// rango [startYmd, endYmd], inclusivo en semana. Cada string es el
+// lunes de la semana ISO. Si end < start, devuelve [].
+function isoWeeksBetween(startYmd, endYmd) {
+  if (!startYmd || !endYmd) return [];
+  const startMon = require('./isoWeek').isoWeekStart(startYmd);
+  const endMon   = require('./isoWeek').isoWeekStart(endYmd);
+  if (endMon < startMon) return [];
+  const weeks = [];
+  // Iterar lunes a lunes hasta endMon inclusivo. Limit defensivo (200 semanas).
+  let cursor = startMon;
+  for (let i = 0; i < 200; i++) {
+    weeks.push(cursor);
+    if (cursor === endMon) break;
+    const [y, m, d] = cursor.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + 7);
+    cursor = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+  }
+  return weeks;
+}
 
 module.exports = { computeCapacity };

@@ -40,7 +40,6 @@ const FOREST_NAV = [
   { path: '/forest/demand',     label: 'Nuevo pedido', icon: 'plus' },
   { path: '/forest/external',   label: 'Externos',     icon: 'external' },
   { path: '/forest/references', label: 'Referencias',  icon: 'book' },
-  { path: '/calendar',          label: 'Calendario',   icon: 'calendar' },
   { path: '/reports',           label: 'Reportes',     icon: 'chart' },
 ];
 
@@ -49,9 +48,9 @@ const FINCA_NAV = [
   { path: '/finca/inbox',     label: 'Pedidos entrantes', icon: 'inbox' },
   { path: '/finca/cola',      label: 'Cola de pedidos',   icon: 'calendar' },
   { path: '/finca/lots',      label: 'Producción',        icon: 'box' },
+  { path: '/finca/punto-final', label: 'Punto Final',     icon: 'box' },
   { path: '/finca/despachos', label: 'Despachos',         icon: 'truck' },
   { path: '/finca/monitoreo', label: 'Monitoreo',         icon: 'chart' },
-  { path: '/calendar',        label: 'Calendario',        icon: 'calendar' },
   { path: '/reports',         label: 'Reportes',          icon: 'chart' },
 ];
 

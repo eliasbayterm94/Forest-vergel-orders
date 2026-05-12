@@ -29,6 +29,7 @@ exports.handler = requireAuth(async (event) => {
     .from('demand_orders')
     .select(`id, order_code, reference_id, kg_green_required, kg_green_accepted,
              max_delivery_date, process_type, fermentation_hours,
+             accepted_at, created_at,
              coffee_references ( id, name )`)
     .in('id', order_ids);
   if (oErr) return serverErr('Order load failed', oErr.message);
@@ -43,6 +44,7 @@ exports.handler = requireAuth(async (event) => {
     max_delivery_date: o.max_delivery_date,
     process_type: o.process_type,
     fermentation_hours: o.fermentation_hours,
+    accepted_at: o.accepted_at || o.created_at || null,
   }));
 
   let activeLots = [];
