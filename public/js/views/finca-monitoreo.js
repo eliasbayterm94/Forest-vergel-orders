@@ -1,6 +1,5 @@
-// Finca monitoring — alertas operativas + pipeline visual.
-// Pedidos sin lote, lotes con fermentation/drying excedidos, distribucion
-// por etapa.
+// Finca monitoring — alertas operativas + pipeline visual + operación
+// en vivo (fermentación / drying) + tendencias semanales.
 import { el, clear } from '../ui/el.js';
 import { fmtKg, fmtDate, statusLabel, statusPillKind } from '../ui/format.js';
 import { api } from '../api.js';
@@ -8,12 +7,18 @@ import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
+import { createTabBar } from '../ui/tab-bar.js';
 
 const STAGE_ORDER = ['InFermentation', 'Drying', 'Ready', 'Delivered'];
 
 // Tolerancia (en dias) sobre los lead-times antes de marcar como vencido.
 const FERMENTATION_OVERRUN_DAYS = 5;   // si el lote sigue InFermentation > 5d
 const DRYING_GRACE_DAYS = 0;           // any day past drying_days is overrun
+
+// Umbrales del tab Operación (semaforo en cards de lanes).
+// Amarillo a partir del 80% del lead-time esperado; rojo cuando pasa.
+const ALERT_AMBER_PCT = 0.8;
+const DEFAULT_FERMENTATION_HOURS = 72;   // si el lote no trae fermentation_hours
 
 export async function fincaMonitoreoView() {
   const [ordersRes, lotsRes, leadRes] = await Promise.all([
@@ -149,7 +154,25 @@ export async function fincaMonitoreoView() {
     if (kind === 'dry')   return el('div', { class: 'space-y-2' }, items.map(dryingRow));
     return null;
   }
-  function redraw() {
+
+  let activeTab = 'alertas';
+  const tabbar = createTabBar({
+    tabs: [
+      { key: 'alertas',    label: 'Alertas' },
+      { key: 'operacion',  label: 'Operación en vivo' },
+      { key: 'tendencias', label: 'Tendencias' },
+    ],
+    activeKey: activeTab,
+    onChange: (k) => { activeTab = k; tabbar.setContent(renderActiveTab()); },
+  });
+
+  function renderActiveTab() {
+    if (activeTab === 'operacion')  return renderOperacion();
+    if (activeTab === 'tendencias') return renderTendencias();
+    return renderAlertas();
+  }
+
+  function renderAlertas() {
     const ordersSh    = ordersSinLote.filter(passesOrder);
     const fermSh      = fermentationOverrun.filter(passesLot);
     const dryingSh    = dryingOverrun.filter(passesLot);
@@ -158,13 +181,10 @@ export async function fincaMonitoreoView() {
     const fb = renderFilterButton({
       filters: sheetFilters,
       values: sheetValues,
-      onChange: (v) => { sheetValues = v; redraw(); },
+      onChange: (v) => { sheetValues = v; tabbar.setContent(renderActiveTab()); },
     });
 
-    clear(root);
-    root.append(
-      pageTitle('Monitoreo', `Hoy: ${today}`),
-
+    return el('div', {}, [
       el('div', { class: 'mb-4 flex items-center justify-between gap-2 flex-wrap' }, [
         fb.el,
         vm.toggleEl,
@@ -201,6 +221,153 @@ export async function fincaMonitoreoView() {
           ? emptyText('Sin lotes con drying excedido.')
           : listOrTable(dryingSh, 'dry'),
       ),
+    ]);
+  }
+
+  function renderOperacion() {
+    // Lanes en vivo: fermentación y drying. Cada lote en lane se
+    // enriquece con su progreso (% del lead-time) y nivel de alerta.
+    const fermLots = lots.filter((l) => l.status === 'InFermentation').map((l) => {
+      const target = Number(l.fermentation_hours || DEFAULT_FERMENTATION_HOURS);
+      const hoursElapsed = hoursBetween(l.start_date, today);
+      const pct = target > 0 ? Math.min(150, (hoursElapsed / target) * 100) : 0;
+      const level = pct >= 100 ? 'red' : pct >= ALERT_AMBER_PCT * 100 ? 'amber' : 'green';
+      return { ...l, _hoursElapsed: hoursElapsed, _hoursTarget: target, _pct: pct, _level: level };
+    }).sort((a, b) => b._pct - a._pct);
+
+    const dryLots = lots.filter((l) => l.status === 'Drying').map((l) => {
+      const cfg = leadByProcess.get(l.process_type);
+      const target = cfg ? Number(cfg.drying_days) : null;
+      const daysElapsed = l.drying_start_date ? daysBetween(l.drying_start_date, today) : 0;
+      const pct = target && target > 0 ? Math.min(150, (daysElapsed / target) * 100) : 0;
+      const level = !target ? 'green'
+        : pct >= 100 ? 'red'
+        : pct >= ALERT_AMBER_PCT * 100 ? 'amber' : 'green';
+      const partials = (l.partials || []).filter((p) => !p.rejected_at);
+      return { ...l, _daysElapsed: daysElapsed, _daysTarget: target, _pct: pct, _level: level, _partialsCount: partials.length };
+    }).sort((a, b) => b._pct - a._pct);
+
+    return el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4' }, [
+      laneSection({
+        title: 'Fermentación',
+        accent: '#7e9ec1',
+        lots: fermLots,
+        emptyText: 'No hay baches en fermentación.',
+        kpis: laneKpis(fermLots, 'ferm'),
+        renderCard: (l) => laneCardFerm(l),
+      }),
+      laneSection({
+        title: 'Secado (Drying)',
+        accent: '#ddae3e',
+        lots: dryLots,
+        emptyText: 'No hay baches en secado.',
+        kpis: laneKpis(dryLots, 'dry'),
+        renderCard: (l) => laneCardDrying(l),
+      }),
+    ]);
+  }
+
+  function renderTendencias() {
+    // Últimas 12 semanas ISO. Para cada semana:
+    //   ferm_started   — baches con start_date en esa semana
+    //   drying_started — baches con drying_start_date en esa semana
+    //   closed         — baches con ready_date en esa semana
+    //   cereza_in      — sum kg_cherry_input de los que arrancaron en ferm esa semana
+    //   verde_out      — sum kg_green_actual de los cerrados esa semana
+    //   factor_avg     — promedio ponderado del factor de los cerrados
+    const weeks = lastNIsoWeeks(today, 12);
+    const byWeek = new Map(weeks.map((w) => [w.key, {
+      ...w, ferm: 0, drying: 0, closed: 0, cereza_in: 0, verde_out: 0,
+      factor_num: 0, factor_den: 0,
+    }]));
+    for (const l of lots) {
+      const fermKey = isoWeekKeyOf(l.start_date);
+      const dryKey  = isoWeekKeyOf(l.drying_start_date);
+      const readyKey = isoWeekKeyOf(l.ready_date);
+      if (fermKey && byWeek.has(fermKey)) {
+        const b = byWeek.get(fermKey);
+        b.ferm += 1;
+        b.cereza_in += Number(l.kg_cherry_input || 0);
+      }
+      if (dryKey && byWeek.has(dryKey)) byWeek.get(dryKey).drying += 1;
+      if (readyKey && byWeek.has(readyKey)) {
+        const b = byWeek.get(readyKey);
+        b.closed += 1;
+        b.verde_out += Number(l.kg_green_actual || 0);
+        const factor = Number(l.factor_rendimiento || 0);
+        const dried  = Number(l.kg_dried_output || 0);
+        if (factor > 0 && dried > 0) {
+          b.factor_num += factor * dried;
+          b.factor_den += dried;
+        }
+      }
+    }
+    const rows = weeks.map((w) => {
+      const b = byWeek.get(w.key);
+      const factor = b.factor_den > 0 ? Math.round((b.factor_num / b.factor_den) * 100) / 100 : null;
+      return {
+        key: w.key, start: w.start,
+        ferm: b.ferm, drying: b.drying, closed: b.closed,
+        cereza_in: b.cereza_in, verde_out: b.verde_out, factor,
+      };
+    });
+
+    const series = {
+      ferm:      rows.map((r) => r.ferm),
+      drying:    rows.map((r) => r.drying),
+      closed:    rows.map((r) => r.closed),
+      cereza_in: rows.map((r) => r.cereza_in),
+      verde_out: rows.map((r) => r.verde_out),
+      factor:    rows.map((r) => r.factor || 0),
+    };
+
+    return el('div', {}, [
+      el('p', { class: 'eyebrow mb-2', text: 'Últimas 12 semanas ISO' }),
+      el('div', { class: 'overflow-x-auto ctrm-card' }, [
+        el('table', { class: 'w-full text-[12px]' }, [
+          el('thead', {}, [
+            // Fila 1: sparklines
+            el('tr', {}, [
+              el('th', { class: 'px-2 py-2 text-left text-[10px] text-ink-300 uppercase tracking-loose' }, ['Sparkline']),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.ferm,      '#7e9ec1')]),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.drying,    '#ddae3e')]),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.closed,    '#5d8b66')]),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.cereza_in, '#c45a4f')]),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.verde_out, '#3a6f4a')]),
+              el('th', { class: 'px-2 py-2' }, [sparkline(series.factor,    '#1a3a5c')]),
+            ]),
+            // Fila 2: labels
+            el('tr', { class: 'border-t border-sand' }, [
+              el('th', { class: 'px-2 py-2 text-left font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Semana']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Ferm. arrancó']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Drying arrancó']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Cerrados']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Cereza in']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Verde out']),
+              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Factor prom.']),
+            ]),
+          ]),
+          el('tbody', {}, rows.map((r) => el('tr', { class: 'border-t border-sand' }, [
+            el('td', { class: 'px-2 py-1.5 font-mono text-ink-700' }, [r.key]),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.ferm)   }),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.drying) }),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.closed) }),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.cereza_in > 0 ? fmtKg(r.cereza_in) : '—' }),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.verde_out > 0 ? fmtKg(r.verde_out) : '—' }),
+            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.factor != null ? String(r.factor) : '—' }),
+          ]))),
+        ]),
+      ]),
+    ]);
+  }
+
+  function redraw() {
+    clear(root);
+    tabbar.setContent(renderActiveTab());
+    root.append(
+      pageTitle('Monitoreo', `Hoy: ${today}`),
+      tabbar.el,
+      tabbar.panel,
     );
   }
   redraw();
@@ -371,6 +538,186 @@ function daysBetween(fromIso, toIso) {
   const a = new Date(fromIso + 'T00:00:00Z');
   const b = new Date(toIso   + 'T00:00:00Z');
   return Math.floor((b - a) / 86400000);
+}
+
+function hoursBetween(fromIso, toIso) {
+  if (!fromIso || !toIso) return 0;
+  const a = new Date(fromIso + 'T00:00:00Z');
+  const b = new Date(toIso   + 'T00:00:00Z');
+  return Math.max(0, Math.floor((b - a) / 3600000));
+}
+
+// ── Lane renderers (tab Operación) ──────────────────────────────────
+const LEVEL_COLOR = {
+  green: '#5d8b66',
+  amber: '#ddae3e',
+  red:   '#c45a4f',
+};
+
+function laneSection({ title, accent, lots, emptyText, kpis, renderCard }) {
+  return el('div', { class: 'ctrm-card overflow-hidden' }, [
+    el('div', { class: 'px-3 py-2', style: `background:${accent};` }, [
+      el('p', { class: 'font-display font-semibold uppercase tracking-eyebrow text-[12px]', style: 'color:#fff;', text: title }),
+    ]),
+    el('div', { class: 'px-3 py-2 border-b border-sand bg-cream flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-700 font-mono' }, kpis),
+    lots.length === 0
+      ? el('p', { class: 'p-4 text-[12px] text-ink-300 italic', text: emptyText })
+      : el('div', { class: 'p-3 space-y-2 max-h-[60vh] overflow-y-auto' }, lots.map(renderCard)),
+  ]);
+}
+
+function laneKpis(lots, kind) {
+  const total = lots.length;
+  const reds  = lots.filter((l) => l._level === 'red').length;
+  const ambers = lots.filter((l) => l._level === 'amber').length;
+  const kgKey = kind === 'ferm' ? 'kg_cherry_input' : 'kg_dried_output';
+  const kgSum = lots.reduce((s, l) => s + Number(l[kgKey] || 0), 0);
+  const kgLabel = kind === 'ferm' ? 'Cereza in' : 'Seco proyectado';
+  return [
+    kpiPill('Baches', String(total)),
+    kpiPill(kgLabel, fmtKg(kgSum)),
+    kpiPill('Críticos', String(reds), reds > 0 ? 'crit' : null),
+    kpiPill('Atención', String(ambers), ambers > 0 ? 'warn' : null),
+  ];
+}
+
+function kpiPill(label, value, kind) {
+  const color = kind === 'crit' ? '#c45a4f' : kind === 'warn' ? '#8a5100' : '#2a2a28';
+  return el('span', { class: 'inline-flex items-baseline gap-1' }, [
+    el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
+    el('strong', { style: `color:${color};`, text: value }),
+  ]);
+}
+
+function laneCardFerm(l) {
+  const target = l._hoursTarget;
+  const elapsed = l._hoursElapsed;
+  const color = LEVEL_COLOR[l._level];
+  return el('button', {
+    type: 'button',
+    class: 'w-full text-left ctrm-card ctrm-card-pad block hover:border-navy',
+    onClick: () => navigate('/finca/lots'),
+  }, [
+    el('div', { class: 'flex items-center justify-between gap-2 flex-wrap mb-1' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[12px] truncate', text: l.reference_name || '—' }),
+        el('span', { class: 'ctrm-pill muted', text: l.process_type }),
+        l.infusion_name
+          ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: l.infusion_name })
+          : null,
+      ]),
+      el('span', { class: 'text-[11px] font-mono font-bold', style: `color:${color};`,
+        text: `${elapsed}h / ${target}h` }),
+    ]),
+    progressBar(l._pct, color),
+    el('div', { class: 'flex flex-wrap text-[10px] text-ink-500 gap-x-3 gap-y-0.5 font-mono mt-1' }, [
+      meta('Inicio', fmtDate(l.start_date)),
+      meta('Cereza', fmtKg(l.kg_cherry_input)),
+      meta('Verde esp.', fmtKg(l.kg_green_expected)),
+    ]),
+  ]);
+}
+
+function laneCardDrying(l) {
+  const target = l._daysTarget;
+  const elapsed = l._daysElapsed;
+  const remaining = target != null ? target - elapsed : null;
+  const color = LEVEL_COLOR[l._level];
+  return el('button', {
+    type: 'button',
+    class: 'w-full text-left ctrm-card ctrm-card-pad block hover:border-navy',
+    onClick: () => navigate('/finca/lots'),
+  }, [
+    el('div', { class: 'flex items-center justify-between gap-2 flex-wrap mb-1' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[12px] truncate', text: l.reference_name || '—' }),
+        el('span', { class: 'ctrm-pill muted', text: l.process_type }),
+        l._partialsCount > 0
+          ? el('span', { class: 'ctrm-pill', text: `${l._partialsCount}/6 parciales` })
+          : null,
+      ]),
+      el('span', { class: 'text-[11px] font-mono font-bold', style: `color:${color};`,
+        text: target ? `${elapsed}d / ${target}d` : `${elapsed}d` }),
+    ]),
+    progressBar(l._pct, color),
+    el('div', { class: 'flex flex-wrap text-[10px] text-ink-500 gap-x-3 gap-y-0.5 font-mono mt-1' }, [
+      meta('Inicio drying', fmtDate(l.drying_start_date)),
+      remaining != null ? meta('Restan', `${Math.max(0, remaining)}d`) : null,
+      meta('Verde esp.', fmtKg(l.kg_green_expected)),
+    ]),
+  ]);
+}
+
+function progressBar(pct, color) {
+  const w = Math.min(100, Math.max(0, pct));
+  return el('div', { class: 'h-2 rounded-md bg-cream relative overflow-hidden border border-sand' }, [
+    el('div', { class: 'h-full', style: `width:${w}%;background:${color};` }),
+  ]);
+}
+
+// ── Sparkline helper (mini SVG line) ────────────────────────────────
+function sparkline(values, stroke) {
+  const w = 80, h = 22, pad = 2;
+  const max = Math.max(0, ...values);
+  const min = Math.min(0, ...values);
+  const range = max - min || 1;
+  const n = values.length || 1;
+  const pts = values.map((v, i) => {
+    const x = pad + (i * (w - pad * 2)) / Math.max(1, n - 1);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+  const poly = document.createElementNS(ns, 'polyline');
+  poly.setAttribute('points', pts);
+  poly.setAttribute('fill', 'none');
+  poly.setAttribute('stroke', stroke);
+  poly.setAttribute('stroke-width', '1.5');
+  poly.setAttribute('stroke-linejoin', 'round');
+  poly.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(poly);
+  return svg;
+}
+
+// ── ISO week helpers ────────────────────────────────────────────────
+function isoWeekKeyOf(ymd) {
+  if (!ymd) return null;
+  const s = String(ymd).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + 'T00:00:00Z');
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const isoYear = d.getUTCFullYear();
+  const yearStart = Date.UTC(isoYear, 0, 1);
+  const isoWeek = Math.ceil(((d.getTime() - yearStart) / 86400000 + 1) / 7);
+  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+}
+
+function isoWeekStartOf(ymd) {
+  const d = new Date(ymd + 'T00:00:00Z');
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() - (dayNum - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+function lastNIsoWeeks(todayYmd, n) {
+  // Devuelve [oldest..newest] semanas. Cada item: { key, start }.
+  const cur = isoWeekStartOf(todayYmd);
+  const out = [];
+  let cursor = cur;
+  for (let i = 0; i < n; i++) {
+    out.unshift({ key: isoWeekKeyOf(cursor), start: cursor });
+    const dt = new Date(cursor + 'T00:00:00Z');
+    dt.setUTCDate(dt.getUTCDate() - 7);
+    cursor = dt.toISOString().slice(0, 10);
+  }
+  return out;
 }
 
 // ─── Table renderers ──────────────────────────────────────────────
