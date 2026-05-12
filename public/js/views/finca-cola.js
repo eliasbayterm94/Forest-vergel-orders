@@ -23,13 +23,15 @@ const FILTERS = [
 ];
 
 export async function fincaColaView() {
-  const [ordersRes, lotsRes] = await Promise.all([
+  const [ordersRes, lotsRes, shipsRes] = await Promise.all([
     api.ordersList({}),
     api.lotsList({}),   // todos: incluye Delivered para allocByOrder correcto
+    api.shipmentsList().catch(() => ({ shipments: [] })),
   ]);
   const today      = ordersRes.today;
   const allOrders  = ordersRes.orders || [];
   const allLots    = lotsRes.lots || [];
+  const shipments  = (shipsRes && shipsRes.shipments) || [];
   // Solo los lotes activos se usan para timeline / capacity overlay,
   // pero allocByOrder cuenta TODOS (incluyendo Delivered).
   const activeLots = allLots.filter((l) => l.status !== 'Delivered');
@@ -67,6 +69,19 @@ export async function fincaColaView() {
     }
   }
 
+  // Despachado por pedido: suma de kg verde asignado en cada shipment.
+  const shippedByOrder = new Map();
+  for (const s of shipments) {
+    for (const l of s.lots || []) {
+      for (const a of l.assignments || []) {
+        const oid = a.order ? a.order.id : a.demand_order_id;
+        if (!oid) continue;
+        shippedByOrder.set(oid,
+          (shippedByOrder.get(oid) || 0) + Number(a.kg_green_allocated || 0));
+      }
+    }
+  }
+
   const inFlight = allOrders
     .filter((o) => ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status))
     .map((o) => {
@@ -76,7 +91,8 @@ export async function fincaColaView() {
       const wkey = o.iso_week_key || null;
       const weekBucket = wkey ? weeklyByKey.get(wkey) : null;
       const infNames = [...(infusionsByOrder.get(o.id) || [])];
-      return { ...o, allocated_kg: allocated, pending_kg: pending, week_bucket: weekBucket, infusion_names: infNames };
+      const shipped = shippedByOrder.get(o.id) || 0;
+      return { ...o, allocated_kg: allocated, pending_kg: pending, shipped_kg: shipped, week_bucket: weekBucket, infusion_names: infNames };
     })
     .sort((a, b) => (a.latest_drying_start_date || '').localeCompare(b.latest_drying_start_date || ''));
 
@@ -249,6 +265,8 @@ function queueTable(orders, today) {
       el('th', {}, ['Status']),
       el('th', {}, ['Infusión']),
       el('th', { class: 'text-right' }, ['Aceptado']),
+      el('th', { class: 'text-right' }, ['Asignado']),
+      el('th', { class: 'text-right' }, ['Despachado']),
       el('th', { class: 'text-right' }, ['Pendiente']),
       el('th', {}, ['Drying-start']),
       el('th', {}, ['Entrega']),
@@ -270,6 +288,9 @@ function queueTable(orders, today) {
           ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: o.infusion_names.join(', ') })
           : '—'),
         cell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted || 0)),
+        cell('Asignado',  'text-right font-mono', fmtKg(o.allocated_kg || 0)),
+        cell('Despachado', `text-right font-mono ${o.shipped_kg > 0 ? 'text-ok font-semibold' : 'text-ink-300'}`,
+          o.shipped_kg > 0 ? fmtKg(o.shipped_kg) : '—'),
         cell('Pendiente', `text-right font-mono ${o.pending_kg > 0 ? 'text-warn font-bold' : 'text-ink-300'}`,
           fmtKg(o.pending_kg || 0)),
         cell('Drying-start', `font-mono text-[11px] ${dryColor}`,
@@ -357,6 +378,7 @@ function queueRow(o, today, earliest, latest) {
   const accepted  = Number(o.kg_green_accepted || 0);
   const allocated = Number(o.allocated_kg || 0);
   const pending   = Number(o.pending_kg || 0);
+  const shipped   = Number(o.shipped_kg || 0);
   const coverPct  = accepted > 0 ? Math.min(100, (allocated / accepted) * 100) : 0;
   const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
   const dryingPos = posOn(earliest, latest, o.latest_drying_start_date);
@@ -396,6 +418,7 @@ function queueRow(o, today, earliest, latest) {
     el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-4 gap-y-0.5 font-mono mb-2' }, [
       meta('Verde aceptado', fmtKg(accepted)),
       meta('Asignado',       fmtKg(allocated)),
+      shipped > 0 ? meta('Despachado', fmtKg(shipped)) : null,
       meta('Pendiente',      fmtKg(pending)),
       meta('Proceso',        o.process_type),
       o.client_name ? meta('Cliente', o.client_name) : null,
