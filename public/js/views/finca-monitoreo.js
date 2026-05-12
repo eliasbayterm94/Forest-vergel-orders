@@ -268,30 +268,30 @@ export async function fincaMonitoreoView() {
   }
 
   function renderTendencias() {
-    // Últimas 12 semanas ISO. Para cada semana:
-    //   ferm_started   — baches con start_date en esa semana
-    //   drying_started — baches con drying_start_date en esa semana
-    //   closed         — baches con ready_date en esa semana
-    //   cereza_in      — sum kg_cherry_input de los que arrancaron en ferm esa semana
-    //   verde_out      — sum kg_green_actual de los cerrados esa semana
+    // Últimos 12 meses calendario. Para cada mes:
+    //   ferm_started   — baches con start_date en ese mes
+    //   drying_started — baches con drying_start_date en ese mes
+    //   closed         — baches con ready_date en ese mes
+    //   cereza_in      — sum kg_cherry_input de los que arrancaron en ferm
+    //   verde_out      — sum kg_green_actual de los cerrados ese mes
     //   factor_avg     — promedio ponderado del factor de los cerrados
-    const weeks = lastNIsoWeeks(today, 12);
-    const byWeek = new Map(weeks.map((w) => [w.key, {
-      ...w, ferm: 0, drying: 0, closed: 0, cereza_in: 0, verde_out: 0,
+    const months = lastNMonths(today, 12);
+    const byMonth = new Map(months.map((m) => [m.key, {
+      ...m, ferm: 0, drying: 0, closed: 0, cereza_in: 0, verde_out: 0,
       factor_num: 0, factor_den: 0,
     }]));
     for (const l of lots) {
-      const fermKey = isoWeekKeyOf(l.start_date);
-      const dryKey  = isoWeekKeyOf(l.drying_start_date);
-      const readyKey = isoWeekKeyOf(l.ready_date);
-      if (fermKey && byWeek.has(fermKey)) {
-        const b = byWeek.get(fermKey);
+      const fermKey = monthKeyOf(l.start_date);
+      const dryKey  = monthKeyOf(l.drying_start_date);
+      const readyKey = monthKeyOf(l.ready_date);
+      if (fermKey && byMonth.has(fermKey)) {
+        const b = byMonth.get(fermKey);
         b.ferm += 1;
         b.cereza_in += Number(l.kg_cherry_input || 0);
       }
-      if (dryKey && byWeek.has(dryKey)) byWeek.get(dryKey).drying += 1;
-      if (readyKey && byWeek.has(readyKey)) {
-        const b = byWeek.get(readyKey);
+      if (dryKey && byMonth.has(dryKey)) byMonth.get(dryKey).drying += 1;
+      if (readyKey && byMonth.has(readyKey)) {
+        const b = byMonth.get(readyKey);
         b.closed += 1;
         b.verde_out += Number(l.kg_green_actual || 0);
         const factor = Number(l.factor_rendimiento || 0);
@@ -302,11 +302,11 @@ export async function fincaMonitoreoView() {
         }
       }
     }
-    const rows = weeks.map((w) => {
-      const b = byWeek.get(w.key);
+    const rows = months.map((m) => {
+      const b = byMonth.get(m.key);
       const factor = b.factor_den > 0 ? Math.round((b.factor_num / b.factor_den) * 100) / 100 : null;
       return {
-        key: w.key, start: w.start,
+        key: m.key,
         ferm: b.ferm, drying: b.drying, closed: b.closed,
         cereza_in: b.cereza_in, verde_out: b.verde_out, factor,
       };
@@ -322,7 +322,7 @@ export async function fincaMonitoreoView() {
     };
 
     return el('div', {}, [
-      el('p', { class: 'eyebrow mb-2', text: 'Últimas 12 semanas ISO' }),
+      el('p', { class: 'eyebrow mb-2', text: 'Últimos 12 meses' }),
       el('div', { class: 'overflow-x-auto ctrm-card' }, [
         el('table', { class: 'w-full text-[12px]' }, [
           el('thead', {}, [
@@ -338,7 +338,7 @@ export async function fincaMonitoreoView() {
             ]),
             // Fila 2: labels
             el('tr', { class: 'border-t border-sand' }, [
-              el('th', { class: 'px-2 py-2 text-left font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Semana']),
+              el('th', { class: 'px-2 py-2 text-left font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Mes']),
               el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Ferm. arrancó']),
               el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Drying arrancó']),
               el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Cerrados']),
@@ -348,7 +348,7 @@ export async function fincaMonitoreoView() {
             ]),
           ]),
           el('tbody', {}, rows.map((r) => el('tr', { class: 'border-t border-sand' }, [
-            el('td', { class: 'px-2 py-1.5 font-mono text-ink-700' }, [r.key]),
+            el('td', { class: 'px-2 py-1.5 font-mono text-ink-700' }, [monthLabel(r.key)]),
             el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.ferm)   }),
             el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.drying) }),
             el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.closed) }),
@@ -685,37 +685,29 @@ function sparkline(values, stroke) {
   return svg;
 }
 
-// ── ISO week helpers ────────────────────────────────────────────────
-function isoWeekKeyOf(ymd) {
+// ── Month helpers ──────────────────────────────────────────────────
+const MONTH_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function monthKeyOf(ymd) {
   if (!ymd) return null;
   const s = String(ymd).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(s + 'T00:00:00Z');
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const isoYear = d.getUTCFullYear();
-  const yearStart = Date.UTC(isoYear, 0, 1);
-  const isoWeek = Math.ceil(((d.getTime() - yearStart) / 86400000 + 1) / 7);
-  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+  return s.slice(0, 7); // YYYY-MM
 }
 
-function isoWeekStartOf(ymd) {
-  const d = new Date(ymd + 'T00:00:00Z');
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() - (dayNum - 1));
-  return d.toISOString().slice(0, 10);
+function monthLabel(key) {
+  const [y, m] = key.split('-');
+  return `${MONTH_ES[Number(m) - 1]} ${y}`;
 }
 
-function lastNIsoWeeks(todayYmd, n) {
-  // Devuelve [oldest..newest] semanas. Cada item: { key, start }.
-  const cur = isoWeekStartOf(todayYmd);
+function lastNMonths(todayYmd, n) {
+  // Devuelve [oldest..newest] meses calendario. Cada item: { key: 'YYYY-MM' }.
+  let [y, m] = todayYmd.split('-').map(Number); // m = 1..12
   const out = [];
-  let cursor = cur;
   for (let i = 0; i < n; i++) {
-    out.unshift({ key: isoWeekKeyOf(cursor), start: cursor });
-    const dt = new Date(cursor + 'T00:00:00Z');
-    dt.setUTCDate(dt.getUTCDate() - 7);
-    cursor = dt.toISOString().slice(0, 10);
+    out.unshift({ key: `${y}-${String(m).padStart(2, '0')}` });
+    m -= 1;
+    if (m < 1) { m = 12; y -= 1; }
   }
   return out;
 }
