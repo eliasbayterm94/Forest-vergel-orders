@@ -3,7 +3,7 @@ import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { listView, sumOf } from '../ui/list.js';
-import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL } from '../ui/format.js';
+import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL, fmtIntensity } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { renderCapacityPayload } from './_capacity-panel.js';
@@ -22,6 +22,13 @@ export async function fincaInboxView() {
   });
 
   await refresh();
+
+  // Refrescar al volver a la pestaña (cubre el caso "Forest cancela un
+  // pedido mientras tengo el inbox abierto"). Sin polling — solo cuando
+  // la pestaña gana foco/visibilidad.
+  const onVisibility = () => { if (!document.hidden) refresh(); };
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('focus', onVisibility);
 
   return chrome(el('div', {}, [
     pageTitle('Pedidos entrantes', 'Acepta o rechaza. Marca para previsualizar capacidad.'),
@@ -46,7 +53,10 @@ export async function fincaInboxView() {
   async function refresh() {
     try {
       const res = await api.ordersList({ status: 'Pending' });
-      orders = res.orders;
+      // Defense-in-depth: si el backend devuelve algun status raro
+      // (Cancelled, Accepted reciente que aun no se filtro), lo dejamos
+      // fuera del cliente para no confundir al operario.
+      orders = (res.orders || []).filter((o) => o.status === 'Pending');
       for (const id of [...selected]) {
         if (!orders.some((o) => o.id === id)) selected.delete(id);
       }
@@ -124,12 +134,18 @@ export async function fincaInboxView() {
             o.order_type ? el('span', { class: 'ctrm-pill dark', text: o.order_type }) : null,
             el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
             dryingBadge,
+            o.intensity ? el('span', {
+              class: 'ctrm-pill',
+              style: 'background:#1a3a5c;color:#e7e244;',
+              text: `Intensidad: ${fmtIntensity(o.intensity)}`,
+            }) : null,
           ]),
-          (o.client_name || (o.regions && o.regions.length) || o.contract_code)
+          (o.client_name || (o.regions && o.regions.length) || o.contract_code || o.intensity)
             ? el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-3 gap-y-0.5 mb-1.5' }, [
                 o.client_name  ? meta('Cliente', o.client_name) : null,
                 o.regions && o.regions.length ? meta('Regiones', o.regions.join(' · ')) : null,
                 o.contract_code ? meta('Contrato', o.contract_code) : null,
+                o.intensity ? meta('Intensidad', fmtIntensity(o.intensity)) : null,
               ])
             : null,
           el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [

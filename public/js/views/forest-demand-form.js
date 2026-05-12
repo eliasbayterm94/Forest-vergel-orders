@@ -154,6 +154,13 @@ export async function forestDemandFormView() {
     autocomplete: 'off',
   });
 
+  const intensitySelect = el('select', { class: 'ctrm-select' }, [
+    el('option', { value: '', selected: true }, ['Sin especificar']),
+    el('option', { value: 'media' },    ['Media']),
+    el('option', { value: 'alta' },     ['Alta']),
+    el('option', { value: 'muy_alta' }, ['Muy alta']),
+  ]);
+
   const regionInputs = REGIONS.map((r) => {
     const cb = el('input', { type: 'checkbox', value: r, class: 'h-4 w-4 accent-navy mr-1.5' });
     return { region: r, input: cb, node: el('label', { class: 'inline-flex items-center px-2 py-1 rounded-md border border-sand bg-white text-[12px] font-medium text-ink-700 cursor-pointer hover:border-navy' }, [cb, r]) };
@@ -213,6 +220,7 @@ export async function forestDemandFormView() {
         client_name:   clientInput.value.trim() || null,
         regions:       selectedRegions.length > 0 ? selectedRegions : null,
         contract_code: contractInput.value.trim() || null,
+        intensity:     intensitySelect.value || null,
       };
       await trySubmit(payload);
     },
@@ -233,7 +241,10 @@ export async function forestDemandFormView() {
         section('Cliente', clientInput),
       ]),
       el('div', { class: 'mt-3' }, section('Región (multiselección)', regionsRow)),
-      el('div', { class: 'mt-3' }, section('Código de contrato', contractInput)),
+      el('div', { class: 'mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4' }, [
+        section('Código de contrato', contractInput),
+        section('Intensidad', intensitySelect),
+      ]),
     ]),
 
     section('Comentarios', commentsInput),

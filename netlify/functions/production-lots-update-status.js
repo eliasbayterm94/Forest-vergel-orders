@@ -43,9 +43,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
 
-  const { lot_id, status: targetStatus, kg_dried_output, factor_rendimiento, kg_green_actual } = body || {};
+  const { lot_id, status: targetStatus, kg_dried_output, factor_rendimiento, kg_green_actual, drying_start_date } = body || {};
   if (!lot_id) return badReq('lot_id required', 'LOT_ID_REQUIRED');
   if (!Object.values(LOT_STATUS).includes(targetStatus)) return badReq('invalid status', 'INVALID_STATUS');
+  if (drying_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(drying_start_date)) {
+    return badReq('drying_start_date must be YYYY-MM-DD', 'INVALID_DATE');
+  }
 
   const sb = getSupabase();
   const { data: lot, error: loadErr } = await sb
@@ -58,7 +61,11 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
 
   const today = bogotaToday();
   const update = { status: targetStatus };
-  if (targetStatus === LOT_STATUS.Drying    && !lot.drying_start_date) update.drying_start_date = today;
+  if (targetStatus === LOT_STATUS.Drying) {
+    // Permitir que el operario indique la fecha real de inicio de
+    // secado (puede no ser hoy si el bache empezo el dia anterior).
+    update.drying_start_date = drying_start_date || lot.drying_start_date || today;
+  }
   if (targetStatus === LOT_STATUS.Ready)     update.ready_date = today;
   if (targetStatus === LOT_STATUS.Delivered) update.delivered_date = today;
 

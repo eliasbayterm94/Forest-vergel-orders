@@ -95,11 +95,9 @@ export async function fincaDespachosView() {
 
   function shipmentCard(s) {
     const t = s.totals || {};
-    const orderRefs = new Set();
-    s.lots.forEach((l) => l.assignments.forEach((a) => a.order && orderRefs.add(a.order.order_code)));
 
-    return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
-      el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
+    return el('div', { class: 'ctrm-card ctrm-card-pad space-y-3' }, [
+      el('div', { class: 'flex flex-wrap items-center justify-between gap-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           el('span', { class: 'ctrm-code', text: s.shipment_code }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: fmtDate(s.shipment_date) }),
@@ -123,13 +121,90 @@ export async function fincaDespachosView() {
         meta('Verde',   fmtKg(t.kg_green ?? 0)),
         meta('Asignado', fmtKg(t.kg_green_allocated ?? 0)),
       ]),
-      orderRefs.size > 0
-        ? el('div', { class: 'flex flex-wrap gap-1 mt-2' },
-            [...orderRefs].map((c) => el('span', { class: 'ctrm-code', text: c })))
-        : null,
+      // Per-lot tables
+      el('div', { class: 'space-y-3' }, s.lots.map((lot) => lotBlock(lot))),
       s.notes
-        ? el('p', { class: 'text-[11px] text-ink-500 italic mt-2 border-t border-sand pt-2', text: s.notes })
+        ? el('p', { class: 'text-[11px] text-ink-500 italic border-t border-sand pt-2', text: s.notes })
         : null,
+    ]);
+  }
+
+  function lotBlock(lot) {
+    const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    const partials = lot.partials_in_shipment || [];
+    const sumDried = partials.length > 0
+      ? partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0)
+      : (lot.kg_dried_output != null ? Number(lot.kg_dried_output) : null);
+
+    return el('div', { class: 'rounded-md border border-sand bg-white overflow-hidden' }, [
+      // Lot header (navy strip, igual al PDF)
+      el('div', { class: 'flex items-center justify-between gap-2 px-3 py-2', style: 'background:#1a3a5c;' }, [
+        el('div', { class: 'flex items-center gap-2 min-w-0' }, [
+          el('span', { class: 'font-mono font-bold text-[12px]', style: 'color:#e7e244;', text: lot.bache_code || lot.lot_code }),
+          el('span', { class: 'font-display font-semibold text-[12px] truncate', style: 'color:#fff;', text: lot.reference_name || '—' }),
+        ]),
+        el('span', { class: 'font-mono text-[11px]', style: 'color:#cdd5dd;', text: `${lot.process_type} · ${fmtKg(kgInShipment)}` }),
+      ]),
+      // Lot meta strip
+      el('div', { class: 'px-3 py-2 text-[11px] text-ink-500 flex flex-wrap gap-x-4 gap-y-1 border-b border-sand' }, [
+        lot.processing_stage ? el('span', {}, [`Etapa inicial: `, el('strong', { class: 'text-ink-700', text: lot.processing_stage })]) : null,
+        sumDried != null ? el('span', {}, [`Peso seco: `, el('strong', { class: 'text-ink-700', text: fmtKg(sumDried) })]) : null,
+        lot.factor_rendimiento != null ? el('span', {}, [`Factor: `, el('strong', { class: 'text-ink-700', text: String(lot.factor_rendimiento) })]) : null,
+        lot.kg_green_expected != null ? el('span', {}, [`Verde estimado: `, el('strong', { class: 'text-ink-700', text: fmtKg(lot.kg_green_expected) })]) : null,
+        lot.varieties && lot.varieties.length
+          ? el('span', {}, [`Variedades: `, el('strong', { class: 'text-ink-700', text: lot.varieties.map((v) => v.name).join(', ') })])
+          : null,
+      ]),
+      // Parciales table (cuando aplica)
+      partials.length > 0
+        ? el('div', { class: 'px-3 py-2 border-b border-sand' }, [
+            el('p', { class: 'eyebrow text-[10px] mb-1', text: `Parciales en este despacho (${partials.length})` }),
+            simpleTable(
+              ['Parcial', 'kg seco', 'Factor', 'kg verde'],
+              partials.map((p) => [
+                `Parcial ${p.parcial_letter}`,
+                fmtKg(p.kg_dried),
+                String(p.factor_rendimiento),
+                fmtKg(p.kg_green_yield),
+              ]),
+              ['', 'text-right', 'text-right', 'text-right font-bold'],
+            ),
+          ])
+        : null,
+      // Assignments table
+      (lot.assignments && lot.assignments.length > 0)
+        ? el('div', { class: 'px-3 py-2' }, [
+            el('p', { class: 'eyebrow text-[10px] mb-1', text: `Asignaciones (${lot.assignments.length})` }),
+            simpleTable(
+              ['Pedido', 'Cliente', 'Tipo', 'Contrato', 'Región', 'Entrega', 'kg verde'],
+              lot.assignments.map((a) => {
+                const o = a.order || {};
+                return [
+                  o.order_code || '—',
+                  o.client_name || '—',
+                  o.order_type || '—',
+                  o.contract_code || '—',
+                  (o.regions && o.regions.length > 0) ? o.regions.join(', ') : '—',
+                  o.max_delivery_date ? fmtDate(o.max_delivery_date) : '—',
+                  fmtKg(a.kg_green_allocated),
+                ];
+              }),
+              ['font-mono text-navy font-semibold', '', '', 'font-mono', '', 'font-mono', 'text-right font-mono font-bold'],
+            ),
+          ])
+        : el('p', { class: 'px-3 py-2 text-[11px] text-ink-300 italic', text: '— sin asignaciones —' }),
+    ]);
+  }
+
+  function simpleTable(headers, rows, cellClasses) {
+    return el('div', { class: 'overflow-x-auto' }, [
+      el('table', { class: 'w-full text-[11px]' }, [
+        el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' },
+          headers.map((h, i) =>
+            el('th', { class: `px-2 py-1 ${(cellClasses[i] || '').includes('text-right') ? 'text-right' : 'text-left'}` }, [h])))]),
+        el('tbody', {}, rows.map((r) => el('tr', { class: 'border-t border-sand' },
+          r.map((cell, i) => el('td', { class: `px-2 py-1 ${cellClasses[i] || ''} text-ink-700` }, [String(cell)]))))),
+      ]),
     ]);
   }
 

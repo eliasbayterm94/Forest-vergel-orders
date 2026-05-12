@@ -726,6 +726,12 @@ function openOrderEditModal(order, allReferences, allVarieties) {
       value: order.contract_code || '',
       class: 'ctrm-input mono',
     });
+    const intensitySelect = el('select', { class: 'ctrm-select' }, [
+      el('option', { value: '' }, ['Sin especificar']),
+      el('option', { value: 'media',    selected: order.intensity === 'media' }, ['Media']),
+      el('option', { value: 'alta',     selected: order.intensity === 'alta' }, ['Alta']),
+      el('option', { value: 'muy_alta', selected: order.intensity === 'muy_alta' }, ['Muy alta']),
+    ]);
     const orderRegions = order.regions || [];
     const regionInputs = REGIONS.map((r) => {
       const cb = el('input', {
@@ -760,7 +766,10 @@ function openOrderEditModal(order, allReferences, allVarieties) {
           labelled('Cliente', clientInput),
         ]),
         el('div', { class: 'mt-3' }, [labelled('Región', regionsRow)]),
-        el('div', { class: 'mt-3' }, [labelled('Código de contrato', contractInput)]),
+        el('div', { class: 'mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
+          labelled('Código de contrato', contractInput),
+          labelled('Intensidad', intensitySelect),
+        ]),
       ]),
       labelled('Comentarios', commentsInput),
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
@@ -789,6 +798,7 @@ function openOrderEditModal(order, allReferences, allVarieties) {
                 client_name: clientInput.value.trim() || null,
                 regions: selectedRegions.length > 0 ? selectedRegions : null,
                 contract_code: contractInput.value.trim() || null,
+                intensity: intensitySelect.value || null,
                 comments: commentsInput.value || null,
               },
             });

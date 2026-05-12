@@ -90,6 +90,7 @@ export async function fincaLotsView() {
         { label: 'Verde real', cls: 'text-right' },
         { label: 'Asignado',   cls: 'text-right' },
         { label: 'Parciales',  cls: 'text-right' },
+        { label: 'Acciones',   cls: 'text-right' },
       ],
       tableRow: lotTableRow,
       pageSize: 20,
@@ -150,6 +151,9 @@ export async function fincaLotsView() {
     const overflow = totalAllocated - cap;
     const partials = l.partials || [];
     const code = l.bache_code || l.lot_code;
+    const next = NEXT_STATUS[l.status];
+    const closeBacheLabel = (next === 'Ready' && partials.length > 0) ? 'Cerrar' : (next ? `→ ${statusLabel(next)}` : null);
+
     const tcell = (label, classes, content) => {
       const td = el('td', { class: classes });
       td.setAttribute('data-label', label);
@@ -157,11 +161,26 @@ export async function fincaLotsView() {
       else td.append(document.createTextNode(String(content == null ? '—' : content)));
       return td;
     };
+
+    const actionBtn = (label, variant, onClick) =>
+      el('button', {
+        type: 'button',
+        class: `ctrm-btn ctrm-btn-${variant} ctrm-btn-xs`,
+        onClick: (e) => { e.stopPropagation(); onClick(); },
+      }, [label]);
+
+    const actionsCell = el('div', { class: 'inline-flex gap-1 flex-wrap justify-end' }, [
+      next ? actionBtn(closeBacheLabel, 'primary', () => advanceStatus(l, next)) : null,
+      l.status === 'Ready' ? actionBtn('Despachar', 'yellow', () => { location.hash = '/finca/despachos'; }) : null,
+      actionBtn('Asignar', 'soft', () => assignLot(l)),
+    ]);
+
     return el('tr', {
-      class: 'cursor-pointer hover:bg-cream',
-      onClick: () => assignLot(l),
+      class: 'hover:bg-cream',
     }, [
-      tcell('Bache', 'font-mono text-navy font-semibold', code),
+      tcell('Bache', 'font-mono text-navy font-semibold cursor-pointer', el('span', {
+        onClick: () => assignLot(l),
+      }, [code])),
       tcell('Referencia', '', l.reference_name || '—'),
       tcell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
       tcell('Proceso', 'text-[11px]', l.process_type),
@@ -176,6 +195,7 @@ export async function fincaLotsView() {
         fmtKg(totalAllocated)),
       tcell('Parciales', 'text-right font-mono',
         partials.length > 0 ? `${partials.length}/6` : '—'),
+      tcell('Acciones', 'text-right', actionsCell),
     ]);
   }
 
@@ -736,6 +756,7 @@ export async function fincaLotsView() {
 
   async function advanceStatus(lot, target) {
     let yieldValues = null;
+    let dryingStartDate = null;
     const partials = lot.partials || [];
     const hasPartials = partials.length > 0;
 
@@ -753,12 +774,16 @@ export async function fincaLotsView() {
     } else if (target === 'Ready' || target === 'Delivered') {
       yieldValues = await promptYield(lot, target);
       if (yieldValues === undefined) return;
+    } else if (target === 'Drying') {
+      dryingStartDate = await promptDryingStartDate(lot);
+      if (dryingStartDate === undefined) return;
     } else {
       const ok = await confirmModal(`Avanzar ${lot.bache_code || lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
     }
     try {
       const payload = { lot_id: lot.id, status: target };
+      if (dryingStartDate) payload.drying_start_date = dryingStartDate;
       if (yieldValues) {
         if (yieldValues.kg_dried_output    != null) payload.kg_dried_output    = yieldValues.kg_dried_output;
         if (yieldValues.factor_rendimiento != null) payload.factor_rendimiento = yieldValues.factor_rendimiento;
@@ -771,6 +796,38 @@ export async function fincaLotsView() {
       }
       await reloadLots();
     } catch (e) { toast(e.message, 'error'); }
+  }
+
+  function promptDryingStartDate(lot) {
+    return openModal(({ close }) => {
+      const defaultDate = lot.drying_start_date || new Date().toISOString().slice(0, 10);
+      const dateInput = el('input', {
+        type: 'date',
+        value: defaultDate,
+        class: 'ctrm-input',
+      });
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+          `Avanzando `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+          ` a `, el('strong', { class: 'text-navy', text: 'Drying' }),
+          `. La fecha de inicio de secado se usa para calcular el avance del lote.`,
+        ]),
+        el('label', { class: 'ctrm-label', text: 'Fecha de inicio de secado' }),
+        dateInput,
+        el('p', { class: 'ctrm-hint', text: 'Por defecto hoy; cámbialo si el bache empezó otro día.' }),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: () => {
+              if (!dateInput.value) { toast('Selecciona una fecha', 'warning'); return; }
+              close(dateInput.value);
+            },
+          }, ['Avanzar a Drying']),
+        ]),
+      ]);
+    }, { title: 'Inicio de secado' });
   }
 
   function promptYield(lot, target) {
@@ -945,6 +1002,26 @@ export async function fincaLotsView() {
           }
           maybeRefreshCandidates();
         },
+        onCreate: async (text) => {
+          const name = (text || '').trim();
+          if (!name) return null;
+          try {
+            const r = await api.referenceSave({
+              name,
+              process_type: procSelect.value || null,
+              fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+            });
+            toast(`Referencia "${r.reference.name}" lista`, 'success');
+            // Append to local list y refrescar el combo
+            if (!refs.some((x) => x.id === r.reference.id)) {
+              refs.push(r.reference);
+              refs.sort((a, b) => a.name.localeCompare(b.name));
+              refCombo.setItems(refs);
+            }
+            return r.reference;
+          } catch (e) { toast(e.message, 'error'); return null; }
+        },
+        createLabel: '+ Usar este nombre como nueva referencia',
       });
 
       const procSelect = el('select', { class: 'ctrm-select' }, [
@@ -999,6 +1076,14 @@ export async function fincaLotsView() {
       const vCombo = createMultiCombobox({
         placeholder: 'Variedades...',
         items: allVarieties,
+        onCreate: async (text) => {
+          try {
+            const r = await api.varietyAdd(text);
+            toast(`Variedad creada: ${r.variety.name}`, 'success');
+            return r.variety;
+          } catch (e) { toast(e.message, 'error'); return null; }
+        },
+        createLabel: '+ Crear variedad',
       });
 
       // Infusion: combobox opcional + input % que aparece solo cuando

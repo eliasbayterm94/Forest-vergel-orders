@@ -8,6 +8,7 @@ const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson }
 
 const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
 const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
+const INTENSITIES = ['media', 'alta', 'muy_alta'];
 
 /**
  * POST /demand-orders-update  (forest, admin)
@@ -109,6 +110,13 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   }
   if (fields.contract_code !== undefined) {
     update.contract_code = fields.contract_code ? String(fields.contract_code).trim() || null : null;
+  }
+  if (fields.intensity !== undefined) {
+    if (fields.intensity != null && fields.intensity !== '' && !INTENSITIES.includes(fields.intensity)) {
+      errors.push('intensity invalid');
+    } else {
+      update.intensity = fields.intensity || null;
+    }
   }
 
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');

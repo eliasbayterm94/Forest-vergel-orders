@@ -4,6 +4,13 @@ const NF_KG = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 });
 export const fmtKg     = (n) => `${NF_KG.format(Number(n || 0))} kg`;
 export const fmtNumber = (n) => NF_KG.format(Number(n || 0));
 
+export const INTENSITY_LABEL = {
+  media:    'Media',
+  alta:     'Alta',
+  muy_alta: 'Muy alta',
+};
+export const fmtIntensity = (v) => (v ? (INTENSITY_LABEL[v] || v) : '');
+
 export function fmtDate(yyyyMmDd) {
   if (!yyyyMmDd) return '—';
   const [y, m, d] = String(yyyyMmDd).split('T')[0].split('-').map(Number);

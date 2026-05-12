@@ -124,6 +124,7 @@ export async function forestDemandBulkFormView() {
     { key: 'orderType', label: 'Tipo',        cls: 'min-w-[110px]' },
     { key: 'regions',   label: 'Regiones',    cls: 'min-w-[180px]' },
     { key: 'contract',  label: 'Contrato',    cls: 'min-w-[120px]' },
+    { key: 'intensity', label: 'Intensidad',  cls: 'min-w-[110px]' },
     { key: 'comments',  label: 'Comentarios', cls: 'min-w-[180px]' },
     { key: 'remove',    label: '',            cls: 'w-10 text-center' },
   ];
@@ -384,6 +385,12 @@ function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }
     type: 'text', class: 'ctrm-input mono w-full text-[12px]',
     autocomplete: 'off', placeholder: '—',
   });
+  const intensitySelect = el('select', { class: 'ctrm-select w-full text-[12px]' }, [
+    el('option', { value: '' }, ['—']),
+    el('option', { value: 'media' },    ['Media']),
+    el('option', { value: 'alta' },     ['Alta']),
+    el('option', { value: 'muy_alta' }, ['Muy alta']),
+  ]);
   const commentsInput = el('input', {
     type: 'text', class: 'ctrm-input w-full text-[12px]',
     placeholder: '—',
@@ -434,6 +441,7 @@ function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }
     el('td', { class: cellCls }, [orderTypeSelect]),
     el('td', { class: cellCls }, [regionsCell]),
     el('td', { class: cellCls }, [contractInput]),
+    el('td', { class: cellCls }, [intensitySelect]),
     el('td', { class: cellCls }, [commentsInput]),
     el('td', { class: `${cellCls} text-center` }, [removeBtn]),
   ]);
@@ -451,6 +459,7 @@ function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }
     if (p.client) clientInput.value = p.client;
     if (p.orderType) orderTypeSelect.value = p.orderType;
     if (p.contract) contractInput.value = p.contract;
+    if (p.intensity) intensitySelect.value = p.intensity;
     if (p.comments) commentsInput.value = p.comments;
     if (Array.isArray(p.regions)) {
       for (const btn of regionChips) {
@@ -471,6 +480,7 @@ function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }
       client: clientInput.value,
       orderType: orderTypeSelect.value,
       contract: contractInput.value,
+      intensity: intensitySelect.value,
       comments: commentsInput.value,
       regions: regionChips.filter((b) => b.getAttribute('data-on') === 'true')
         .map((b) => b.getAttribute('data-region')),
@@ -508,6 +518,7 @@ function createBulkRow({ varietyDatalistId, refDatalistId, lookupRef, onRemove }
       client_name: clientInput.value.trim() || null,
       regions: selectedRegions.length > 0 ? selectedRegions : null,
       contract_code: contractInput.value.trim() || null,
+      intensity: intensitySelect.value || null,
     };
     return { errors: [], payloadSkeleton, rawVarietyNames, refRawName };
   }

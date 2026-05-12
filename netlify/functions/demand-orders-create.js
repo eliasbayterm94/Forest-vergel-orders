@@ -9,6 +9,7 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
 
 const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
 const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
+const INTENSITIES = ['media', 'alta', 'muy_alta'];
 
 /**
  * POST /demand-orders-create  (forest, admin)
@@ -49,6 +50,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
   const client_name  = body.client_name  == null ? null : String(body.client_name).trim() || null;
   const regions      = Array.isArray(body.regions) ? body.regions.filter(Boolean) : null;
   const contract_code = body.contract_code == null ? null : String(body.contract_code).trim() || null;
+  const intensity    = body.intensity   == null ? null : String(body.intensity);
 
   if (!reference_id) errors.push('reference_id required');
   if (!Number.isFinite(kg_green_required) || kg_green_required <= 0) errors.push('kg_green_required must be > 0');
@@ -59,6 +61,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
     errors.push('fermentation_hours must be >= 0');
   if (order_type != null && !ORDER_TYPES.includes(order_type)) errors.push('order_type invalid');
   if (regions && !regions.every((r) => REGIONS.includes(r))) errors.push('regions must be subset of USA/EU/UK/MENA/AU');
+  if (intensity != null && intensity !== '' && !INTENSITIES.includes(intensity)) errors.push('intensity invalid');
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
 
   // 15-day rule
@@ -95,6 +98,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
       client_name,
       regions: regions && regions.length > 0 ? regions : null,
       contract_code,
+      intensity: intensity || null,
       created_by: session.role,
     }).select().single();
   if (insErr) return serverErr('Failed to create demand order', insErr.message);

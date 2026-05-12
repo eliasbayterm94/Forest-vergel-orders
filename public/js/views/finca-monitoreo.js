@@ -34,7 +34,8 @@ export async function fincaMonitoreoView() {
     ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status));
   const allocByOrder = new Map();
   for (const lot of lots) {
-    if (lot.status === 'Delivered') continue;
+    // Incluir tambien Delivered: las kg de un lote despachado ya
+    // cubrieron parte del pedido, no debe contar como "pendiente".
     for (const a of lot.assignments || []) {
       allocByOrder.set(a.demand_order_id,
         (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));

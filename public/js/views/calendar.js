@@ -86,6 +86,9 @@ export async function calendarView() {
   }
 
   for (const l of lots) {
+    // Lotes ya despachados no deben generar eventos de drying/listo en
+    // el calendario — su despacho ya aparece via shipments arriba.
+    if (l.status === 'Delivered') continue;
     if (l.drying_start_date) {
       events.push({
         date: l.drying_start_date.slice(0, 10),

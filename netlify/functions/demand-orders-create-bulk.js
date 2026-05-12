@@ -9,6 +9,7 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
 
 const ORDER_TYPES = ['Spot', 'Contract', 'FOB'];
 const REGIONS     = ['USA', 'EU', 'UK', 'MENA', 'AU'];
+const INTENSITIES = ['media', 'alta', 'muy_alta'];
 const MAX_ORDERS_PER_BATCH = 50;
 
 /**
@@ -49,6 +50,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
     const fermentation_hours = o.fermentation_hours == null ? null : Number(o.fermentation_hours);
     const order_type   = o.order_type   == null ? null : String(o.order_type);
     const regions      = Array.isArray(o.regions) ? o.regions.filter(Boolean) : null;
+    const intensity    = o.intensity    == null ? null : String(o.intensity);
 
     if (!reference_id) errs.push('reference_id required');
     if (!Number.isFinite(kg_green_required) || kg_green_required <= 0) errs.push('kg_green_required must be > 0');
@@ -59,6 +61,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
       errs.push('fermentation_hours must be >= 0');
     if (order_type != null && order_type !== '' && !ORDER_TYPES.includes(order_type)) errs.push('order_type invalid');
     if (regions && !regions.every((r) => REGIONS.includes(r))) errs.push('regions must be subset of USA/EU/UK/MENA/AU');
+    if (intensity != null && intensity !== '' && !INTENSITIES.includes(intensity)) errs.push('intensity invalid');
 
     if (errs.length) {
       rowErrors.push({ index: idx, errors: errs });
@@ -82,6 +85,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
       client_name:  o.client_name  == null ? null : String(o.client_name).trim() || null,
       regions:      regions && regions.length > 0 ? regions : null,
       contract_code: o.contract_code == null ? null : String(o.contract_code).trim() || null,
+      intensity:    intensity || null,
     });
   });
 
@@ -125,6 +129,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event, _ctx, session) 
     client_name:       o.client_name,
     regions:           o.regions,
     contract_code:     o.contract_code,
+    intensity:         o.intensity,
     created_by:        session.role,
   }));
 

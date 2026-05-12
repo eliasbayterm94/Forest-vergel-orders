@@ -139,29 +139,42 @@ export function generateShipmentPdf(shipment) {
     }
 
     // Partials in this shipment (only when not shipping the whole lot)
+    // Renderizamos los parciales como tabla autoTable — antes era texto
+    // libre con bullets y resultaba dificil de leer cuando habia varios.
     const partialsHere = lot.partials_in_shipment || [];
     if (partialsHere.length > 0) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(...INK_700);
-      doc.text('Parciales incluidos:', M, y);
-      y += 11;
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...INK_500);
-      const lines = partialsHere.map((p) =>
-        `• Parcial ${p.parcial_letter} — ${fmtKg(p.kg_dried)} seco · factor ${p.factor_rendimiento} → ${fmtKg(p.kg_green_yield)} verde`,
-      );
-      const split = doc.splitTextToSize(lines.join('\n'), W - M * 2);
-      doc.text(split, M, y);
-      y += split.length * 10 + 6;
+      doc.text('Parciales incluidos en este despacho:', M, y);
+      y += 8;
+      doc.autoTable({
+        startY: y,
+        margin: { left: M, right: M },
+        head: [['Parcial', 'kg seco', 'Factor', 'kg verde']],
+        body: partialsHere.map((p) => [
+          `Parcial ${p.parcial_letter}`,
+          { content: fmtKg(p.kg_dried), styles: { halign: 'right' } },
+          { content: String(p.factor_rendimiento), styles: { halign: 'right' } },
+          { content: fmtKg(p.kg_green_yield), styles: { halign: 'right', fontStyle: 'bold' } },
+        ]),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 4, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
+        headStyles: { fillColor: CREAM, textColor: INK_500, fontStyle: 'bold', fontSize: 7 },
+        alternateRowStyles: { fillColor: [251, 251, 248] },
+        columnStyles: {
+          0: { fontStyle: 'bold' },
+          1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' },
+        },
+      });
+      y = doc.lastAutoTable.finalY + 8;
     }
 
-    // Assignments table
+    // Assignments table — pedido + cliente + tipo + contrato + region + entrega + kg
     if (lot.assignments && lot.assignments.length > 0) {
       doc.autoTable({
         startY: y,
         margin: { left: M, right: M },
-        head: [['Pedido', 'Cliente', 'Tipo', 'Cód. contrato', 'Entrega', 'kg verde']],
+        head: [['Pedido', 'Cliente', 'Tipo', 'Contrato', 'Región', 'Entrega', 'kg verde']],
         body: lot.assignments.map((a) => {
           const o = a.order || {};
           return [
@@ -169,6 +182,7 @@ export function generateShipmentPdf(shipment) {
             o.client_name || '—',
             o.order_type || '—',
             o.contract_code || '—',
+            (o.regions && o.regions.length > 0) ? o.regions.join(', ') : '—',
             o.max_delivery_date ? fmtDate(o.max_delivery_date) : '—',
             { content: fmtKg(a.kg_green_allocated), styles: { halign: 'right', fontStyle: 'bold' } },
           ];
@@ -183,8 +197,8 @@ export function generateShipmentPdf(shipment) {
         },
         alternateRowStyles: { fillColor: [251, 251, 248] },
         columnStyles: {
-          0: { cellWidth: 80, fontStyle: 'bold' },
-          5: { cellWidth: 70, halign: 'right' },
+          0: { cellWidth: 70, fontStyle: 'bold' },
+          6: { cellWidth: 60, halign: 'right' },
         },
       });
       y = doc.lastAutoTable.finalY + 14;
