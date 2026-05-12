@@ -58,6 +58,7 @@ export async function fincaPuntoFinalView() {
   let dateFromValue = '';
   let dateToValue = '';
   const selected = new Set();
+  const expanded = new Set();   // lot_ids con sus parciales desplegados
 
   const filters = [
     { key: 'variety', label: 'Variedad', multi: true,
@@ -195,6 +196,70 @@ export async function fincaPuntoFinalView() {
     const allShownSelected = items.length > 0 && items.every((l) => selected.has(l.id));
     if (allShownSelected) headerCb.checked = true;
 
+    const COLSPAN = 12;
+    const tbody = el('tbody', {});
+    for (const l of items) {
+      const isSel = selected.has(l.id);
+      const rowCb = el('input', {
+        type: 'checkbox', class: 'h-4 w-4 accent-navy', checked: isSel,
+        onChange: (e) => {
+          if (e.target.checked) selected.add(l.id); else selected.delete(l.id);
+          redraw();
+        },
+      });
+      const dwCls = (l.days_in_warehouse == null) ? 'text-ink-300'
+        : l.days_in_warehouse > 20 ? 'text-crit font-bold'
+        : l.days_in_warehouse > 10 ? 'text-warn font-semibold'
+        : 'text-ink-700';
+      const orderList = l.enriched_assignments.length === 0
+        ? el('span', { class: 'text-ink-300 italic', text: '— sin asignaciones' })
+        : el('div', { class: 'flex flex-col gap-0.5' },
+            l.enriched_assignments.map((a) =>
+              el('div', { class: 'text-[11px] font-mono' }, [
+                el('span', { class: 'text-navy font-semibold', text: a.order_code || '?' }),
+                a.client_name ? el('span', { class: 'text-ink-500', text: ` · ${a.client_name}` }) : null,
+                el('span', { class: 'text-ink-300', text: ` · ${fmtKg(a.kg_green_allocated)}` }),
+              ])));
+      const regionTxt = l._regions.length > 0 ? l._regions.join(', ') : '—';
+      const partials = (l.partials || []).filter((p) => !p.rejected_at);
+      const hasPartials = partials.length > 0;
+      const isExp = expanded.has(l.id);
+
+      const expandBtn = hasPartials
+        ? el('button', {
+            type: 'button',
+            class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+            title: isExp ? 'Ocultar parciales' : 'Ver parciales',
+            onClick: (e) => {
+              e.stopPropagation();
+              if (isExp) expanded.delete(l.id); else expanded.add(l.id);
+              redraw();
+            },
+          }, [`${isExp ? '▾' : '▸'} ${partials.length}`])
+        : el('span', { class: 'text-ink-300 text-[10px]', text: '—' });
+
+      tbody.append(el('tr', { class: isSel ? 'bg-cream' : 'hover:bg-cream' }, [
+        cellNode('Sel', '', rowCb),
+        cellTxt('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+        cellTxt('Referencia', '', l.reference_name || '—'),
+        cellTxt('Proceso', 'text-[11px]', l.process_type),
+        cellTxt('Variedades', 'text-[11px]', l._variety_names.length > 0 ? l._variety_names.join(', ') : '—'),
+        cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
+        cellNode('Parciales', 'text-center', expandBtn),
+        cellTxt('Días bodega', `text-right font-mono ${dwCls}`, l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`),
+        cellTxt('Días proceso', 'text-right font-mono', l.days_since_start == null ? '—' : `${l.days_since_start}d`),
+        cellTxt('Listo desde', 'font-mono text-[11px]', l.ready_date ? fmtDate(l.ready_date) : '—'),
+        cellNode('Pedido / Cliente', '', orderList),
+        cellTxt('Región', 'text-[11px]', regionTxt),
+      ]));
+
+      if (hasPartials && isExp) {
+        tbody.append(el('tr', { class: 'bg-cream' }, [
+          el('td', { colspan: String(COLSPAN), class: 'p-3' }, [partialsBreakdown(partials)]),
+        ]));
+      }
+    }
+
     const table = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
       el('thead', {}, [el('tr', {}, [
         el('th', { class: 'w-8' }, [headerCb]),
@@ -203,52 +268,53 @@ export async function fincaPuntoFinalView() {
         el('th', {}, ['Proceso']),
         el('th', {}, ['Variedades']),
         el('th', { class: 'text-right' }, ['kg verde']),
+        el('th', { class: 'text-center' }, ['Parciales']),
         el('th', { class: 'text-right' }, ['Días bodega']),
         el('th', { class: 'text-right' }, ['Días proceso']),
         el('th', {}, ['Listo desde']),
         el('th', {}, ['Pedido / Cliente']),
         el('th', {}, ['Región']),
       ])]),
-      el('tbody', {}, items.map((l) => {
-        const isSel = selected.has(l.id);
-        const rowCb = el('input', {
-          type: 'checkbox', class: 'h-4 w-4 accent-navy', checked: isSel,
-          onChange: (e) => {
-            if (e.target.checked) selected.add(l.id); else selected.delete(l.id);
-            redraw();
-          },
-        });
-        const dwCls = (l.days_in_warehouse == null) ? 'text-ink-300'
-          : l.days_in_warehouse > 20 ? 'text-crit font-bold'
-          : l.days_in_warehouse > 10 ? 'text-warn font-semibold'
-          : 'text-ink-700';
-        const orderList = l.enriched_assignments.length === 0
-          ? el('span', { class: 'text-ink-300 italic', text: '— sin asignaciones' })
-          : el('div', { class: 'flex flex-col gap-0.5' },
-              l.enriched_assignments.map((a) =>
-                el('div', { class: 'text-[11px] font-mono' }, [
-                  el('span', { class: 'text-navy font-semibold', text: a.order_code || '?' }),
-                  a.client_name ? el('span', { class: 'text-ink-500', text: ` · ${a.client_name}` }) : null,
-                  el('span', { class: 'text-ink-300', text: ` · ${fmtKg(a.kg_green_allocated)}` }),
-                ])));
-        const regionTxt = l._regions.length > 0 ? l._regions.join(', ') : '—';
-        return el('tr', { class: isSel ? 'bg-cream' : 'hover:bg-cream' }, [
-          cellNode('Sel', '', rowCb),
-          cellTxt('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
-          cellTxt('Referencia', '', l.reference_name || '—'),
-          cellTxt('Proceso', 'text-[11px]', l.process_type),
-          cellTxt('Variedades', 'text-[11px]', l._variety_names.length > 0 ? l._variety_names.join(', ') : '—'),
-          cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
-          cellTxt('Días bodega', `text-right font-mono ${dwCls}`, l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`),
-          cellTxt('Días proceso', 'text-right font-mono', l.days_since_start == null ? '—' : `${l.days_since_start}d`),
-          cellTxt('Listo desde', 'font-mono text-[11px]', l.ready_date ? fmtDate(l.ready_date) : '—'),
-          cellNode('Pedido / Cliente', '', orderList),
-          cellTxt('Región', 'text-[11px]', regionTxt),
-        ]);
-      })),
+      tbody,
     ]);
     wrap.append(table);
     return wrap;
+  }
+
+  function partialsBreakdown(partials) {
+    const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+    const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+    let avgFactor = null;
+    if (sumDried > 0) {
+      const weighted = partials.reduce((s, p) => s + Number(p.factor_rendimiento || 0) * Number(p.kg_dried || 0), 0);
+      avgFactor = Math.round((weighted / sumDried) * 100) / 100;
+    }
+    return el('div', { class: 'space-y-2' }, [
+      el('div', { class: 'flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-500' }, [
+        el('span', { class: 'eyebrow text-[10px]', text: `Parciales (${partials.length})` }),
+        el('span', { class: 'font-mono text-ink-700' }, [`Total seco `, el('strong', { text: fmtKg(sumDried) })]),
+        el('span', { class: 'font-mono text-ink-700' }, [`Total verde `, el('strong', { text: fmtKg(sumGreen) })]),
+        avgFactor != null ? el('span', { class: 'font-mono text-ink-700' }, [`Factor prom. `, el('strong', { text: String(avgFactor) })]) : null,
+      ]),
+      el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
+        el('table', { class: 'w-full text-[11px]' }, [
+          el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+            el('th', { class: 'text-left px-2 py-1' }, ['Parcial']),
+            el('th', { class: 'text-right px-2 py-1' }, ['kg seco']),
+            el('th', { class: 'text-right px-2 py-1' }, ['Factor']),
+            el('th', { class: 'text-right px-2 py-1' }, ['kg verde']),
+            el('th', { class: 'text-left px-2 py-1' }, ['Despachado en']),
+          ])]),
+          el('tbody', {}, partials.map((p) => el('tr', { class: 'border-t border-sand' }, [
+            el('td', { class: 'px-2 py-1 font-mono font-semibold', text: `Parcial ${p.parcial_letter}` }),
+            el('td', { class: 'px-2 py-1 text-right font-mono', text: fmtKg(p.kg_dried) }),
+            el('td', { class: 'px-2 py-1 text-right font-mono', text: String(p.factor_rendimiento) }),
+            el('td', { class: 'px-2 py-1 text-right font-mono font-bold', text: fmtKg(p.kg_green_yield) }),
+            el('td', { class: 'px-2 py-1 text-ink-500', text: p.shipment_code ? `${p.shipment_code}` : '—' }),
+          ]))),
+        ]),
+      ]),
+    ]);
   }
 
   redraw();

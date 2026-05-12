@@ -128,6 +128,9 @@ export function generateShipmentPdf(shipment) {
     if (lot.processing_stage) metaParts.push(`Etapa inicial: ${lot.processing_stage}`);
     if (lot.kg_dried_output != null) metaParts.push(`Peso seco: ${fmtKg(lot.kg_dried_output)}`);
     if (lot.factor_rendimiento != null) metaParts.push(`Factor: ${lot.factor_rendimiento}`);
+    // Verde real cuando el lote esta cerrado; estimado solo como fallback.
+    if (lot.kg_green_actual != null) metaParts.push(`Verde: ${fmtKg(lot.kg_green_actual)}`);
+    else if (lot.kg_green_expected != null) metaParts.push(`Verde estimado: ${fmtKg(lot.kg_green_expected)}`);
     if (lot.varieties && lot.varieties.length) metaParts.push(`Variedades: ${lot.varieties.map(v=>v.name).join(', ')}`);
     if (metaParts.length) {
       doc.setFont('helvetica', 'normal');

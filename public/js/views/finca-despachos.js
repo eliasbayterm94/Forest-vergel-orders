@@ -145,9 +145,22 @@ export async function fincaDespachosView() {
   function lotBlock(lot) {
     const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
     const partials = lot.partials_in_shipment || [];
-    const sumDried = partials.length > 0
-      ? partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0)
-      : (lot.kg_dried_output != null ? Number(lot.kg_dried_output) : null);
+    // Cuando el lote se cerro via parciales, kg_dried_output ya es la
+    // suma de los parciales (lo guarda update-status). Si no hubo
+    // parciales, usamos el valor crudo de la BD. Para mostrar al
+    // operario preferimos siempre el dato del lote (autoritativo).
+    const sumDried = lot.kg_dried_output != null
+      ? Number(lot.kg_dried_output)
+      : (partials.length > 0
+          ? partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0)
+          : null);
+    // Verde "real" del lote: kg_green_actual cuando esta cerrado; si no,
+    // caemos al kg_green_expected (pre-proceso). El label cambia para
+    // que el operario sepa que esta viendo.
+    const verdeReal = lot.kg_green_actual != null ? Number(lot.kg_green_actual) : null;
+    const verdeEst  = lot.kg_green_expected != null ? Number(lot.kg_green_expected) : null;
+    const showVerde = verdeReal != null ? verdeReal : verdeEst;
+    const verdeLabel = verdeReal != null ? 'Verde' : 'Verde estimado';
 
     return el('div', { class: 'rounded-md border border-sand bg-white overflow-hidden' }, [
       // Lot header (navy strip, igual al PDF)
@@ -163,26 +176,15 @@ export async function fincaDespachosView() {
         lot.processing_stage ? el('span', {}, [`Etapa inicial: `, el('strong', { class: 'text-ink-700', text: lot.processing_stage })]) : null,
         sumDried != null ? el('span', {}, [`Peso seco: `, el('strong', { class: 'text-ink-700', text: fmtKg(sumDried) })]) : null,
         lot.factor_rendimiento != null ? el('span', {}, [`Factor: `, el('strong', { class: 'text-ink-700', text: String(lot.factor_rendimiento) })]) : null,
-        lot.kg_green_expected != null ? el('span', {}, [`Verde estimado: `, el('strong', { class: 'text-ink-700', text: fmtKg(lot.kg_green_expected) })]) : null,
+        showVerde != null ? el('span', {}, [`${verdeLabel}: `, el('strong', { class: 'text-ink-700', text: fmtKg(showVerde) })]) : null,
         lot.varieties && lot.varieties.length
           ? el('span', {}, [`Variedades: `, el('strong', { class: 'text-ink-700', text: lot.varieties.map((v) => v.name).join(', ') })])
           : null,
       ]),
-      // Parciales table (cuando aplica)
+      // Parciales en dropdown colapsable: por defecto solo se ve el
+      // resumen total; el operario expande para ver fila por fila.
       partials.length > 0
-        ? el('div', { class: 'px-3 py-2 border-b border-sand' }, [
-            el('p', { class: 'eyebrow text-[10px] mb-1', text: `Parciales en este despacho (${partials.length})` }),
-            simpleTable(
-              ['Parcial', 'kg seco', 'Factor', 'kg verde'],
-              partials.map((p) => [
-                `Parcial ${p.parcial_letter}`,
-                fmtKg(p.kg_dried),
-                String(p.factor_rendimiento),
-                fmtKg(p.kg_green_yield),
-              ]),
-              ['', 'text-right', 'text-right', 'text-right font-bold'],
-            ),
-          ])
+        ? partialsCollapsible(partials)
         : null,
       // Assignments table
       (lot.assignments && lot.assignments.length > 0)
@@ -207,6 +209,45 @@ export async function fincaDespachosView() {
           ])
         : el('p', { class: 'px-3 py-2 text-[11px] text-ink-300 italic', text: '— sin asignaciones —' }),
     ]);
+  }
+
+  function partialsCollapsible(partials) {
+    const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+    const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+    // Factor ponderado por kg seco (mismo calculo que el backend al cerrar bache).
+    let avgFactor = null;
+    if (sumDried > 0) {
+      const weighted = partials.reduce((s, p) => s + Number(p.factor_rendimiento || 0) * Number(p.kg_dried || 0), 0);
+      avgFactor = Math.round((weighted / sumDried) * 100) / 100;
+    }
+    const details = el('details', {
+      class: 'px-3 py-2 border-b border-sand',
+    }, [
+      el('summary', {
+        class: 'flex flex-wrap items-center gap-x-3 gap-y-1 cursor-pointer text-[11px] text-ink-500',
+        style: 'list-style:none;',
+      }, [
+        el('span', { class: 'eyebrow text-[10px]', text: `Parciales (${partials.length}) · click para ver detalle ▸` }),
+        el('span', { class: 'font-mono text-ink-700' }, [`Total seco `, el('strong', { text: fmtKg(sumDried) })]),
+        el('span', { class: 'font-mono text-ink-700' }, [`Total verde `, el('strong', { text: fmtKg(sumGreen) })]),
+        avgFactor != null
+          ? el('span', { class: 'font-mono text-ink-700' }, [`Factor prom. `, el('strong', { text: String(avgFactor) })])
+          : null,
+      ]),
+      el('div', { class: 'mt-2' }, [
+        simpleTable(
+          ['Parcial', 'kg seco', 'Factor', 'kg verde'],
+          partials.map((p) => [
+            `Parcial ${p.parcial_letter}`,
+            fmtKg(p.kg_dried),
+            String(p.factor_rendimiento),
+            fmtKg(p.kg_green_yield),
+          ]),
+          ['', 'text-right', 'text-right', 'text-right font-bold'],
+        ),
+      ]),
+    ]);
+    return details;
   }
 
   function simpleTable(headers, rows, cellClasses) {

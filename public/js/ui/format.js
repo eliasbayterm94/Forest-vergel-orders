@@ -1,8 +1,10 @@
 // Locale-aware formatting (Spanish, Colombia).
-const NF_KG = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 });
+// Operador prefiere ver kg como enteros (sin decimales). Redondeamos
+// half-up antes de formatear para evitar artefactos como "12.999,999".
+const NF_KG = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
 
-export const fmtKg     = (n) => `${NF_KG.format(Number(n || 0))} kg`;
-export const fmtNumber = (n) => NF_KG.format(Number(n || 0));
+export const fmtKg     = (n) => `${NF_KG.format(Math.round(Number(n || 0)))} kg`;
+export const fmtNumber = (n) => NF_KG.format(Math.round(Number(n || 0)));
 
 export const INTENSITY_LABEL = {
   media:    'Media',
