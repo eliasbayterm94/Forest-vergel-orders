@@ -268,95 +268,45 @@ export async function fincaMonitoreoView() {
   }
 
   function renderTendencias() {
-    // Últimos 12 meses calendario. Para cada mes:
-    //   ferm_started   — baches con start_date en ese mes
-    //   drying_started — baches con drying_start_date en ese mes
-    //   closed         — baches con ready_date en ese mes
-    //   cereza_in      — sum kg_cherry_input de los que arrancaron en ferm
-    //   verde_out      — sum kg_green_actual de los cerrados ese mes
-    //   factor_avg     — promedio ponderado del factor de los cerrados
+    // Productividad de la planta — últimos 12 meses calendario.
+    //   Hero KPIs (mes actual vs anterior) +
+    //   Chart de flujo: 3 barras por mes (cereza in / seco out / verde out)
+    //     con factor de rendimiento promedio como línea encima +
+    //   Chart de tiempo de ciclo promedio (cereza → verde, en días).
     const months = lastNMonths(today, 12);
-    const byMonth = new Map(months.map((m) => [m.key, {
-      ...m, ferm: 0, drying: 0, closed: 0, cereza_in: 0, verde_out: 0,
-      factor_num: 0, factor_den: 0,
-    }]));
-    for (const l of lots) {
-      const fermKey = monthKeyOf(l.start_date);
-      const dryKey  = monthKeyOf(l.drying_start_date);
-      const readyKey = monthKeyOf(l.ready_date);
-      if (fermKey && byMonth.has(fermKey)) {
-        const b = byMonth.get(fermKey);
-        b.ferm += 1;
-        b.cereza_in += Number(l.kg_cherry_input || 0);
-      }
-      if (dryKey && byMonth.has(dryKey)) byMonth.get(dryKey).drying += 1;
-      if (readyKey && byMonth.has(readyKey)) {
-        const b = byMonth.get(readyKey);
-        b.closed += 1;
-        b.verde_out += Number(l.kg_green_actual || 0);
-        const factor = Number(l.factor_rendimiento || 0);
-        const dried  = Number(l.kg_dried_output || 0);
-        if (factor > 0 && dried > 0) {
-          b.factor_num += factor * dried;
-          b.factor_den += dried;
-        }
-      }
-    }
-    const rows = months.map((m) => {
-      const b = byMonth.get(m.key);
-      const factor = b.factor_den > 0 ? Math.round((b.factor_num / b.factor_den) * 100) / 100 : null;
-      return {
-        key: m.key,
-        ferm: b.ferm, drying: b.drying, closed: b.closed,
-        cereza_in: b.cereza_in, verde_out: b.verde_out, factor,
-      };
-    });
+    const stats  = computeMonthlyStats(lots, months);
+    const cur    = stats[stats.length - 1] || null;
+    const prev   = stats[stats.length - 2] || null;
+    const curInProgress = cur && cur.key === today.slice(0, 7);
 
-    const series = {
-      ferm:      rows.map((r) => r.ferm),
-      drying:    rows.map((r) => r.drying),
-      closed:    rows.map((r) => r.closed),
-      cereza_in: rows.map((r) => r.cereza_in),
-      verde_out: rows.map((r) => r.verde_out),
-      factor:    rows.map((r) => r.factor || 0),
-    };
+    return el('div', { class: 'space-y-5' }, [
+      el('div', { class: 'flex items-baseline justify-between gap-2 flex-wrap' }, [
+        el('p', { class: 'eyebrow', text: cur ? `${monthLabel(cur.key)} vs ${prev ? monthLabel(prev.key) : '—'}` : 'Sin datos' }),
+        curInProgress
+          ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;', text: 'Mes en curso' })
+          : null,
+      ]),
+      heroKpiGrid(cur, prev),
 
-    return el('div', {}, [
-      el('p', { class: 'eyebrow mb-2', text: 'Últimos 12 meses' }),
-      el('div', { class: 'overflow-x-auto ctrm-card' }, [
-        el('table', { class: 'w-full text-[12px]' }, [
-          el('thead', {}, [
-            // Fila 1: sparklines
-            el('tr', {}, [
-              el('th', { class: 'px-2 py-2 text-left text-[10px] text-ink-300 uppercase tracking-loose' }, ['Sparkline']),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.ferm,      '#7e9ec1')]),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.drying,    '#ddae3e')]),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.closed,    '#5d8b66')]),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.cereza_in, '#c45a4f')]),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.verde_out, '#3a6f4a')]),
-              el('th', { class: 'px-2 py-2' }, [sparkline(series.factor,    '#1a3a5c')]),
-            ]),
-            // Fila 2: labels
-            el('tr', { class: 'border-t border-sand' }, [
-              el('th', { class: 'px-2 py-2 text-left font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Mes']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Ferm. arrancó']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Drying arrancó']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Cerrados']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Cereza in']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Verde out']),
-              el('th', { class: 'px-2 py-2 text-right font-display text-[11px] uppercase tracking-eyebrow text-ink-500' }, ['Factor prom.']),
-            ]),
+      el('div', { class: 'ctrm-card overflow-hidden' }, [
+        el('div', { class: 'px-3 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap' }, [
+          el('p', { class: 'eyebrow', text: 'Flujo de producción · 12 meses' }),
+          el('div', { class: 'flex items-center gap-3 text-[11px] font-mono text-ink-700' }, [
+            legendSwatch('#c45a4f', 'Cereza in'),
+            legendSwatch('#ddae3e', 'Seco'),
+            legendSwatch('#5d8b66', 'Verde'),
+            legendLine('#1a3a5c', 'Factor'),
           ]),
-          el('tbody', {}, rows.map((r) => el('tr', { class: 'border-t border-sand' }, [
-            el('td', { class: 'px-2 py-1.5 font-mono text-ink-700' }, [monthLabel(r.key)]),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.ferm)   }),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.drying) }),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: String(r.closed) }),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.cereza_in > 0 ? fmtKg(r.cereza_in) : '—' }),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.verde_out > 0 ? fmtKg(r.verde_out) : '—' }),
-            el('td', { class: 'px-2 py-1.5 text-right font-mono', text: r.factor != null ? String(r.factor) : '—' }),
-          ]))),
         ]),
+        el('div', { class: 'px-3 pb-3' }, [flowChart(stats)]),
+      ]),
+
+      el('div', { class: 'ctrm-card overflow-hidden' }, [
+        el('div', { class: 'px-3 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap' }, [
+          el('p', { class: 'eyebrow', text: 'Tiempo de ciclo cereza → verde · 12 meses' }),
+          el('span', { class: 'text-[11px] font-mono text-ink-500', text: 'Días promedio de los baches cerrados ese mes' }),
+        ]),
+        el('div', { class: 'px-3 pb-3' }, [cycleChart(stats)]),
       ]),
     ]);
   }
@@ -657,32 +607,301 @@ function progressBar(pct, color) {
   ]);
 }
 
-// ── Sparkline helper (mini SVG line) ────────────────────────────────
-function sparkline(values, stroke) {
-  const w = 80, h = 22, pad = 2;
-  const max = Math.max(0, ...values);
-  const min = Math.min(0, ...values);
-  const range = max - min || 1;
-  const n = values.length || 1;
-  const pts = values.map((v, i) => {
-    const x = pad + (i * (w - pad * 2)) / Math.max(1, n - 1);
-    const y = h - pad - ((v - min) / range) * (h - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const ns = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.setAttribute('width', String(w));
-  svg.setAttribute('height', String(h));
-  const poly = document.createElementNS(ns, 'polyline');
-  poly.setAttribute('points', pts);
-  poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', stroke);
-  poly.setAttribute('stroke-width', '1.5');
-  poly.setAttribute('stroke-linejoin', 'round');
-  poly.setAttribute('stroke-linecap', 'round');
-  svg.appendChild(poly);
+// ── Productividad: stats + charts ───────────────────────────────────
+function computeMonthlyStats(lots, months) {
+  const map = new Map(months.map((m) => [m.key, {
+    key: m.key,
+    cereza_in: 0, seco_out: 0, verde_out: 0,
+    closed: 0,
+    factor_num: 0, factor_den: 0,
+    cycle_num: 0, cycle_den: 0,
+  }]));
+  for (const l of lots) {
+    const fermKey = monthKeyOf(l.start_date);
+    if (fermKey && map.has(fermKey)) {
+      map.get(fermKey).cereza_in += Number(l.kg_cherry_input || 0);
+    }
+    const readyKey = monthKeyOf(l.ready_date);
+    if (readyKey && map.has(readyKey)) {
+      const s = map.get(readyKey);
+      s.closed += 1;
+      s.seco_out  += Number(l.kg_dried_output || 0);
+      s.verde_out += Number(l.kg_green_actual || 0);
+      const factor = Number(l.factor_rendimiento || 0);
+      const w = Number(l.kg_green_actual || 0);
+      if (factor > 0 && w > 0) {
+        s.factor_num += factor * w;
+        s.factor_den += w;
+      }
+      if (l.start_date && l.ready_date) {
+        const dCycle = daysBetween(l.start_date, l.ready_date);
+        if (dCycle > 0) {
+          s.cycle_num += dCycle;
+          s.cycle_den += 1;
+        }
+      }
+    }
+  }
+  return months.map((m) => {
+    const s = map.get(m.key);
+    return {
+      ...s,
+      factor:     s.factor_den > 0 ? s.factor_num / s.factor_den : null,
+      cycle_days: s.cycle_den > 0 ? s.cycle_num / s.cycle_den   : null,
+    };
+  });
+}
+
+// Hero KPIs ─────────────────────────────────────────────────────────
+function heroKpiGrid(cur, prev) {
+  if (!cur) return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin datos.' });
+  return el('div', { class: 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2' }, [
+    kpiCard('Cereza in',     fmtKg(cur.cereza_in),                            pctDelta(cur.cereza_in, prev?.cereza_in)),
+    kpiCard('Seco producido',fmtKg(cur.seco_out),                             pctDelta(cur.seco_out,  prev?.seco_out)),
+    kpiCard('Verde out',     fmtKg(cur.verde_out),                            pctDelta(cur.verde_out, prev?.verde_out)),
+    kpiCard('Baches',        String(cur.closed),                              absDelta(cur.closed,    prev?.closed)),
+    kpiCard('Factor prom.',  cur.factor != null ? cur.factor.toFixed(2) + '×' : '—',
+                              absDelta(cur.factor, prev?.factor, 2), { inverted: true }),
+    kpiCard('Ciclo prom.',   cur.cycle_days != null ? Math.round(cur.cycle_days) + 'd' : '—',
+                              absDelta(cur.cycle_days, prev?.cycle_days, 0),  { inverted: true }),
+  ]);
+}
+
+function kpiCard(label, value, delta, opts = {}) {
+  let deltaEl = null;
+  if (delta) {
+    const inverted = !!opts.inverted;
+    const good = delta.isUp == null ? null : inverted ? !delta.isUp : delta.isUp;
+    const color = good == null ? '#9aa3ae' : good ? '#5d8b66' : '#c45a4f';
+    deltaEl = el('p', { class: 'stat-sub', style: `color:${color};`, text: `${delta.sign} ${delta.text}` });
+  }
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: label }),
+    el('p', { class: 'stat-val',   text: value }),
+    deltaEl || el('p', { class: 'stat-sub', text: '—' }),
+  ]);
+}
+
+function pctDelta(cur, prev) {
+  if (prev == null || prev === 0) return null;
+  const d = ((cur - prev) / prev) * 100;
+  if (!Number.isFinite(d)) return null;
+  return {
+    sign: d > 0 ? '↑' : d < 0 ? '↓' : '·',
+    text: `${d > 0 ? '+' : ''}${d.toFixed(0)}% vs mes ant.`,
+    isUp: d === 0 ? null : d > 0,
+  };
+}
+
+function absDelta(cur, prev, decimals = 0) {
+  if (cur == null || prev == null) return null;
+  const d = cur - prev;
+  const fmt = (v) => (decimals > 0 ? v.toFixed(decimals) : String(Math.round(v)));
+  return {
+    sign: d > 0 ? '↑' : d < 0 ? '↓' : '·',
+    text: `${d > 0 ? '+' : ''}${fmt(d)} vs mes ant.`,
+    isUp: d === 0 ? null : d > 0,
+  };
+}
+
+// Legend swatches ───────────────────────────────────────────────────
+function legendSwatch(color, label) {
+  return el('span', { class: 'inline-flex items-center gap-1' }, [
+    el('span', { style: `display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};` }),
+    el('span', { text: label }),
+  ]);
+}
+function legendLine(color, label) {
+  return el('span', { class: 'inline-flex items-center gap-1' }, [
+    el('span', { style: `display:inline-block;width:14px;height:2px;background:${color};` }),
+    el('span', { text: label }),
+  ]);
+}
+
+// Flow chart (3 barras agrupadas + línea factor) ────────────────────
+function flowChart(stats) {
+  const W = 800, H = 240, padL = 44, padR = 44, padT = 18, padB = 36;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = stats.length;
+  const groupW = innerW / n;
+  const barW = Math.max(4, (groupW - 8) / 3);
+  const gap = (groupW - barW * 3) / 2;
+
+  const maxKg = Math.max(1, ...stats.flatMap((s) => [s.cereza_in, s.seco_out, s.verde_out]));
+  const yKg = (v) => padT + innerH - (v / maxKg) * innerH;
+
+  const factors = stats.map((s) => s.factor).filter((v) => v != null && v > 0);
+  const hasFactor = factors.length > 0;
+  const fLo = hasFactor ? Math.min(...factors) : 0;
+  const fHi = hasFactor ? Math.max(...factors) : 1;
+  const fPad = Math.max(0.2, (fHi - fLo) * 0.3);
+  const fMin = Math.max(0, fLo - fPad);
+  const fMax = fHi + fPad;
+  const yF = (v) => padT + innerH - ((v - fMin) / (fMax - fMin || 1)) * innerH;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${W} ${H}`,
+    width: '100%',
+    style: 'height:auto;display:block;',
+    'aria-label': 'Flujo de producción',
+  });
+
+  // Gridlines + Y-axis labels (kg)
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (innerH * i) / 4;
+    const v = maxKg * (1 - i / 4);
+    svg.append(svgEl('line', {
+      x1: padL, x2: W - padR, y1: y, y2: y,
+      stroke: '#ecebe6', 'stroke-width': '1',
+    }));
+    svg.append(svgEl('text', {
+      x: padL - 6, y: y + 3, 'text-anchor': 'end',
+      'font-size': '10', fill: '#9aa3ae', 'font-family': 'monospace',
+    }, fmtKg(v)));
+  }
+  // Y axis right (factor)
+  if (hasFactor) {
+    for (let i = 0; i <= 2; i++) {
+      const v = fMin + (fMax - fMin) * (1 - i / 2);
+      const y = padT + (innerH * i) / 2;
+      svg.append(svgEl('text', {
+        x: W - padR + 6, y: y + 3, 'text-anchor': 'start',
+        'font-size': '10', fill: '#1a3a5c', 'font-family': 'monospace',
+      }, v.toFixed(1) + '×'));
+    }
+  }
+
+  // Bars + X labels
+  stats.forEach((s, i) => {
+    const gx = padL + i * groupW + 4;
+    const bars = [
+      { v: s.cereza_in, color: '#c45a4f' },
+      { v: s.seco_out,  color: '#ddae3e' },
+      { v: s.verde_out, color: '#5d8b66' },
+    ];
+    bars.forEach((b, k) => {
+      if (b.v <= 0) return;
+      const x = gx + k * (barW + gap / 2);
+      const y = yKg(b.v);
+      const h = padT + innerH - y;
+      svg.append(svgEl('rect', {
+        x, y, width: barW, height: Math.max(1, h),
+        fill: b.color, rx: '1',
+      }));
+    });
+    // Month label
+    svg.append(svgEl('text', {
+      x: gx + (barW * 3 + gap) / 2,
+      y: H - padB + 14,
+      'text-anchor': 'middle',
+      'font-size': '10', fill: '#5b5b58', 'font-family': 'monospace',
+    }, monthShort(s.key)));
+  });
+
+  // Factor line overlay
+  if (hasFactor) {
+    const pts = stats.map((s, i) => {
+      if (s.factor == null || s.factor <= 0) return null;
+      const cx = padL + i * groupW + groupW / 2;
+      return [cx, yF(s.factor)];
+    }).filter(Boolean);
+    if (pts.length >= 2) {
+      const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+      svg.append(svgEl('path', {
+        d, fill: 'none', stroke: '#1a3a5c', 'stroke-width': '2',
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+      }));
+    }
+    pts.forEach(([x, y]) => {
+      svg.append(svgEl('circle', { cx: x, cy: y, r: '3', fill: '#1a3a5c' }));
+    });
+  }
+
   return svg;
+}
+
+// Cycle chart (línea de días promedio cereza → verde) ───────────────
+function cycleChart(stats) {
+  const W = 800, H = 160, padL = 44, padR = 20, padT = 14, padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = stats.length;
+  const xStep = innerW / Math.max(1, n - 1);
+
+  const vals = stats.map((s) => s.cycle_days).filter((v) => v != null && v > 0);
+  if (vals.length === 0) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin baches cerrados con fecha válida en el periodo.' });
+  }
+  const maxV = Math.max(...vals) * 1.15;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${W} ${H}`,
+    width: '100%',
+    style: 'height:auto;display:block;',
+    'aria-label': 'Tiempo de ciclo',
+  });
+
+  // Gridlines + Y labels (days)
+  for (let i = 0; i <= 3; i++) {
+    const y = padT + (innerH * i) / 3;
+    const v = maxV * (1 - i / 3);
+    svg.append(svgEl('line', {
+      x1: padL, x2: W - padR, y1: y, y2: y,
+      stroke: '#ecebe6', 'stroke-width': '1',
+    }));
+    svg.append(svgEl('text', {
+      x: padL - 6, y: y + 3, 'text-anchor': 'end',
+      'font-size': '10', fill: '#9aa3ae', 'font-family': 'monospace',
+    }, `${Math.round(v)}d`));
+  }
+
+  // X labels
+  stats.forEach((s, i) => {
+    const cx = padL + i * xStep;
+    svg.append(svgEl('text', {
+      x: cx, y: H - padB + 14, 'text-anchor': 'middle',
+      'font-size': '10', fill: '#5b5b58', 'font-family': 'monospace',
+    }, monthShort(s.key)));
+  });
+
+  // Line + points
+  const pts = stats.map((s, i) => {
+    if (s.cycle_days == null || s.cycle_days <= 0) return null;
+    const x = padL + i * xStep;
+    const y = padT + innerH - (s.cycle_days / maxV) * innerH;
+    return [x, y, s.cycle_days];
+  }).filter(Boolean);
+
+  if (pts.length >= 2) {
+    const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+    svg.append(svgEl('path', {
+      d, fill: 'none', stroke: '#7e9ec1', 'stroke-width': '2',
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    }));
+  }
+  pts.forEach(([x, y, v]) => {
+    svg.append(svgEl('circle', { cx: x, cy: y, r: '3', fill: '#7e9ec1' }));
+    svg.append(svgEl('text', {
+      x, y: y - 6, 'text-anchor': 'middle',
+      'font-size': '10', fill: '#1a3a5c', 'font-family': 'monospace',
+    }, `${Math.round(v)}d`));
+  });
+
+  return svg;
+}
+
+function monthShort(key) {
+  const [, m] = key.split('-');
+  return MONTH_ES[Number(m) - 1] || key;
+}
+
+function svgEl(tag, attrs = {}, text = null) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const node = document.createElementNS(ns, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  if (text != null) node.textContent = String(text);
+  return node;
 }
 
 // ── Month helpers ──────────────────────────────────────────────────
