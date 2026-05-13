@@ -102,12 +102,12 @@ export async function fincaLotsBulkFormView() {
   const COLS = [
     { label: '#',          cls: 'w-10 text-center' },
     { label: 'Bache *',    cls: 'min-w-[110px]' },
-    { label: 'Referencia *', cls: 'min-w-[160px]' },
+    { label: 'Referencia', cls: 'min-w-[160px]' },
     { label: 'Proceso *',  cls: 'min-w-[110px]' },
     { label: 'Etapa *',    cls: 'min-w-[120px]' },
     { label: 'Kg entrada *', cls: 'w-28 text-right' },
     { label: 'Inicio *',   cls: 'w-36' },
-    { label: 'Variedades', cls: 'min-w-[180px]' },
+    { label: 'Variedades *', cls: 'min-w-[180px]' },
     { label: 'Ferm. (h)',  cls: 'w-20 text-right' },
     { label: 'Infusión',   cls: 'min-w-[130px]' },
     { label: '%',          cls: 'w-16 text-right' },
@@ -449,11 +449,12 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
     const infPct = infusionPctInput.value === '' ? null : Number(infusionPctInput.value);
 
     if (!bache) errors.push('Falta bache_code');
-    if (!refRawName) errors.push('Falta referencia');
     if (!processSelect.value) errors.push('Falta proceso');
     if (!stageSelect.value) errors.push('Falta etapa');
     if (!Number.isFinite(kg) || kg <= 0) errors.push('Kg entrada debe ser > 0');
     if (!dateInput.value) errors.push('Falta fecha de inicio');
+    const rawVarietiesPre = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+    if (rawVarietiesPre.length === 0) errors.push('Falta al menos una variedad');
 
     // Infusión: ambos o ninguno
     if ((infRaw && infPct == null) || (!infRaw && infPct != null)) {
