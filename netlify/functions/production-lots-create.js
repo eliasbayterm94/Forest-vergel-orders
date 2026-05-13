@@ -10,13 +10,14 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
  * POST /production-lots-create  (finca, admin)
  * Body:
  *   bache_code             string, unique (required)
- *   reference_id           uuid
+ *   reference_id           uuid (optional — el bache adopta la referencia
+ *                          al asignarle el primer pedido)
  *   process_type           one of PROCESS_TYPES
  *   processing_stage       'cereza' | 'despulpado' | 'seco'
  *   kg_input_amount        number > 0          (the weight at the chosen stage)
  *   start_date             'YYYY-MM-DD'
  *   fermentation_hours     number >= 0 (optional)
- *   variety_ids            [uuid] (optional)
+ *   variety_ids            [uuid] (required, ≥1)
  *   notes                  string (optional)
  *   initial_assignments    [{ demand_order_id, kg_green_allocated }] (optional)
  *
@@ -61,7 +62,6 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   if (!bache_code) errors.push('bache_code required');
   else if (bache_code.length > 60) errors.push('bache_code too long (max 60 chars)');
-  if (!reference_id) errors.push('reference_id required');
   if (!PROCESS_TYPES.includes(process_type)) errors.push('process_type invalid');
   if (!processing_stage || !INPUT_STAGE_DIVISORS[processing_stage]) {
     errors.push('processing_stage must be cereza, despulpado, or seco');
@@ -72,13 +72,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errors.push('start_date must be YYYY-MM-DD');
   if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
     errors.push('fermentation_hours must be >= 0');
+  if (variety_ids.length === 0) errors.push('al menos una variedad es requerida');
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
 
   const sb = getSupabase();
-  const { data: refRow, error: refErr } = await sb
-    .from('coffee_references').select('id, active').eq('id', reference_id).maybeSingle();
-  if (refErr) return serverErr('Reference lookup failed', refErr.message);
-  if (!refRow || !refRow.active) return badReq('Unknown or inactive reference', 'INVALID_REFERENCE');
+  // Referencia opcional: si viene, validar que exista y esté activa.
+  if (reference_id) {
+    const { data: refRow, error: refErr } = await sb
+      .from('coffee_references').select('id, active').eq('id', reference_id).maybeSingle();
+    if (refErr) return serverErr('Reference lookup failed', refErr.message);
+    if (!refRow || !refRow.active) return badReq('Unknown or inactive reference', 'INVALID_REFERENCE');
+  }
 
   const kg_green_expected = inputToGreen(kg_input_amount, processing_stage);
 
@@ -105,7 +109,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const { data: lot, error: insErr } = await sb
     .from('production_lots').insert({
       bache_code,
-      reference_id,
+      reference_id: reference_id || null,
       process_type,
       processing_stage,
       ...stageInsert,

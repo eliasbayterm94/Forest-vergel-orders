@@ -84,8 +84,8 @@ export async function fincaLotsView() {
       renderItem: lotCard,
       viewModeKey: 'finca-lots',
       tableHeaders: [
-        { label: 'Bache' }, { label: 'Referencia' }, { label: 'Status' }, { label: 'Proceso' },
-        { label: 'Infusión' },
+        { label: 'Bache' }, { label: 'Referencia' }, { label: 'Variedades' },
+        { label: 'Status' }, { label: 'Proceso' }, { label: 'Infusión' },
         { label: 'Cereza',     cls: 'text-right' },
         { label: 'Verde esp.', cls: 'text-right' },
         { label: 'Verde real', cls: 'text-right' },
@@ -103,7 +103,9 @@ export async function fincaLotsView() {
       searchPlaceholder: 'Buscar código de lote, referencia...',
       searchMatch: (l, q) => {
         const lo = q.toLowerCase();
-        return [l.bache_code, l.lot_code, l.reference_name].some((s) => (s || '').toLowerCase().includes(lo));
+        const fields = [l.bache_code, l.lot_code, l.reference_name];
+        for (const v of (l.varieties || [])) fields.push(v.name);
+        return fields.some((s) => (s || '').toLowerCase().includes(lo));
       },
       filters: [
         { key: 'status',          label: 'Estado',  options: LOT_STATUSES, optionLabels: LOT_STATUS_LABELS, getter: (l) => l.status },
@@ -181,13 +183,21 @@ export async function fincaLotsView() {
       ]),
     ]);
 
+    const varieties = l.varieties || [];
+    const varietiesCell = varieties.length === 0
+      ? document.createTextNode('—')
+      : el('div', { class: 'flex flex-wrap gap-1' }, varieties.map((v) =>
+          el('span', { class: 'ctrm-pill dark text-[10px]', text: v.name })));
+
     return el('tr', {
       class: 'hover:bg-cream',
     }, [
       tcell('Bache', 'font-mono text-navy font-semibold cursor-pointer', el('span', {
         onClick: () => assignLot(l),
       }, [code])),
-      tcell('Referencia', '', l.reference_name || '—'),
+      tcell('Referencia', l.reference_name ? '' : 'italic text-ink-300',
+        l.reference_name || 'Sin referencia'),
+      tcell('Variedades', '', varietiesCell),
       tcell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
       tcell('Proceso', 'text-[11px]', l.process_type),
       tcell('Infusión', 'text-[11px]', l.infusion_name
@@ -235,10 +245,14 @@ export async function fincaLotsView() {
           (l.bache_code && l.bache_code !== l.lot_code)
             ? el('span', { class: 'text-[10px] text-ink-300 font-mono', text: l.lot_code })
             : null,
-          el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name || '—' }),
+          l.reference_name
+            ? el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: l.reference_name })
+            : el('span', { class: 'font-display italic text-ink-300 text-[13px]', text: 'Sin referencia' }),
           el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
           stageLabel ? el('span', { class: 'ctrm-pill muted', text: stageLabel }) : null,
           infusionPill(l),
+          ...((l.varieties || []).map((v) =>
+            el('span', { class: 'ctrm-pill dark text-[10px]', text: v.name }))),
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           next ? el('button', {
@@ -279,12 +293,6 @@ export async function fincaLotsView() {
       ]),
       // ── Detalle expandible ───────────────────────────────────────
       isExp ? el('div', {}, [
-        (l.varieties || []).length > 0
-          ? el('div', { class: 'flex flex-wrap gap-1 mt-2' }, (l.varieties || []).map((v) =>
-              el('span', { class: 'ctrm-pill dark', text: v.name }),
-            ))
-          : null,
-
         // Discrepancy banner — appears only when assignments exceed capacity
         isOverAllocated
           ? el('div', {
@@ -1198,9 +1206,15 @@ export async function fincaLotsView() {
       ]);
 
       async function maybeRefreshCandidates() {
-        if (!chosenRef || !procSelect.value) {
+        if (!procSelect.value) {
           assignWrap.innerHTML = '';
-          assignWrap.append(el('p', { class: 'ctrm-hint', text: 'Selecciona referencia + proceso para ver pedidos compatibles.' }));
+          assignWrap.append(el('p', { class: 'ctrm-hint', text: 'Selecciona proceso para ver pedidos compatibles.' }));
+          return;
+        }
+        if (!chosenRef) {
+          assignWrap.innerHTML = '';
+          assignWrap.append(el('p', { class: 'ctrm-hint',
+            text: 'Sin referencia: este bache se creará como stock disponible. Asignalo a un pedido más adelante desde la tabla.' }));
           return;
         }
         try {
@@ -1276,7 +1290,12 @@ export async function fincaLotsView() {
           bacheInput,
           el('p', { class: 'ctrm-hint', text: 'Único por lote. La finca lo asigna a la llegada de la cereza.' }),
         ]),
-        labelled('Referencia', refCombo.el),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Referencia (opcional)' }),
+          refCombo.el,
+          el('p', { class: 'ctrm-hint',
+            text: 'Si no la conoces aún, deja en blanco. El bache adoptará la referencia cuando lo asignes al primer pedido.' }),
+        ]),
         labelled('Proceso', procSelect),
 
         // Stage selector
@@ -1294,7 +1313,14 @@ export async function fincaLotsView() {
 
         labelled('Fecha de inicio', startInput),
         labelled('Horas de fermentación', fermInput),
-        labelled('Variedades', vCombo.el),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Variedades ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          vCombo.el,
+          el('p', { class: 'ctrm-hint', text: 'Al menos una variedad.' }),
+        ]),
         el('div', {}, [
           el('label', { class: 'ctrm-label', text: 'Infusión (opcional)' }),
           infusionCombo.el,
@@ -1316,11 +1342,13 @@ export async function fincaLotsView() {
             onClick: async () => {
               const bacheCode = bacheInput.value.trim();
               if (!bacheCode) { toast('Falta código de bache', 'warning'); return; }
-              if (!chosenRef) { toast('Selecciona referencia', 'warning'); return; }
               if (!procSelect.value) { toast('Selecciona proceso', 'warning'); return; }
               const kg = Number(kgInput.value);
               if (!(kg > 0)) { toast(`${stageInputLabelOf(chosenStage)}: valor inválido`, 'warning'); return; }
               if (!startInput.value) { toast('Falta fecha de inicio', 'warning'); return; }
+              if (vCombo.getValues().length === 0) {
+                toast('Selecciona al menos una variedad', 'warning'); return;
+              }
 
               // Collect assignments (filter out empty / zero rows)
               const initial_assignments = [];
@@ -1347,7 +1375,7 @@ export async function fincaLotsView() {
               try {
                 const r = await api.lotCreate({
                   bache_code: bacheCode,
-                  reference_id: chosenRef.id,
+                  reference_id: chosenRef ? chosenRef.id : null,
                   process_type: procSelect.value,
                   processing_stage: chosenStage,
                   kg_input_amount: kg,
@@ -1383,12 +1411,18 @@ export async function fincaLotsView() {
       // ya cubrieron parte del pedido desde lotes ya entregados. Sin
       // esto, remaining_kg sale inflado y el trigger de la BD rechaza
       // la nueva asignacion por sobrecupo.
+      // Si el bache aún no tiene referencia (stock disponible), listamos
+      // todos los pedidos compatibles por proceso. Al asignarse al primero,
+      // el trigger de BD copia order.reference_id → lot.reference_id y
+      // partir de ahí la referencia queda fija.
+      const orderQuery = {
+        status: 'Accepted,PartiallyAccepted,InProduction,Completed',
+        process_type: lot.process_type,
+      };
+      if (lot.reference_id) orderQuery.reference_id = lot.reference_id;
+
       const [r, allLotsRes] = await Promise.all([
-        api.ordersList({
-          status: 'Accepted,PartiallyAccepted,InProduction,Completed',
-          reference_id: lot.reference_id,
-          process_type: lot.process_type,
-        }),
+        api.ordersList(orderQuery),
         api.lotsList({}),
       ]);
       const allLots = allLotsRes.lots || [];
@@ -1557,6 +1591,12 @@ function assignModalBody(lot, candidates, close) {
   });
 
   return el('div', { class: 'space-y-3' }, [
+    !lot.reference_id ? el('div', {
+      class: 'rounded-lg bg-yellow/10 border border-yellow p-3 text-[12px] text-ink-700',
+    }, [
+      el('strong', { text: 'Sin referencia · ' }),
+      'Este bache adoptará la referencia del pedido que le asignes. La elección queda fija después.',
+    ]) : null,
     el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono' }, [
       el('span', {}, [
         el('span', { class: 'text-ink-500 uppercase tracking-loose text-[10px] mr-1', text: 'Disponible lote' }),

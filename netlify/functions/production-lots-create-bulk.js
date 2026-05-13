@@ -57,7 +57,6 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       if (bacheCodesSeen.has(lower)) errs.push(`bache_code duplicado en el batch: "${bache_code}"`);
       else bacheCodesSeen.add(lower);
     }
-    if (!reference_id) errs.push('reference_id required');
     if (!PROCESS_TYPES.includes(process_type)) errs.push('process_type invalid');
     if (!processing_stage || !INPUT_STAGE_DIVISORS[processing_stage]) {
       errs.push('processing_stage must be cereza, despulpado, or seco');
@@ -68,6 +67,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errs.push('start_date must be YYYY-MM-DD');
     if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
       errs.push('fermentation_hours must be >= 0');
+    if (variety_ids.length === 0) errs.push('al menos una variedad es requerida');
     if (infusion_id || infusion_pct != null) {
       if (!infusion_id) errs.push('infusion_pct sin infusion_id');
       if (infusion_pct == null) errs.push('infusion_id sin infusion_pct');
@@ -107,18 +107,21 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const sb = getSupabase();
 
-  // ── Validar referencias existentes y activas (una sola query con IN) ──
-  const refIds = [...new Set(cleaned.map((o) => o.reference_id))];
-  const { data: refs, error: refErr } = await sb
-    .from('coffee_references').select('id, active').in('id', refIds);
-  if (refErr) return serverErr('Reference lookup failed', refErr.message);
-  const refMap = new Map((refs || []).map((r) => [r.id, r]));
-  const badRefs = [];
-  cleaned.forEach((o, idx) => {
-    const r = refMap.get(o.reference_id);
-    if (!r || !r.active) badRefs.push({ index: idx, reason: 'Unknown or inactive reference' });
-  });
-  if (badRefs.length) return badReq('Invalid references', 'INVALID_REFERENCE', { row_errors: badRefs });
+  // ── Validar referencias existentes y activas (sólo las filas que la traen) ──
+  const refIds = [...new Set(cleaned.map((o) => o.reference_id).filter(Boolean))];
+  if (refIds.length > 0) {
+    const { data: refs, error: refErr } = await sb
+      .from('coffee_references').select('id, active').in('id', refIds);
+    if (refErr) return serverErr('Reference lookup failed', refErr.message);
+    const refMap = new Map((refs || []).map((r) => [r.id, r]));
+    const badRefs = [];
+    cleaned.forEach((o, idx) => {
+      if (!o.reference_id) return; // opcional
+      const r = refMap.get(o.reference_id);
+      if (!r || !r.active) badRefs.push({ index: idx, reason: 'Unknown or inactive reference' });
+    });
+    if (badRefs.length) return badReq('Invalid references', 'INVALID_REFERENCE', { row_errors: badRefs });
+  }
 
   // ── Validar bache_codes únicos vs BD ──
   const allCodes = cleaned.map((o) => o.bache_code);
@@ -142,7 +145,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   // ── INSERT atómico de lotes + variedades ──
   const lotRows = cleaned.map((o) => ({
     bache_code: o.bache_code,
-    reference_id: o.reference_id,
+    reference_id: o.reference_id || null,
     process_type: o.process_type,
     processing_stage: o.processing_stage,
     kg_cherry_input: o.kg_cherry_input,
