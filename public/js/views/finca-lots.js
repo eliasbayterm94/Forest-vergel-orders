@@ -9,6 +9,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { navigate } from '../router.js';
+import { actionMenu } from '../ui/action-menu.js';
 
 const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
 const LOT_STATUS_LABELS = {
@@ -169,10 +170,13 @@ export async function fincaLotsView() {
         onClick: (e) => { e.stopPropagation(); onClick(); },
       }, [label]);
 
-    const actionsCell = el('div', { class: 'inline-flex gap-1 flex-wrap justify-end' }, [
+    const actionsCell = el('div', { class: 'inline-flex gap-1 flex-wrap justify-end items-center' }, [
       next ? actionBtn(closeBacheLabel, 'primary', () => advanceStatus(l, next)) : null,
       l.status === 'Ready' ? actionBtn('Despachar', 'yellow', () => { location.hash = '/finca/despachos'; }) : null,
       actionBtn('Asignar', 'soft', () => assignLot(l)),
+      actionMenu([
+        { label: 'Editar bache', onClick: () => editBacheCode(l) },
+      ]),
     ]);
 
     return el('tr', {
