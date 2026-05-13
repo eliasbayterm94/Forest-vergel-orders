@@ -76,6 +76,7 @@ export const api = {
   lotCreateBulk:   (payload) => request('POST', '/api/production-lots-create-bulk', { body: payload }),
   lotUpdate:       (payload) => request('POST', '/api/production-lots-update', { body: payload }),
   lotUpdateStatus: (payload) => request('POST', '/api/production-lots-update-status', { body: payload }),
+  lotDelete:       (payload) => request('POST', '/api/production-lots-delete', { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),

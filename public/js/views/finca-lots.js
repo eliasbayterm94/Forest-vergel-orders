@@ -172,10 +172,12 @@ export async function fincaLotsView() {
 
     const actionsCell = el('div', { class: 'inline-flex gap-1 flex-wrap justify-end items-center' }, [
       next ? actionBtn(closeBacheLabel, 'primary', () => advanceStatus(l, next)) : null,
-      l.status === 'Ready' ? actionBtn('Despachar', 'yellow', () => { location.hash = '/finca/despachos'; }) : null,
-      actionBtn('Asignar', 'soft', () => assignLot(l)),
       actionMenu([
-        { label: 'Editar bache', onClick: () => editBacheCode(l) },
+        { label: 'Despachar',     hidden: l.status !== 'Ready',
+          onClick: () => { location.hash = '/finca/despachos'; } },
+        { label: 'Asignar pedidos', onClick: () => assignLot(l) },
+        { label: 'Editar bache',    onClick: () => editBacheCode(l) },
+        { label: 'Eliminar bache',  danger: true, onClick: () => deleteLot(l) },
       ]),
     ]);
 
@@ -257,6 +259,9 @@ export async function fincaLotsView() {
             title: 'Editar código de bache',
             onClick: () => editBacheCode(l),
           }, ['Editar bache']),
+          actionMenu([
+            { label: 'Eliminar bache', danger: true, onClick: () => deleteLot(l) },
+          ]),
         ]),
       ]),
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
@@ -979,6 +984,42 @@ export async function fincaLotsView() {
         ]),
       ]);
     }, { title: 'Editar código de bache' });
+  }
+
+  // ---------- Delete bache ----------
+  async function deleteLot(lot) {
+    const code = lot.bache_code || lot.lot_code;
+    const assignments = (lot.assignments || []).length;
+    const partials    = (lot.partials || []).length;
+
+    const detail = [
+      assignments > 0
+        ? `· Se removerán ${assignments} ${assignments === 1 ? 'asignación a pedido' : 'asignaciones a pedidos'} (los pedidos vuelven a quedar pendientes de lote).`
+        : null,
+      partials > 0
+        ? `· Se borrarán ${partials} ${partials === 1 ? 'parcial registrado' : 'parciales registrados'}.`
+        : null,
+    ].filter(Boolean).join('\n');
+
+    const ok = await confirmModal(
+      `¿Eliminar el bache ${code}?\n\nEsta acción no se puede deshacer.${detail ? '\n\n' + detail : ''}`,
+      { title: 'Eliminar bache', confirmText: 'Eliminar', danger: true },
+    );
+    if (!ok) return;
+
+    try {
+      const res = await api.lotDelete({ lot_id: lot.id });
+      const removed = res?.assignments_removed || 0;
+      toast(
+        removed > 0
+          ? `Bache ${code} eliminado · ${removed} ${removed === 1 ? 'asignación liberada' : 'asignaciones liberadas'}`
+          : `Bache ${code} eliminado`,
+        'success',
+      );
+      await reloadLots();
+    } catch (e) {
+      toast(e.message || 'No se pudo eliminar', 'error');
+    }
   }
 
   // ---------- Create lot (stage selector + optional pre-assignment) ----------
