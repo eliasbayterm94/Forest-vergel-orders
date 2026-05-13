@@ -288,26 +288,33 @@ export async function fincaMonitoreoView() {
       ]),
       heroKpiGrid(cur, prev),
 
-      el('div', { class: 'ctrm-card overflow-hidden' }, [
-        el('div', { class: 'px-3 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap' }, [
-          el('p', { class: 'eyebrow', text: 'Flujo de producción · 12 meses' }),
-          el('div', { class: 'flex items-center gap-3 text-[11px] font-mono text-ink-700' }, [
-            legendSwatch('#c45a4f', 'Cereza in'),
-            legendSwatch('#ddae3e', 'Seco'),
-            legendSwatch('#5d8b66', 'Verde'),
-            legendLine('#1a3a5c', 'Factor'),
-          ]),
+      el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4' }, [
+        el('div', { class: 'ctrm-card overflow-hidden' }, [
+          chartHeader('Seco producido por proceso · 12 meses', PROCS.map((p) => legendSwatch(PROC_COLORS[p], p))),
+          el('div', { class: 'px-3 pb-3' }, [stackedByProcessChart(stats, 'seco_by_proc')]),
         ]),
-        el('div', { class: 'px-3 pb-3' }, [flowChart(stats)]),
+        el('div', { class: 'ctrm-card overflow-hidden' }, [
+          chartHeader('Verde producido por proceso · 12 meses', PROCS.map((p) => legendSwatch(PROC_COLORS[p], p))),
+          el('div', { class: 'px-3 pb-3' }, [stackedByProcessChart(stats, 'verde_by_proc')]),
+        ]),
       ]),
 
       el('div', { class: 'ctrm-card overflow-hidden' }, [
-        el('div', { class: 'px-3 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap' }, [
-          el('p', { class: 'eyebrow', text: 'Tiempo de ciclo cereza → verde · 12 meses' }),
-          el('span', { class: 'text-[11px] font-mono text-ink-500', text: 'Días promedio de los baches cerrados ese mes' }),
-        ]),
-        el('div', { class: 'px-3 pb-3' }, [cycleChart(stats)]),
+        chartHeader('Tiempo de ciclo por proceso · 12 meses',
+          PROCS.map((p) => legendLine(PROC_COLORS[p], p)),
+          'Días promedio cereza → verde de los baches cerrados ese mes'),
+        el('div', { class: 'px-3 pb-3' }, [cycleByProcessChart(stats)]),
       ]),
+    ]);
+  }
+
+  function chartHeader(title, legendItems, hint) {
+    return el('div', { class: 'px-3 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap' }, [
+      el('div', {}, [
+        el('p', { class: 'eyebrow', text: title }),
+        hint ? el('p', { class: 'text-[11px] font-mono text-ink-500 mt-0.5', text: hint }) : null,
+      ]),
+      el('div', { class: 'flex items-center gap-3 text-[11px] font-mono text-ink-700 flex-wrap' }, legendItems),
     ]);
   }
 
@@ -608,6 +615,22 @@ function progressBar(pct, color) {
 }
 
 // ── Productividad: stats + charts ───────────────────────────────────
+const PROCS = ['Natural', 'Honey', 'Lavado'];
+const PROC_COLORS = {
+  Natural: '#3a6f4a',  // verde oscuro
+  Honey:   '#ddae3e',  // mostaza
+  Lavado:  '#7e9ec1',  // navy-soft
+};
+
+function blankByProc() { return { Natural: 0, Honey: 0, Lavado: 0 }; }
+function blankCycleByProc() {
+  return {
+    Natural: { num: 0, den: 0 },
+    Honey:   { num: 0, den: 0 },
+    Lavado:  { num: 0, den: 0 },
+  };
+}
+
 function computeMonthlyStats(lots, months) {
   const map = new Map(months.map((m) => [m.key, {
     key: m.key,
@@ -615,8 +638,12 @@ function computeMonthlyStats(lots, months) {
     closed: 0,
     factor_num: 0, factor_den: 0,
     cycle_num: 0, cycle_den: 0,
+    seco_by_proc:  blankByProc(),
+    verde_by_proc: blankByProc(),
+    cycle_by_proc: blankCycleByProc(),
   }]));
   for (const l of lots) {
+    const proc = PROCS.includes(l.process_type) ? l.process_type : null;
     const fermKey = monthKeyOf(l.start_date);
     if (fermKey && map.has(fermKey)) {
       map.get(fermKey).cereza_in += Number(l.kg_cherry_input || 0);
@@ -624,30 +651,46 @@ function computeMonthlyStats(lots, months) {
     const readyKey = monthKeyOf(l.ready_date);
     if (readyKey && map.has(readyKey)) {
       const s = map.get(readyKey);
+      const dried = Number(l.kg_dried_output || 0);
+      const green = Number(l.kg_green_actual || 0);
       s.closed += 1;
-      s.seco_out  += Number(l.kg_dried_output || 0);
-      s.verde_out += Number(l.kg_green_actual || 0);
+      s.seco_out  += dried;
+      s.verde_out += green;
+      if (proc) {
+        s.seco_by_proc[proc]  += dried;
+        s.verde_by_proc[proc] += green;
+      }
       const factor = Number(l.factor_rendimiento || 0);
-      const w = Number(l.kg_green_actual || 0);
-      if (factor > 0 && w > 0) {
-        s.factor_num += factor * w;
-        s.factor_den += w;
+      if (factor > 0 && green > 0) {
+        s.factor_num += factor * green;
+        s.factor_den += green;
       }
       if (l.start_date && l.ready_date) {
         const dCycle = daysBetween(l.start_date, l.ready_date);
         if (dCycle > 0) {
           s.cycle_num += dCycle;
           s.cycle_den += 1;
+          if (proc) {
+            s.cycle_by_proc[proc].num += dCycle;
+            s.cycle_by_proc[proc].den += 1;
+          }
         }
       }
     }
   }
   return months.map((m) => {
     const s = map.get(m.key);
+    const cycleProc = {};
+    for (const p of PROCS) {
+      cycleProc[p] = s.cycle_by_proc[p].den > 0
+        ? s.cycle_by_proc[p].num / s.cycle_by_proc[p].den
+        : null;
+    }
     return {
       ...s,
       factor:     s.factor_den > 0 ? s.factor_num / s.factor_den : null,
       cycle_days: s.cycle_den > 0 ? s.cycle_num / s.cycle_den   : null,
+      cycle_days_by_proc: cycleProc,
     };
   });
 }
@@ -718,39 +761,33 @@ function legendLine(color, label) {
   ]);
 }
 
-// Flow chart (3 barras agrupadas + línea factor) ────────────────────
-function flowChart(stats) {
-  const W = 800, H = 240, padL = 44, padR = 44, padT = 18, padB = 36;
+// Stacked bars por proceso (Natural / Honey / Lavado) ───────────────
+function stackedByProcessChart(stats, key) {
+  const W = 800, H = 220, padL = 48, padR = 16, padT = 14, padB = 32;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const n = stats.length;
   const groupW = innerW / n;
-  const barW = Math.max(4, (groupW - 8) / 3);
-  const gap = (groupW - barW * 3) / 2;
+  const barW = Math.max(8, groupW * 0.6);
+  const totals = stats.map((s) => PROCS.reduce((acc, p) => acc + (s[key][p] || 0), 0));
+  const maxV = Math.max(1, ...totals);
+  const yV = (v) => padT + innerH - (v / maxV) * innerH;
 
-  const maxKg = Math.max(1, ...stats.flatMap((s) => [s.cereza_in, s.seco_out, s.verde_out]));
-  const yKg = (v) => padT + innerH - (v / maxKg) * innerH;
-
-  const factors = stats.map((s) => s.factor).filter((v) => v != null && v > 0);
-  const hasFactor = factors.length > 0;
-  const fLo = hasFactor ? Math.min(...factors) : 0;
-  const fHi = hasFactor ? Math.max(...factors) : 1;
-  const fPad = Math.max(0.2, (fHi - fLo) * 0.3);
-  const fMin = Math.max(0, fLo - fPad);
-  const fMax = fHi + fPad;
-  const yF = (v) => padT + innerH - ((v - fMin) / (fMax - fMin || 1)) * innerH;
+  if (totals.every((v) => v <= 0)) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin producción registrada en el periodo.' });
+  }
 
   const svg = svgEl('svg', {
     viewBox: `0 0 ${W} ${H}`,
     width: '100%',
     style: 'height:auto;display:block;',
-    'aria-label': 'Flujo de producción',
+    'aria-label': 'Producción por proceso',
   });
 
-  // Gridlines + Y-axis labels (kg)
+  // Gridlines + Y labels (kg)
   for (let i = 0; i <= 4; i++) {
     const y = padT + (innerH * i) / 4;
-    const v = maxKg * (1 - i / 4);
+    const v = maxV * (1 - i / 4);
     svg.append(svgEl('line', {
       x1: padL, x2: W - padR, y1: y, y2: y,
       stroke: '#ecebe6', 'stroke-width': '1',
@@ -760,86 +797,59 @@ function flowChart(stats) {
       'font-size': '10', fill: '#9aa3ae', 'font-family': 'monospace',
     }, fmtKg(v)));
   }
-  // Y axis right (factor)
-  if (hasFactor) {
-    for (let i = 0; i <= 2; i++) {
-      const v = fMin + (fMax - fMin) * (1 - i / 2);
-      const y = padT + (innerH * i) / 2;
-      svg.append(svgEl('text', {
-        x: W - padR + 6, y: y + 3, 'text-anchor': 'start',
-        'font-size': '10', fill: '#1a3a5c', 'font-family': 'monospace',
-      }, v.toFixed(1) + '×'));
-    }
-  }
 
-  // Bars + X labels
+  // Stacked bars
   stats.forEach((s, i) => {
-    const gx = padL + i * groupW + 4;
-    const bars = [
-      { v: s.cereza_in, color: '#c45a4f' },
-      { v: s.seco_out,  color: '#ddae3e' },
-      { v: s.verde_out, color: '#5d8b66' },
-    ];
-    bars.forEach((b, k) => {
-      if (b.v <= 0) return;
-      const x = gx + k * (barW + gap / 2);
-      const y = yKg(b.v);
-      const h = padT + innerH - y;
+    const cx = padL + i * groupW + groupW / 2;
+    let yCursor = padT + innerH; // arranca desde abajo y sube
+    for (const p of PROCS) {
+      const v = s[key][p] || 0;
+      if (v <= 0) continue;
+      const h = (v / maxV) * innerH;
+      const y = yCursor - h;
       svg.append(svgEl('rect', {
-        x, y, width: barW, height: Math.max(1, h),
-        fill: b.color, rx: '1',
+        x: cx - barW / 2, y, width: barW, height: Math.max(1, h),
+        fill: PROC_COLORS[p],
       }));
-    });
-    // Month label
+      yCursor = y;
+    }
+    // total arriba de la barra
+    const total = totals[i];
+    if (total > 0) {
+      svg.append(svgEl('text', {
+        x: cx, y: yV(total) - 4, 'text-anchor': 'middle',
+        'font-size': '10', fill: '#1a3a5c', 'font-family': 'monospace',
+      }, fmtKg(total)));
+    }
+    // mes label
     svg.append(svgEl('text', {
-      x: gx + (barW * 3 + gap) / 2,
-      y: H - padB + 14,
-      'text-anchor': 'middle',
+      x: cx, y: H - padB + 14, 'text-anchor': 'middle',
       'font-size': '10', fill: '#5b5b58', 'font-family': 'monospace',
     }, monthShort(s.key)));
   });
 
-  // Factor line overlay
-  if (hasFactor) {
-    const pts = stats.map((s, i) => {
-      if (s.factor == null || s.factor <= 0) return null;
-      const cx = padL + i * groupW + groupW / 2;
-      return [cx, yF(s.factor)];
-    }).filter(Boolean);
-    if (pts.length >= 2) {
-      const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-      svg.append(svgEl('path', {
-        d, fill: 'none', stroke: '#1a3a5c', 'stroke-width': '2',
-        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-      }));
-    }
-    pts.forEach(([x, y]) => {
-      svg.append(svgEl('circle', { cx: x, cy: y, r: '3', fill: '#1a3a5c' }));
-    });
-  }
-
   return svg;
 }
 
-// Cycle chart (línea de días promedio cereza → verde) ───────────────
-function cycleChart(stats) {
-  const W = 800, H = 160, padL = 44, padR = 20, padT = 14, padB = 30;
+// Multi-line: tiempo de ciclo por proceso ───────────────────────────
+function cycleByProcessChart(stats) {
+  const W = 800, H = 200, padL = 48, padR = 16, padT = 14, padB = 32;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const n = stats.length;
   const xStep = innerW / Math.max(1, n - 1);
 
-  const vals = stats.map((s) => s.cycle_days).filter((v) => v != null && v > 0);
-  if (vals.length === 0) {
-    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin baches cerrados con fecha válida en el periodo.' });
+  const allVals = stats.flatMap((s) => PROCS.map((p) => s.cycle_days_by_proc[p]).filter((v) => v != null && v > 0));
+  if (allVals.length === 0) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin baches cerrados con proceso válido en el periodo.' });
   }
-  const maxV = Math.max(...vals) * 1.15;
+  const maxV = Math.max(...allVals) * 1.15;
 
   const svg = svgEl('svg', {
     viewBox: `0 0 ${W} ${H}`,
     width: '100%',
     style: 'height:auto;display:block;',
-    'aria-label': 'Tiempo de ciclo',
+    'aria-label': 'Tiempo de ciclo por proceso',
   });
 
   // Gridlines + Y labels (days)
@@ -865,28 +875,28 @@ function cycleChart(stats) {
     }, monthShort(s.key)));
   });
 
-  // Line + points
-  const pts = stats.map((s, i) => {
-    if (s.cycle_days == null || s.cycle_days <= 0) return null;
-    const x = padL + i * xStep;
-    const y = padT + innerH - (s.cycle_days / maxV) * innerH;
-    return [x, y, s.cycle_days];
-  }).filter(Boolean);
+  // Una línea por proceso
+  for (const p of PROCS) {
+    const color = PROC_COLORS[p];
+    const pts = stats.map((s, i) => {
+      const v = s.cycle_days_by_proc[p];
+      if (v == null || v <= 0) return null;
+      const x = padL + i * xStep;
+      const y = padT + innerH - (v / maxV) * innerH;
+      return [x, y, v];
+    }).filter(Boolean);
 
-  if (pts.length >= 2) {
-    const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-    svg.append(svgEl('path', {
-      d, fill: 'none', stroke: '#7e9ec1', 'stroke-width': '2',
-      'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-    }));
+    if (pts.length >= 2) {
+      const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+      svg.append(svgEl('path', {
+        d, fill: 'none', stroke: color, 'stroke-width': '2',
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+      }));
+    }
+    pts.forEach(([x, y]) => {
+      svg.append(svgEl('circle', { cx: x, cy: y, r: '3', fill: color }));
+    });
   }
-  pts.forEach(([x, y, v]) => {
-    svg.append(svgEl('circle', { cx: x, cy: y, r: '3', fill: '#7e9ec1' }));
-    svg.append(svgEl('text', {
-      x, y: y - 6, 'text-anchor': 'middle',
-      'font-size': '10', fill: '#1a3a5c', 'font-family': 'monospace',
-    }, `${Math.round(v)}d`));
-  });
 
   return svg;
 }
