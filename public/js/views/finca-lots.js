@@ -973,25 +973,29 @@ export async function fincaLotsView() {
         ]),
         labelled('Código de bache', inp),
         el('p', { class: 'ctrm-hint', text: 'Único entre todos los lotes.' }),
-        (() => {
-          const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Guardar']);
-          saveBtn.addEventListener('click', async () => {
-            const v = inp.value.trim();
-            if (!v) { toast('Código requerido', 'warning'); return; }
-            if (v === lot.bache_code) { close(null); return; }
-            try {
-              await withBusy(saveBtn, 'Guardando…', () =>
-                api.lotUpdate({ lot_id: lot.id, fields: { bache_code: v } }));
-              toast(`Código actualizado a ${v}`, 'success');
-              close({ ok: true });
-              await reloadLots();
-            } catch (e) { toast(e.message, 'error'); }
-          });
-          return el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
-            el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
-            saveBtn,
-          ]);
-        })(),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: async (e) => {
+              const btn = e.currentTarget;
+              const v = inp.value.trim();
+              if (!v) { toast('Código requerido', 'warning'); return; }
+              if (v === lot.bache_code) { close(null); return; }
+              try {
+                await withBusy(btn, 'Guardando…', () =>
+                  api.lotUpdate({ lot_id: lot.id, fields: { bache_code: v } }));
+                toast(`Código actualizado a ${v}`, 'success');
+                close({ ok: true });
+                reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
+              } catch (err) {
+                console.error('lotUpdate failed', err);
+                toast(err.message || 'Error al guardar', 'error', 6000);
+              }
+            },
+          }, ['Guardar']),
+        ]),
       ]);
     }, { title: 'Editar código de bache' });
   }
@@ -1339,67 +1343,73 @@ export async function fincaLotsView() {
           el('div', { class: 'max-h-[40vh] overflow-y-auto' }, [assignWrap]),
         ]),
 
-        (() => {
-          const createBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Crear lote']);
-          createBtn.addEventListener('click', async () => {
-            const bacheCode = bacheInput.value.trim();
-            if (!bacheCode) { toast('Falta código de bache', 'warning'); return; }
-            if (!procSelect.value) { toast('Selecciona proceso', 'warning'); return; }
-            const kg = Number(kgInput.value);
-            if (!(kg > 0)) { toast(`${stageInputLabelOf(chosenStage)}: valor inválido`, 'warning'); return; }
-            if (!startInput.value) { toast('Falta fecha de inicio', 'warning'); return; }
-            if (vCombo.getValues().length === 0) {
-              toast('Selecciona al menos una variedad', 'warning'); return;
-            }
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: async (e) => {
+              const btn = e.currentTarget;
+              const bacheCode = bacheInput.value.trim();
+              if (!bacheCode) { toast('Falta código de bache', 'warning'); return; }
+              if (!procSelect.value) { toast('Selecciona proceso', 'warning'); return; }
+              const kg = Number(kgInput.value);
+              if (!(kg > 0)) { toast(`${stageInputLabelOf(chosenStage)}: valor inválido`, 'warning'); return; }
+              if (!startInput.value) { toast('Falta fecha de inicio', 'warning'); return; }
+              if (vCombo.getValues().length === 0) {
+                toast('Selecciona al menos una variedad', 'warning'); return;
+              }
 
-            // Collect assignments (filter out empty / zero rows)
-            const initial_assignments = [];
-            for (const [orderId, inp] of assignmentInputs) {
-              const v = Number(inp.value || 0);
-              if (v > 0) initial_assignments.push({ demand_order_id: orderId, kg_green_allocated: v });
-            }
+              // Collect assignments (filter out empty / zero rows)
+              const initial_assignments = [];
+              for (const [orderId, inp] of assignmentInputs) {
+                const v = Number(inp.value || 0);
+                if (v > 0) initial_assignments.push({ demand_order_id: orderId, kg_green_allocated: v });
+              }
 
-            // Local validation: total allocations ≤ kg verde esperado
-            const greenExpected = kg / INPUT_STAGE_DIVISORS[chosenStage];
-            const totalAlloc = initial_assignments.reduce((s, a) => s + a.kg_green_allocated, 0);
-            if (totalAlloc > greenExpected + 0.001) {
-              toast(`Asignaciones (${fmtKg(totalAlloc)}) exceden verde esperado (${fmtKg(greenExpected)})`, 'warning', 4500);
-              return;
-            }
+              // Local validation: total allocations ≤ kg verde esperado
+              const greenExpected = kg / INPUT_STAGE_DIVISORS[chosenStage];
+              const totalAlloc = initial_assignments.reduce((s, a) => s + a.kg_green_allocated, 0);
+              if (totalAlloc > greenExpected + 0.001) {
+                toast(`Asignaciones (${fmtKg(totalAlloc)}) exceden verde esperado (${fmtKg(greenExpected)})`, 'warning', 4500);
+                return;
+              }
 
-            // Validacion infusion: si hay infusion, debe haber pct > 0
-            const infusionPct = chosenInfusion ? Number(infusionPctInput.value) : null;
-            if (chosenInfusion && (!Number.isFinite(infusionPct) || infusionPct <= 0 || infusionPct > 100)) {
-              toast('Infusión: indica un % entre 0 y 100', 'warning');
-              return;
-            }
+              // Validacion infusion: si hay infusion, debe haber pct > 0
+              const infusionPct = chosenInfusion ? Number(infusionPctInput.value) : null;
+              if (chosenInfusion && (!Number.isFinite(infusionPct) || infusionPct <= 0 || infusionPct > 100)) {
+                toast('Infusión: indica un % entre 0 y 100', 'warning');
+                return;
+              }
 
-            try {
-              const r = await withBusy(createBtn, 'Creando lote…', () => api.lotCreate({
-                bache_code: bacheCode,
-                reference_id: chosenRef ? chosenRef.id : null,
-                process_type: procSelect.value,
-                processing_stage: chosenStage,
-                kg_input_amount: kg,
-                start_date: startInput.value,
-                fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
-                variety_ids: vCombo.getValues().map((v) => v.id),
-                notes: notesInput.value || null,
-                infusion_id: chosenInfusion ? chosenInfusion.id : null,
-                infusion_pct: chosenInfusion ? infusionPct : null,
-                initial_assignments,
-              }));
-              const assignedCount = (r.assignments || []).length;
-              toast(`Lote ${r.lot.bache_code || r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
-              close({ ok: true });
-              await reloadLots();
-            } catch (e) { toast(e.message, 'error'); }
-          });
-          return el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
-            el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
-            createBtn,
-          ]);
-        })(),
+              try {
+                const r = await withBusy(btn, 'Creando lote…', () => api.lotCreate({
+                  bache_code: bacheCode,
+                  reference_id: chosenRef ? chosenRef.id : null,
+                  process_type: procSelect.value,
+                  processing_stage: chosenStage,
+                  kg_input_amount: kg,
+                  start_date: startInput.value,
+                  fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+                  variety_ids: vCombo.getValues().map((v) => v.id),
+                  notes: notesInput.value || null,
+                  infusion_id: chosenInfusion ? chosenInfusion.id : null,
+                  infusion_pct: chosenInfusion ? infusionPct : null,
+                  initial_assignments,
+                }));
+                const assignedCount = (r.assignments || []).length;
+                toast(`Lote ${r.lot.bache_code || r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
+                close({ ok: true });
+                // El reload sucede después de cerrar el modal para no
+                // bloquear el feedback visual al usuario.
+                reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
+              } catch (e) {
+                console.error('lotCreate failed', e);
+                toast(e.message || 'Error al crear el lote', 'error', 6000);
+              }
+            },
+          }, ['Crear lote']),
+        ]),
       ]);
 
       refreshStageUI();
