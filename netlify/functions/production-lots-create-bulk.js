@@ -171,7 +171,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const varietyLinks = [];
   insertedLots.forEach((row, idx) => {
-    for (const variety_id of cleaned[idx].variety_ids) {
+    const uniqueIds = [...new Set(cleaned[idx].variety_ids)];
+    for (const variety_id of uniqueIds) {
       varietyLinks.push({ production_lot_id: row.id, variety_id });
     }
   });

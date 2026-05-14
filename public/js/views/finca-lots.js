@@ -1391,21 +1391,26 @@ export async function fincaLotsView() {
                   kg_input_amount: kg,
                   start_date: startInput.value,
                   fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
-                  variety_ids: vCombo.getValues().map((v) => v.id),
+                  variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
                   notes: notesInput.value || null,
                   infusion_id: chosenInfusion ? chosenInfusion.id : null,
                   infusion_pct: chosenInfusion ? infusionPct : null,
                   initial_assignments,
                 }));
-                const assignedCount = (r.assignments || []).length;
-                toast(`Lote ${r.lot.bache_code || r.lot.lot_code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
+                const lotInfo = r && r.lot;
+                const code = (lotInfo && (lotInfo.bache_code || lotInfo.lot_code)) || bacheCode;
+                const assignedCount = ((r && r.assignments) || []).length;
+                toast(`Lote ${code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
                 close({ ok: true });
                 // El reload sucede después de cerrar el modal para no
                 // bloquear el feedback visual al usuario.
                 reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
               } catch (e) {
-                console.error('lotCreate failed', e);
-                toast(e.message || 'Error al crear el lote', 'error', 6000);
+                console.error('lotCreate failed', e, e?.detail);
+                const detail = e?.detail && typeof e.detail === 'object'
+                  ? ` (${e.detail.detail || e.detail.message || e.code || ''})`
+                  : '';
+                toast(`No se pudo crear el lote: ${e.message || 'error desconocido'}${detail}`, 'error', 8000);
               }
             },
           }, ['Crear lote']),

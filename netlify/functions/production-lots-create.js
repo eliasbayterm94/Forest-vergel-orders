@@ -129,9 +129,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   if (variety_ids.length > 0) {
-    const rows = variety_ids.map((variety_id) => ({ production_lot_id: lot.id, variety_id }));
+    // Dedup defensivo: la PK de production_lot_varieties es
+    // (production_lot_id, variety_id); duplicados → 23505.
+    const uniqueIds = [...new Set(variety_ids)];
+    const rows = uniqueIds.map((variety_id) => ({ production_lot_id: lot.id, variety_id }));
     const { error: vErr } = await sb.from('production_lot_varieties').insert(rows);
-    if (vErr) return serverErr('Failed to link varieties', vErr.message);
+    if (vErr) {
+      // Rollback del lot para no dejarlo huérfano (sin variedades) y
+      // para que el frontend pueda reintentar con el mismo bache_code.
+      await sb.from('production_lots').delete().eq('id', lot.id);
+      return serverErr('No se pudieron vincular las variedades al lote', vErr.message);
+    }
   }
 
   // Optional initial assignments
