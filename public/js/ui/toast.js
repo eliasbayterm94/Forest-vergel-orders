@@ -48,4 +48,5 @@ export function toast(message, kind = 'info', ms = 3500, opts = {}) {
     setTimeout(() => node.remove(), 350);
   }
   if (duration != null) setTimeout(close, duration);
+  return { close };
 }
