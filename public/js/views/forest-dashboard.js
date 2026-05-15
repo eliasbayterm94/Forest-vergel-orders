@@ -492,6 +492,32 @@ export function orderRow(o, opts = {}) {
   const showProgress = accepted > 0
     && ['Accepted', 'PartiallyAccepted', 'InProduction', 'Completed'].includes(o.status);
 
+  // Dropdown expandible con los baches asignados. Sólo se monta si el
+  // pedido tiene al menos un lote.
+  const assignedLots = rollup.lots || [];
+  let lotsWrap = null;
+  let lotsToggle = null;
+  if (assignedLots.length > 0) {
+    lotsWrap = el('div', {
+      class: 'mt-2 pt-2 border-t border-sand',
+      hidden: 'true',
+    }, [assignedLotsDetail(assignedLots)]);
+    let expanded = false;
+    const collapsedLabel = `▾ ${assignedLots.length} ${assignedLots.length === 1 ? 'bache asignado' : 'baches asignados'}`;
+    const expandedLabel  = `▴ Ocultar baches`;
+    lotsToggle = el('button', {
+      type: 'button',
+      class: 'mt-2 text-[11px] font-display uppercase tracking-eyebrow text-ink-500 hover:text-navy inline-flex items-center gap-1',
+      style: 'background:none;border:none;padding:4px 0;cursor:pointer;',
+      onClick: (e) => {
+        e.stopPropagation();
+        expanded = !expanded;
+        if (expanded) { lotsWrap.removeAttribute('hidden'); lotsToggle.textContent = expandedLabel; }
+        else          { lotsWrap.setAttribute('hidden', 'true'); lotsToggle.textContent = collapsedLabel; }
+      },
+    }, [collapsedLabel]);
+  }
+
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
       el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
@@ -522,9 +548,41 @@ export function orderRow(o, opts = {}) {
     (opts.shipments && opts.shipments.length > 0)
       ? shippedChips(opts.shipments)
       : null,
+    lotsToggle,
+    lotsWrap,
     actionButtons.length > 0
       ? el('div', { class: 'flex gap-2 mt-3 pt-2 border-t border-sand' }, actionButtons)
       : null,
+  ]);
+}
+
+// Lista compacta de baches asignados al pedido. Una fila por bache con
+// código, status y kg verde asignado. Se monta dentro de un wrap
+// hidden que el orderRow toggle con el botón "▾ N baches".
+function assignedLotsDetail(lots) {
+  const total = lots.reduce((s, l) => s + Number(l.kg || 0), 0);
+  return el('div', {}, [
+    el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-1' }, [
+      el('span', { class: 'eyebrow text-[10px]', text: 'Baches asignados' }),
+      el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
+        el('strong', { class: 'text-navy', text: fmtKg(total) }),
+        ` · ${lots.length} ${lots.length === 1 ? 'bache' : 'baches'}`,
+      ]),
+    ]),
+    el('div', { class: 'flex flex-col gap-1' }, lots
+      .slice()
+      .sort((a, b) => (a.bache_code || a.lot_code || '').localeCompare(b.bache_code || b.lot_code || ''))
+      .map((l) => el('div', {
+        class: 'flex items-center justify-between gap-2 px-2 py-1.5 bg-cream rounded-md text-[11px] cursor-pointer hover:bg-sand',
+        onClick: () => { location.hash = '/finca/lots'; },
+        title: `Ir a Producción · ${l.bache_code || l.lot_code}`,
+      }, [
+        el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
+          el('span', { class: 'ctrm-code text-[10px]', text: l.bache_code || l.lot_code }),
+          el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
+        ]),
+        el('span', { class: 'font-mono font-semibold text-ink-700 shrink-0', text: fmtKg(l.kg) }),
+      ]))),
   ]);
 }
 
