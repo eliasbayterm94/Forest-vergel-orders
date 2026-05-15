@@ -81,6 +81,12 @@ const NEXT_STATUS = {
 };
 
 export async function fincaLotsView() {
+  // Por defecto ocultamos los baches ya despachados (Delivered) para no
+  // saturar la vista. El operador puede activarlos con el toggle
+  // "Incluir despachados" cuando necesite p.ej. asignar un pedido a un
+  // lote que ya salió (asignación retroactiva).
+  let includeDelivered = false;
+
   const refsResP = api.references();
   const varsResP = api.varieties();
   const lotsResP = api.lotsList({ active_only: 'true' });
@@ -149,7 +155,10 @@ export async function fincaLotsView() {
         return fields.some((s) => (s || '').toLowerCase().includes(lo));
       },
       filters: [
-        { key: 'status',          label: 'Estado',  options: LOT_STATUSES, optionLabels: LOT_STATUS_LABELS, getter: (l) => l.status },
+        { key: 'status',          label: 'Estado',
+          options: includeDelivered ? [...LOT_STATUSES, 'Delivered'] : LOT_STATUSES,
+          optionLabels: { ...LOT_STATUS_LABELS, Delivered: 'Despachado' },
+          getter: (l) => l.status },
         { key: 'process_type',    label: 'Proceso', options: ['Natural', 'Honey', 'Lavado'], getter: (l) => l.process_type },
         { key: 'processing_stage',label: 'Etapa',   options: ['cereza', 'despulpado', 'seco'], getter: (l) => l.processing_stage || '' },
         { key: 'infusion_name',   label: 'Infusión', multi: true,
@@ -172,9 +181,22 @@ export async function fincaLotsView() {
   }
   render();
 
-  return chrome(el('div', {}, [
-    pageTitle('Producción', 'Lotes activos en El Vergel'),
-    el('div', { class: 'mb-4 flex justify-end gap-2' }, [
+  const headerActions = el('div', { class: 'mb-4 flex justify-end gap-2 flex-wrap' });
+  function renderHeaderActions() {
+    clear(headerActions);
+    headerActions.append(
+      el('button', {
+        class: `ctrm-btn ctrm-btn-soft uppercase tracking-eyebrow text-[11px] py-2.5 px-5 ${includeDelivered ? 'is-active' : ''}`,
+        type: 'button',
+        title: includeDelivered
+          ? 'Ocultar lotes ya despachados'
+          : 'Mostrar también lotes despachados (útil para asignar pedidos retroactivamente)',
+        onClick: async () => {
+          includeDelivered = !includeDelivered;
+          renderHeaderActions();
+          await reloadLots();
+        },
+      }, [includeDelivered ? '✓ Despachados visibles' : 'Incluir despachados']),
       el('button', {
         class: 'ctrm-btn ctrm-btn-soft uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
         title: 'Crea varios baches a la vez en una tabla',
@@ -184,7 +206,13 @@ export async function fincaLotsView() {
         class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
         onClick: () => createLot(),
       }, ['+ Crear lote']),
-    ]),
+    );
+  }
+  renderHeaderActions();
+
+  return chrome(el('div', {}, [
+    pageTitle('Producción', 'Lotes activos en El Vergel'),
+    headerActions,
     list,
   ]));
 
@@ -1184,7 +1212,9 @@ export async function fincaLotsView() {
   }
 
   async function reloadLots() {
-    const r = await api.lotsList({ active_only: 'true' });
+    const r = includeDelivered
+      ? await api.lotsList({})
+      : await api.lotsList({ active_only: 'true' });
     lots = r.lots;
     render();
   }

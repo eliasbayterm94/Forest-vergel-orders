@@ -2,7 +2,8 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
-const { ORDER_STATUS } = require('./_lib/schema');
+const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
+const { maybeCompleteOrder } = require('./_lib/orderCompletion');
 const { ok, created, badReq, serverErr, conflict, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
@@ -83,5 +84,18 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     }
   }
 
-  return created({ assignments: data });
+  // Asignación retroactiva: si el lote ya está despachado, los pedidos
+  // recién asignados pueden quedar inmediatamente cubiertos al 100%.
+  // Ejecutamos el chequeo de completion (mismo helper que update-status).
+  const completions = [];
+  const { data: lotRow } = await sb
+    .from('production_lots').select('status').eq('id', production_lot_id).maybeSingle();
+  if (lotRow && lotRow.status === LOT_STATUS.Delivered) {
+    for (const id of orderIds) {
+      const result = await maybeCompleteOrder(sb, id);
+      if (result) completions.push(result);
+    }
+  }
+
+  return created({ assignments: data, completions });
 });
