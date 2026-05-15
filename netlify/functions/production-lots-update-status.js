@@ -10,44 +10,73 @@ const { bogotaToday } = require('./_lib/bogotaTime');
 
 /**
  * POST /production-lots-update-status  (finca, admin)
- * Body: { lot_id, status, kg_dried_output?, factor_rendimiento?, kg_green_actual? }
+ * Body: {
+ *   lot_id, status,
+ *   kg_dried_output?, factor_rendimiento?, kg_green_actual?,
+ *   drying_start_date?, drying_locations?,
+ *   resting_start_date?, resting_humidity?
+ * }
  *
- * Lot lifecycle (skipping Resting in the new flow; legacy Resting rows
- * still progress to Ready):
+ * Lot lifecycle:
  *
- *   InFermentation → Drying          ⇒ drying_start_date := today
- *   Drying        → Ready            ⇒ ready_date := today  (NEW path)
- *   Drying        → Resting          (legacy)
- *   Resting       → Ready            ⇒ ready_date := today  (legacy)
- *   Ready         → Delivered        ⇒ delivered_date := today; cascade order completion
+ *   InFermentation → Drying    ⇒ drying_start_date := today, drying_locations
+ *   Drying        → Resting    ⇒ resting_start_date := today, resting_humidity
+ *   Drying        → Ready      ⇒ ready_date := today  (skip-Resting path)
+ *   Resting       → Ready      ⇒ ready_date := today
+ *   Resting       → Drying     ⇒ regreso: drying_start_date := today, drying_locations
+ *                                          resting_start_date/_humidity quedan
+ *                                          en NULL para que el próximo Drying →
+ *                                          Resting pida humedad nueva.
+ *   Ready         → Delivered  ⇒ delivered_date := today; cascade order completion
  *
- * Yield handling at Ready/Delivered (auto-compute kg_green_actual unless
- * explicit value provided):
- *   1) If factor_rendimiento is set (just provided or stored) and
- *      kg_dried_output is set, use the per-lot formula:
- *         kg_green_actual = (kg_dried_output / factor_rendimiento) * 70
- *   2) Otherwise (no factor) fall back to the per-process divisor
- *      (Natural ÷3.40, Honey ÷1.50, Lavado ÷1.34) loaded from
- *      process_lead_times.dried_to_green_divisor.
- *   3) An explicit kg_green_actual in the body always wins.
+ * Yield handling at Ready/Delivered idéntico al previo.
  */
-const NEXT = {
-  [LOT_STATUS.InFermentation]: LOT_STATUS.Drying,
-  [LOT_STATUS.Drying]:         LOT_STATUS.Ready,     // skip Resting (new flow)
-  [LOT_STATUS.Resting]:        LOT_STATUS.Ready,     // legacy lots can still advance
-  [LOT_STATUS.Ready]:          LOT_STATUS.Delivered,
+const VALID_TRANSITIONS = {
+  InFermentation: ['Drying'],
+  Drying:         ['Resting', 'Ready'],
+  Resting:        ['Ready', 'Drying'],
+  Ready:          ['Delivered'],
 };
+
+const DRYING_LOCATION_OPTIONS = new Set(['Silos', 'Patio']);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
 
-  const { lot_id, status: targetStatus, kg_dried_output, factor_rendimiento, kg_green_actual, drying_start_date } = body || {};
+  const {
+    lot_id, status: targetStatus,
+    kg_dried_output, factor_rendimiento, kg_green_actual,
+    drying_start_date, drying_locations,
+    resting_start_date, resting_humidity,
+  } = body || {};
   if (!lot_id) return badReq('lot_id required', 'LOT_ID_REQUIRED');
   if (!Object.values(LOT_STATUS).includes(targetStatus)) return badReq('invalid status', 'INVALID_STATUS');
   if (drying_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(drying_start_date)) {
     return badReq('drying_start_date must be YYYY-MM-DD', 'INVALID_DATE');
+  }
+  if (resting_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(resting_start_date)) {
+    return badReq('resting_start_date must be YYYY-MM-DD', 'INVALID_DATE');
+  }
+  let normalizedLocations = null;
+  if (drying_locations != null) {
+    if (!Array.isArray(drying_locations)) return badReq('drying_locations must be array', 'INVALID_LOCATIONS');
+    const cleaned = [...new Set(drying_locations.map((s) => String(s).trim()).filter(Boolean))];
+    for (const x of cleaned) {
+      if (!DRYING_LOCATION_OPTIONS.has(x)) {
+        return badReq(`drying_locations: valor inválido "${x}". Opciones: Silos, Patio.`, 'INVALID_LOCATIONS');
+      }
+    }
+    normalizedLocations = cleaned;
+  }
+  let normalizedHumidity = null;
+  if (resting_humidity != null) {
+    const n = Number(resting_humidity);
+    if (!Number.isFinite(n) || n < 8 || n > 40) {
+      return badReq('resting_humidity debe estar entre 8 y 40', 'INVALID_HUMIDITY');
+    }
+    normalizedHumidity = Math.round(n * 100) / 100;
   }
 
   const sb = getSupabase();
@@ -55,16 +84,31 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     .from('production_lots').select('*').eq('id', lot_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);
   if (!lot) return notFound('Lot not found');
-  if (NEXT[lot.status] !== targetStatus) {
-    return conflict(`Invalid lot status transition: ${lot.status} -> ${targetStatus}`, 'INVALID_TRANSITION');
+  const allowed = VALID_TRANSITIONS[lot.status] || [];
+  if (!allowed.includes(targetStatus)) {
+    return conflict(`Transición no permitida: ${lot.status} → ${targetStatus}`, 'INVALID_TRANSITION');
   }
 
   const today = bogotaToday();
   const update = { status: targetStatus };
+
   if (targetStatus === LOT_STATUS.Drying) {
-    // Permitir que el operario indique la fecha real de inicio de
-    // secado (puede no ser hoy si el bache empezo el dia anterior).
-    update.drying_start_date = drying_start_date || lot.drying_start_date || today;
+    // InFermentation → Drying (primera vez) o Resting → Drying (regreso).
+    update.drying_start_date = drying_start_date || today;
+    if (normalizedLocations != null) update.drying_locations = normalizedLocations;
+    // Si vuelve de Descanso, limpiamos los datos de Resting para que la
+    // próxima entrada vuelva a pedir humedad fresca.
+    if (lot.status === LOT_STATUS.Resting) {
+      update.resting_start_date = null;
+      update.resting_humidity = null;
+    }
+  }
+  if (targetStatus === LOT_STATUS.Resting) {
+    update.resting_start_date = resting_start_date || today;
+    if (normalizedHumidity == null) {
+      return badReq('resting_humidity es requerido al entrar a Descanso', 'HUMIDITY_REQUIRED');
+    }
+    update.resting_humidity = normalizedHumidity;
   }
   if (targetStatus === LOT_STATUS.Ready)     update.ready_date = today;
   if (targetStatus === LOT_STATUS.Delivered) update.delivered_date = today;

@@ -43,13 +43,40 @@ const DRIED_LABELS_LEGACY = {
   Lavado:  'Pergamino seco (lavado)',
 };
 
-// New flow skips Resting (Drying → Ready) and ends at Ready —
-// the Ready → Delivered transition now happens via Despachos
-// (see finca-despachos.js / shipments-create handler).
+// Transiciones disponibles desde cada estado. `primary` define la
+// acción que aparece visible (botón único en la tabla, primario en
+// la card). `secondary` es para acciones alternativas (kebab "..." en
+// la tabla; botón soft en la card).
+//
+//   InFermentation → Drying  (primaria)
+//   Drying         → Descanso (primaria) / Listo (secundaria, salta descanso)
+//   Resting        → Listo   (primaria) / Drying (secundaria, regreso)
+//   Ready          → Delivered (vía Despachos, no en esta vista)
+const DRYING_LOCATIONS = ['Silos', 'Patio'];
+
+const NEXT_TRANSITIONS = {
+  InFermentation: {
+    primary:   { target: 'Drying',  label: '→ Secado' },
+    secondary: [],
+  },
+  Drying: {
+    primary:   { target: 'Resting', label: '→ Descanso' },
+    secondary: [{ target: 'Ready',  label: 'Saltar a Listo' }],
+  },
+  Resting: {
+    primary:   { target: 'Ready',  label: '→ Listo' },
+    secondary: [{ target: 'Drying', label: 'Volver a Secado' }],
+  },
+  Ready: {
+    primary:   null,
+    secondary: [],
+  },
+};
+// Compat alias para código viejo que se refería a NEXT_STATUS[stage].
 const NEXT_STATUS = {
   InFermentation: 'Drying',
-  Drying:         'Ready',
-  Resting:        'Ready',  // legacy
+  Drying:         'Resting',
+  Resting:        'Ready',
   // Ready: no direct next — use Despachos.
 };
 
@@ -87,6 +114,7 @@ export async function fincaLotsView() {
       tableHeaders: [
         { label: 'Bache' }, { label: 'Referencia' }, { label: 'Variedades' },
         { label: 'Status' }, { label: 'Proceso' }, { label: 'Infusión' },
+        { label: 'Inicio' }, { label: 'Secado' }, { label: 'Descanso' },
         { label: 'Cereza',     cls: 'text-right' },
         { label: 'Verde esp.', cls: 'text-right' },
         { label: 'Verde real', cls: 'text-right' },
@@ -155,8 +183,10 @@ export async function fincaLotsView() {
     const overflow = totalAllocated - cap;
     const partials = l.partials || [];
     const code = l.bache_code || l.lot_code;
-    const next = NEXT_STATUS[l.status];
-    const closeBacheLabel = (next === 'Ready' && partials.length > 0) ? 'Cerrar' : (next ? `→ ${statusLabel(next)}` : null);
+    const transitions = NEXT_TRANSITIONS[l.status] || { primary: null, secondary: [] };
+    const primary = transitions.primary;
+    let primaryLabel = primary ? primary.label : null;
+    if (primary && primary.target === 'Ready' && partials.length > 0) primaryLabel = 'Cerrar';
 
     const tcell = (label, classes, content) => {
       const td = el('td', { class: classes });
@@ -173,9 +203,14 @@ export async function fincaLotsView() {
         onClick: (e) => { e.stopPropagation(); onClick(); },
       }, [label]);
 
+    const secondaryItems = (transitions.secondary || []).map((t) => ({
+      label: t.label,
+      onClick: () => advanceStatus(l, t.target),
+    }));
     const actionsCell = el('div', { class: 'inline-flex gap-1 flex-wrap justify-end items-center' }, [
-      next ? actionBtn(closeBacheLabel, 'primary', () => advanceStatus(l, next)) : null,
+      primary ? actionBtn(primaryLabel, 'primary', () => advanceStatus(l, primary.target)) : null,
       actionMenu([
+        ...secondaryItems,
         { label: 'Despachar',     hidden: l.status !== 'Ready',
           onClick: () => { location.hash = '/finca/despachos'; } },
         { label: 'Asignar pedidos', onClick: () => assignLot(l) },
@@ -189,6 +224,16 @@ export async function fincaLotsView() {
       ? document.createTextNode('—')
       : el('div', { class: 'flex flex-wrap gap-1' }, varieties.map((v) =>
           el('span', { class: 'ctrm-pill dark text-[10px]', text: v.name })));
+
+    const restingCell = l.resting_start_date
+      ? el('div', { class: 'flex flex-col gap-0.5 items-start' }, [
+          el('span', { class: 'font-mono text-[11px]', text: fmtDate(l.resting_start_date) }),
+          l.resting_humidity != null
+            ? el('span', { class: `ctrm-pill text-[10px] ${humidityPillKind(l.resting_humidity)}`,
+                text: `${l.resting_humidity}%` })
+            : null,
+        ])
+      : document.createTextNode('—');
 
     return el('tr', {
       class: 'hover:bg-cream',
@@ -204,6 +249,9 @@ export async function fincaLotsView() {
       tcell('Infusión', 'text-[11px]', l.infusion_name
         ? `${l.infusion_name} ${l.infusion_pct}%`
         : '—'),
+      tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.start_date)),
+      tcell('Secado', 'font-mono text-[11px]', fmtDate(l.drying_start_date)),
+      tcell('Descanso', '', restingCell),
       tcell('Cereza', 'text-right font-mono', fmtKg(l.kg_cherry_input)),
       tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
       tcell('Verde real', 'text-right font-mono', l.kg_green_actual != null ? fmtKg(l.kg_green_actual) : '—'),
@@ -218,7 +266,8 @@ export async function fincaLotsView() {
 
   // ---------- Lot card ----------
   function lotCard(l) {
-    const next = NEXT_STATUS[l.status];
+    const transitions = NEXT_TRANSITIONS[l.status] || { primary: null, secondary: [] };
+    const primaryTransition = transitions.primary;
     const totalAllocated = (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
     const capacity  = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
     const remaining = capacity - totalAllocated;
@@ -227,8 +276,9 @@ export async function fincaLotsView() {
     const stageLabel = stageLabelOf(l);
     const partials = l.partials || [];
     const isDrying = l.status === 'Drying';
-    const closeBacheLabel = (next === 'Ready' && partials.length > 0)
-      ? 'Cerrar bache' : (next ? `→ ${statusLabel(next)}` : null);
+    const primaryLabel = !primaryTransition
+      ? null
+      : (primaryTransition.target === 'Ready' && partials.length > 0 ? 'Cerrar bache' : primaryTransition.label);
 
     // Lotes con problemas (over-allocated) siempre se expanden para que
     // el banner sea visible.
@@ -254,12 +304,26 @@ export async function fincaLotsView() {
           infusionPill(l),
           ...((l.varieties || []).map((v) =>
             el('span', { class: 'ctrm-pill dark text-[10px]', text: v.name }))),
+          ...(l.status === 'Drying'
+            ? (l.drying_locations || []).map((loc) =>
+                el('span', { class: 'ctrm-pill', style: 'background:#dde7ee;color:#1a3a5c;', text: loc }))
+            : []),
+          l.status === 'Resting' && l.resting_humidity != null
+            ? el('span', { class: `ctrm-pill ${humidityPillKind(l.resting_humidity)}`,
+                text: `Humedad ${l.resting_humidity}%` })
+            : null,
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
-          next ? el('button', {
+          primaryTransition ? el('button', {
             class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
-            onClick: () => advanceStatus(l, next),
-          }, [closeBacheLabel]) : null,
+            onClick: () => advanceStatus(l, primaryTransition.target),
+          }, [primaryLabel]) : null,
+          // Acciones secundarias (ej. saltar a Listo desde Drying o volver a Secado desde Resting).
+          ...(transitions.secondary || []).map((t) =>
+            el('button', {
+              class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+              onClick: () => advanceStatus(l, t.target),
+            }, [t.label])),
           // Ready lots get a "Despachar" shortcut that jumps to the Despachos view.
           (l.status === 'Ready') ? el('button', {
             class: 'ctrm-btn ctrm-btn-yellow ctrm-btn-sm',
@@ -288,6 +352,7 @@ export async function fincaLotsView() {
         l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
         meta('Inicio', fmtDate(l.start_date)),
         l.drying_start_date ? meta('Drying', fmtDate(l.drying_start_date)) : null,
+        l.resting_start_date ? meta('Descanso', fmtDate(l.resting_start_date)) : null,
         meta('Asignado', fmtKg(totalAllocated)),
         metaColor('Disponible', fmtKg(remaining), remaining < -0.001 ? 'crit' : null),
         meta('Proceso', l.process_type),
@@ -774,12 +839,12 @@ export async function fincaLotsView() {
 
   async function advanceStatus(lot, target) {
     let yieldValues = null;
-    let dryingStartDate = null;
+    let dryingPayload = null;   // { drying_start_date, drying_locations[] }
+    let restingPayload = null;  // { resting_start_date, resting_humidity }
     const partials = lot.partials || [];
     const hasPartials = partials.length > 0;
+    const isReturnToDrying = lot.status === 'Resting' && target === 'Drying';
 
-    // Drying → Ready con parciales: el servidor suma los rendimientos.
-    // No se pide peso seco ni factor; solo confirmamos.
     if (target === 'Ready' && hasPartials) {
       const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
       const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
@@ -793,15 +858,25 @@ export async function fincaLotsView() {
       yieldValues = await promptYield(lot, target);
       if (yieldValues === undefined) return;
     } else if (target === 'Drying') {
-      dryingStartDate = await promptDryingStartDate(lot);
-      if (dryingStartDate === undefined) return;
+      dryingPayload = await promptDrying(lot, isReturnToDrying);
+      if (dryingPayload === undefined) return;
+    } else if (target === 'Resting') {
+      restingPayload = await promptResting(lot);
+      if (restingPayload === undefined) return;
     } else {
       const ok = await confirmModal(`Avanzar ${lot.bache_code || lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
     }
     try {
       const payload = { lot_id: lot.id, status: target };
-      if (dryingStartDate) payload.drying_start_date = dryingStartDate;
+      if (dryingPayload) {
+        payload.drying_start_date = dryingPayload.drying_start_date;
+        payload.drying_locations  = dryingPayload.drying_locations;
+      }
+      if (restingPayload) {
+        payload.resting_start_date = restingPayload.resting_start_date;
+        payload.resting_humidity   = restingPayload.resting_humidity;
+      }
       if (yieldValues) {
         if (yieldValues.kg_dried_output    != null) payload.kg_dried_output    = yieldValues.kg_dried_output;
         if (yieldValues.factor_rendimiento != null) payload.factor_rendimiento = yieldValues.factor_rendimiento;
@@ -816,23 +891,40 @@ export async function fincaLotsView() {
     } catch (e) { toast(e.message, 'error'); }
   }
 
-  function promptDryingStartDate(lot) {
+  // Reemplaza al previo promptDryingStartDate: ahora también pide
+  // marquesinas (multi-select Silos / Patio). Cancela → undefined.
+  function promptDrying(lot, isReturn) {
     return openModal(({ close }) => {
-      const defaultDate = lot.drying_start_date || new Date().toISOString().slice(0, 10);
-      const dateInput = el('input', {
-        type: 'date',
-        value: defaultDate,
-        class: 'ctrm-input',
+      const defaultDate = new Date().toISOString().slice(0, 10);
+      const dateInput = el('input', { type: 'date', value: defaultDate, class: 'ctrm-input' });
+      const checkboxes = DRYING_LOCATIONS.map((loc) => {
+        const cb = el('input', { type: 'checkbox', value: loc, class: 'mr-2' });
+        if (!isReturn && (lot.drying_locations || []).includes(loc)) cb.checked = true;
+        return { loc, cb };
       });
+      const locWrap = el('div', { class: 'flex flex-wrap gap-3' },
+        checkboxes.map(({ loc, cb }) => el('label', {
+          class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
+        }, [cb, el('span', { text: loc })])));
       return el('div', { class: 'space-y-3' }, [
         el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
-          `Avanzando `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
-          ` a `, el('strong', { class: 'text-navy', text: 'Drying' }),
-          `. La fecha de inicio de secado se usa para calcular el avance del lote.`,
+          isReturn ? `Devolviendo ` : `Avanzando `,
+          el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+          ` a `, el('strong', { class: 'text-navy', text: 'Secado' }),
+          isReturn
+            ? `. Elige las marquesinas donde lo metés esta vez.`
+            : `. Registramos la fecha de entrada y dónde se está secando.`,
         ]),
         el('label', { class: 'ctrm-label', text: 'Fecha de inicio de secado' }),
         dateInput,
-        el('p', { class: 'ctrm-hint', text: 'Por defecto hoy; cámbialo si el bache empezó otro día.' }),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Marquesinas ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          locWrap,
+          el('p', { class: 'ctrm-hint', text: 'Marca una o más. Se puede combinar Silos + Patio.' }),
+        ]),
         el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
           el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
           el('button', {
@@ -840,12 +932,69 @@ export async function fincaLotsView() {
             type: 'button',
             onClick: () => {
               if (!dateInput.value) { toast('Selecciona una fecha', 'warning'); return; }
-              close(dateInput.value);
+              const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ loc }) => loc);
+              if (picked.length === 0) { toast('Selecciona al menos una marquesina', 'warning'); return; }
+              close({ drying_start_date: dateInput.value, drying_locations: picked });
             },
-          }, ['Avanzar a Drying']),
+          }, [isReturn ? 'Volver a Secado' : 'Avanzar a Secado']),
         ]),
       ]);
-    }, { title: 'Inicio de secado' });
+    }, { title: isReturn ? 'Regreso a Secado' : 'Inicio de secado' });
+  }
+
+  function promptResting(lot) {
+    return openModal(({ close }) => {
+      const dateInput = el('input', {
+        type: 'date', value: new Date().toISOString().slice(0, 10), class: 'ctrm-input',
+      });
+      const humInput = el('input', {
+        type: 'number', min: '8', max: '40', step: '0.1',
+        placeholder: 'Ej: 18.5',
+        class: 'ctrm-input mono',
+      });
+      const ruleHint = el('p', { class: 'ctrm-hint mt-1' });
+      function refreshRuleHint() {
+        const v = Number(humInput.value);
+        if (!Number.isFinite(v) || v <= 0) { ruleHint.textContent = 'Rango válido: 8% a 40%.'; ruleHint.style.color = ''; return; }
+        if (v > 20)       { ruleHint.textContent = `${v}% · Máx 5 días en descanso antes de volver a secado.`; ruleHint.style.color = '#a8351c'; }
+        else if (v >= 14) { ruleHint.textContent = `${v}% · Máx 8 días en descanso antes de volver a secado.`; ruleHint.style.color = '#8a5100'; }
+        else              { ruleHint.textContent = `${v}% · Listo para pasar a Listo sin restricción.`;          ruleHint.style.color = '#2f5a3a'; }
+      }
+      humInput.addEventListener('input', refreshRuleHint);
+      refreshRuleHint();
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+          `Avanzando `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+          ` a `, el('strong', { class: 'text-navy', text: 'Descanso' }),
+          `. Registramos la fecha de entrada y la humedad de control del bache.`,
+        ]),
+        el('label', { class: 'ctrm-label', text: 'Fecha de entrada a descanso' }),
+        dateInput,
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Humedad % ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          humInput,
+          ruleHint,
+        ]),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: () => {
+              if (!dateInput.value) { toast('Selecciona una fecha', 'warning'); return; }
+              const v = Number(humInput.value);
+              if (!Number.isFinite(v) || v < 8 || v > 40) {
+                toast('Humedad: ingresa un valor entre 8 y 40', 'warning'); return;
+              }
+              close({ resting_start_date: dateInput.value, resting_humidity: v });
+            },
+          }, ['Avanzar a Descanso']),
+        ]),
+      ]);
+    }, { title: 'Entrada a Descanso' });
   }
 
   function promptYield(lot, target) {
@@ -1489,6 +1638,25 @@ export async function fincaLotsView() {
       await reloadLots();
     } catch (e) { loading.close(); toast(e.message, 'error'); }
   }
+}
+
+// Reglas de Descanso. Devuelve { maxDays, level: 'green'|'amber'|'red' }.
+// humedad > 20%   → máx 5 días
+// humedad 14-20%  → máx 8 días
+// humedad < 14%   → sin restricción (verde)
+export function restingRule(humidity) {
+  const h = Number(humidity);
+  if (!Number.isFinite(h) || h <= 0) return { maxDays: null, level: 'green' };
+  if (h > 20)  return { maxDays: 5, level: 'red'   };
+  if (h >= 14) return { maxDays: 8, level: 'amber' };
+  return { maxDays: null, level: 'green' };
+}
+
+function humidityPillKind(h) {
+  const r = restingRule(h);
+  if (r.level === 'red')   return 'urgency-red';
+  if (r.level === 'amber') return 'urgency-amber';
+  return 'ok';
 }
 
 // ───────────────────── helpers ──────────────────────

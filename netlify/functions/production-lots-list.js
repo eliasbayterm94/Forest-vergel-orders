@@ -23,6 +23,8 @@ exports.handler = requireAuth(async (event) => {
     kg_dried_output, factor_rendimiento,
     status, fermentation_hours,
     start_date, drying_start_date, ready_date, delivered_date,
+    drying_locations,
+    resting_start_date, resting_humidity,
     notes, created_by, created_at, updated_at,
     infusion_id, infusion_pct,
     coffee_references!left ( id, name ),

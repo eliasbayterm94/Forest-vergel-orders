@@ -8,8 +8,9 @@ import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { createTabBar } from '../ui/tab-bar.js';
+import { restingRule } from './finca-lots.js';
 
-const STAGE_ORDER = ['InFermentation', 'Drying', 'Ready', 'Delivered'];
+const STAGE_ORDER = ['InFermentation', 'Drying', 'Resting', 'Ready', 'Delivered'];
 
 // Tolerancia (en dias) sobre los lead-times antes de marcar como vencido.
 const FERMENTATION_OVERRUN_DAYS = 5;   // si el lote sigue InFermentation > 5d
@@ -77,6 +78,21 @@ export async function fincaMonitoreoView() {
       return { ...l, drying_days_expected: expected, days_in_drying: elapsed, over_days: over };
     })
     .filter((l) => l.over_days != null && l.over_days > DRYING_GRACE_DAYS)
+    .sort((a, b) => b.over_days - a.over_days);
+
+  // ── 3b. Lotes en Descanso vencidos por humedad ───────────────────
+  //   humedad > 20%   → máx 5 días en descanso
+  //   humedad 14-20%  → máx 8 días en descanso
+  //   humedad < 14%   → sin restricción (puede pasar a Listo)
+  const restingOverrun = lots
+    .filter((l) => l.status === 'Resting' && l.resting_start_date)
+    .map((l) => {
+      const rule = restingRule(l.resting_humidity);
+      const elapsed = daysBetween(l.resting_start_date, today);
+      const over = rule.maxDays != null ? elapsed - rule.maxDays : null;
+      return { ...l, resting_max_days: rule.maxDays, days_in_resting: elapsed, over_days: over, rule_level: rule.level };
+    })
+    .filter((l) => l.over_days != null && l.over_days > 0)
     .sort((a, b) => b.over_days - a.over_days);
 
   // ── Infusión map (order_id → Set<infusion_name>) ─────────────────
@@ -148,10 +164,12 @@ export async function fincaMonitoreoView() {
       if (kind === 'order') return ordersSinLoteTable(items);
       if (kind === 'ferm')  return fermentationTable(items);
       if (kind === 'dry')   return dryingTable(items);
+      if (kind === 'rest')  return restingTable(items);
     }
     if (kind === 'order') return el('div', { class: 'space-y-2' }, items.map(orderSinLoteRow));
     if (kind === 'ferm')  return el('div', { class: 'space-y-2' }, items.map(fermentationRow));
     if (kind === 'dry')   return el('div', { class: 'space-y-2' }, items.map(dryingRow));
+    if (kind === 'rest')  return el('div', { class: 'space-y-2' }, items.map(restingRow));
     return null;
   }
 
@@ -176,7 +194,8 @@ export async function fincaMonitoreoView() {
     const ordersSh    = ordersSinLote.filter(passesOrder);
     const fermSh      = fermentationOverrun.filter(passesLot);
     const dryingSh    = dryingOverrun.filter(passesLot);
-    const totalAlerts = ordersSh.length + fermSh.length + dryingSh.length;
+    const restingSh   = restingOverrun.filter(passesLot);
+    const totalAlerts = ordersSh.length + fermSh.length + dryingSh.length + restingSh.length;
 
     const fb = renderFilterButton({
       filters: sheetFilters,
@@ -200,6 +219,8 @@ export async function fincaMonitoreoView() {
           null, { kind: fermSh.length > 0 ? 'crit' : 'ok' }),
         stat('Drying vencido', dryingSh.length, 'Excede dias esperados',
           null, { kind: dryingSh.length > 0 ? 'crit' : 'ok' }),
+        stat('Descanso vencido', restingSh.length, 'Volver a secado',
+          null, { kind: restingSh.length > 0 ? 'crit' : 'ok' }),
       ]),
 
       section('Pipeline de produccion', pipelinePanel(pipeline, maxCount, maxKg)),
@@ -220,6 +241,12 @@ export async function fincaMonitoreoView() {
         dryingSh.length === 0
           ? emptyText('Sin lotes con drying excedido.')
           : listOrTable(dryingSh, 'dry'),
+      ),
+
+      section('Descanso vencido (por humedad)',
+        restingSh.length === 0
+          ? emptyText('Sin lotes con descanso vencido.')
+          : listOrTable(restingSh, 'rest'),
       ),
     ]);
   }
@@ -247,7 +274,22 @@ export async function fincaMonitoreoView() {
       return { ...l, _daysElapsed: daysElapsed, _daysTarget: target, _pct: pct, _level: level, _partialsCount: partials.length };
     }).sort((a, b) => b._pct - a._pct);
 
-    return el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4' }, [
+    const restLots = lots.filter((l) => l.status === 'Resting').map((l) => {
+      const rule = restingRule(l.resting_humidity);
+      const daysElapsed = l.resting_start_date ? daysBetween(l.resting_start_date, today) : 0;
+      const target = rule.maxDays;
+      const pct = target && target > 0 ? Math.min(150, (daysElapsed / target) * 100) : 0;
+      // Si la humedad ya está en zona segura (<14%), el lote no tiene
+      // límite y el "level" base es verde aunque pasen días.
+      let level;
+      if (!target) level = 'green';
+      else if (pct >= 100) level = 'red';
+      else if (pct >= ALERT_AMBER_PCT * 100) level = 'amber';
+      else level = 'green';
+      return { ...l, _daysElapsed: daysElapsed, _daysTarget: target, _pct: pct, _level: level };
+    }).sort((a, b) => b._pct - a._pct);
+
+    return el('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
       laneSection({
         title: 'Fermentación',
         accent: '#7e9ec1',
@@ -263,6 +305,14 @@ export async function fincaMonitoreoView() {
         emptyText: 'No hay baches en secado.',
         kpis: laneKpis(dryLots, 'dry'),
         renderCard: (l) => laneCardDrying(l),
+      }),
+      laneSection({
+        title: 'Descanso (Resting)',
+        accent: '#a8b89c',
+        lots: restLots,
+        emptyText: 'No hay baches en descanso.',
+        kpis: laneKpis(restLots, 'rest'),
+        renderCard: (l) => laneCardResting(l),
       }),
     ]);
   }
@@ -363,6 +413,7 @@ function stageColor(stage) {
   switch (stage) {
     case 'InFermentation': return '#7e9ec1'; // navy-soft
     case 'Drying':         return '#ddae3e'; // mustard
+    case 'Resting':        return '#a8b89c'; // sage
     case 'Ready':          return '#5d8b66'; // forest
     case 'Delivered':      return '#9aa3ae'; // ink-300
     default:               return '#cbd2db';
@@ -420,6 +471,31 @@ function fermentationRow(l) {
   ]);
 }
 
+function restingRow(l) {
+  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
+    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: l.reference_name || '—' }),
+        el('span', { class: 'ctrm-pill urgency-red', text: `+${l.over_days}d sobre límite` }),
+        l.resting_humidity != null
+          ? el('span', { class: 'ctrm-pill', style: 'background:#dde7ee;color:#1a3a5c;', text: `${l.resting_humidity}% humedad` })
+          : null,
+      ]),
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+        onClick: () => navigate('/finca/lots'),
+      }, ['Volver a secado']),
+    ]),
+    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
+      meta('Descanso inicio', fmtDate(l.resting_start_date)),
+      meta('Días en descanso', `${l.days_in_resting}`),
+      meta('Máx permitido', `${l.resting_max_days}d`),
+      meta('Proceso', l.process_type),
+    ]),
+  ]);
+}
+
 function dryingRow(l) {
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-1' }, [
@@ -448,7 +524,10 @@ function dryingRow(l) {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 function statRow(items) {
-  return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5' }, items);
+  // Cuando hay 5 cards (con alerta de Descanso), pasamos a 5 cols en
+  // desktop para que se reparta parejo en lugar de dejar una huérfana.
+  const cols = items.length === 5 ? 'lg:grid-cols-5' : 'sm:grid-cols-4';
+  return el('div', { class: `grid grid-cols-2 ${cols} gap-2 mb-5` }, items);
 }
 
 function stat(label, value, hint, onClick, opts = {}) {
@@ -527,9 +606,24 @@ function laneKpis(lots, kind) {
   const total = lots.length;
   const reds  = lots.filter((l) => l._level === 'red').length;
   const ambers = lots.filter((l) => l._level === 'amber').length;
-  const kgKey = kind === 'ferm' ? 'kg_cherry_input' : 'kg_dried_output';
-  const kgSum = lots.reduce((s, l) => s + Number(l[kgKey] || 0), 0);
-  const kgLabel = kind === 'ferm' ? 'Cereza in' : 'Seco proyectado';
+  let kgLabel, kgSum;
+  if (kind === 'ferm') {
+    kgLabel = 'Cereza in';
+    kgSum = lots.reduce((s, l) => s + Number(l.kg_cherry_input || 0), 0);
+  } else if (kind === 'rest') {
+    // Para descanso, mostramos humedad promedio en vez de kg.
+    const hums = lots.map((l) => Number(l.resting_humidity)).filter((h) => h > 0);
+    const avg  = hums.length > 0 ? hums.reduce((s, h) => s + h, 0) / hums.length : 0;
+    return [
+      kpiPill('Baches', String(total)),
+      kpiPill('Humedad prom.', avg > 0 ? `${avg.toFixed(1)}%` : '—'),
+      kpiPill('Críticos', String(reds), reds > 0 ? 'crit' : null),
+      kpiPill('Atención', String(ambers), ambers > 0 ? 'warn' : null),
+    ];
+  } else {
+    kgLabel = 'Seco proyectado';
+    kgSum = lots.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
+  }
   return [
     kpiPill('Baches', String(total)),
     kpiPill(kgLabel, fmtKg(kgSum)),
@@ -572,6 +666,40 @@ function laneCardFerm(l) {
       meta('Inicio', fmtDate(l.start_date)),
       meta('Cereza', fmtKg(l.kg_cherry_input)),
       meta('Verde esp.', fmtKg(l.kg_green_expected)),
+    ]),
+  ]);
+}
+
+function laneCardResting(l) {
+  const target = l._daysTarget;
+  const elapsed = l._daysElapsed;
+  const remaining = target != null ? target - elapsed : null;
+  const color = LEVEL_COLOR[l._level];
+  const hum = l.resting_humidity;
+  return el('button', {
+    type: 'button',
+    class: 'w-full text-left ctrm-card ctrm-card-pad block hover:border-navy',
+    onClick: () => navigate('/finca/lots'),
+  }, [
+    el('div', { class: 'flex items-center justify-between gap-2 flex-wrap mb-1' }, [
+      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
+        el('span', { class: 'ctrm-code', text: l.bache_code || l.lot_code }),
+        el('span', { class: 'font-display font-semibold text-navy text-[12px] truncate', text: l.reference_name || '—' }),
+        el('span', { class: 'ctrm-pill muted', text: l.process_type }),
+        hum != null
+          ? el('span', { class: 'ctrm-pill', style: 'background:#dde7ee;color:#1a3a5c;', text: `${hum}% humedad` })
+          : null,
+      ]),
+      el('span', { class: 'text-[11px] font-mono font-bold', style: `color:${color};`,
+        text: target ? `${elapsed}d / ${target}d` : `${elapsed}d` }),
+    ]),
+    progressBar(l._pct, color),
+    el('div', { class: 'flex flex-wrap text-[10px] text-ink-500 gap-x-3 gap-y-0.5 font-mono mt-1' }, [
+      meta('Inicio descanso', fmtDate(l.resting_start_date)),
+      remaining != null ? meta('Restan', `${Math.max(0, remaining)}d`) : null,
+      target == null && hum != null && hum < 14
+        ? meta('Estado', 'Listo para cerrar')
+        : null,
     ]),
   ]);
 }
@@ -1003,6 +1131,31 @@ function fermentationTable(lots) {
       tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
       tcell('Proceso', 'text-[11px]', l.process_type),
       tcell('Infusión', 'text-[11px]', l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—'),
+    ])),
+  );
+}
+
+function restingTable(lots) {
+  return tableShell(
+    [
+      { label: 'Bache' }, { label: 'Referencia' },
+      { label: 'Días descanso', cls: 'text-right' }, { label: 'Máx', cls: 'text-right' },
+      { label: 'Humedad', cls: 'text-right' },
+      { label: 'Inicio' }, { label: 'Proceso' },
+    ],
+    lots.map((l) => el('tr', {
+      class: 'cursor-pointer hover:bg-cream',
+      onClick: () => navigate('/finca/lots'),
+    }, [
+      tcell('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+      tcell('Referencia', '', l.reference_name || '—'),
+      tcell('Días descanso', 'text-right font-mono text-crit font-bold',
+        `${l.days_in_resting}d (+${l.over_days})`),
+      tcell('Máx', 'text-right font-mono', `${l.resting_max_days}d`),
+      tcell('Humedad', 'text-right font-mono',
+        l.resting_humidity != null ? `${l.resting_humidity}%` : '—'),
+      tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.resting_start_date)),
+      tcell('Proceso', 'text-[11px]', l.process_type),
     ])),
   );
 }
