@@ -362,20 +362,10 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
     else td.append(document.createTextNode(String(content == null ? '—' : content)));
     return td;
   };
-  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
-    el('thead', {}, [el('tr', {}, [
-      el('th', {}, ['Código']),
-      el('th', {}, ['Referencia']),
-      el('th', {}, ['Cliente']),
-      el('th', {}, ['Status']),
-      el('th', { class: 'text-right' }, ['Aceptado']),
-      el('th', { class: 'text-right' }, ['Asignado']),
-      el('th', { class: 'text-right' }, ['Despachado']),
-      el('th', {}, ['Entrega']),
-      el('th', {}, ['Drying-start']),
-      anyActions ? el('th', { class: 'text-right' }, ['Acciones']) : null,
-    ])]),
-    el('tbody', {}, orders.map((o) => {
+  // Colspan total para la fila expandible de baches (debajo de cada pedido).
+  const COLSPAN = 10 + (anyActions ? 1 : 0);
+  const tbody = el('tbody', {});
+  for (const o of orders) {
       const r = rollupMap?.get(o.id);
       const total = r ? Number(r.total || 0) : 0;
       const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
@@ -392,7 +382,34 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
                 }, [a.label])))
             : '—')
         : null;
-      return el('tr', {}, [
+
+      // Dropdown de baches asignados. La fila expandible se monta hidden
+      // y el botón en la columna "Baches" la despliega.
+      const assignedLots = (r && r.lots) || [];
+      let detailRow = null;
+      let bachesCell;
+      if (assignedLots.length > 0) {
+        detailRow = el('tr', { hidden: 'true', class: 'bg-cream' }, [
+          el('td', { colspan: String(COLSPAN), class: 'p-3' }, [assignedLotsDetail(assignedLots)]),
+        ]);
+        let expanded = false;
+        const btn = el('button', {
+          type: 'button',
+          class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+          onClick: (e) => {
+            e.stopPropagation();
+            expanded = !expanded;
+            if (expanded) { detailRow.removeAttribute('hidden'); btn.textContent = `▴ ${assignedLots.length}`; }
+            else          { detailRow.setAttribute('hidden', 'true'); btn.textContent = `▾ ${assignedLots.length}`; }
+          },
+          title: 'Ver baches asignados',
+        }, [`▾ ${assignedLots.length}`]);
+        bachesCell = cell('Baches', 'text-center', btn);
+      } else {
+        bachesCell = cell('Baches', 'text-center text-ink-300', '—');
+      }
+
+      tbody.append(el('tr', {}, [
         cell('Código', 'font-mono text-navy font-semibold', o.order_code),
         cell('Referencia', '', o.reference_name || '—'),
         cell('Cliente', '', o.client_name || '—'),
@@ -403,6 +420,7 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
           shippedKg > 0
             ? el('span', { style: 'color:#3a6f4a;font-weight:600;' }, [`${fmtKg(shippedKg)} (${ships.length})`])
             : '—'),
+        bachesCell,
         cell('Entrega', 'font-mono text-[11px]',
           o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
         cell('Drying-start', 'font-mono text-[11px]',
@@ -410,8 +428,24 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
             ? `${fmtDate(o.latest_drying_start_date)} · ${relDate(o.latest_drying_start_date)}`
             : '—'),
         actionsCell,
-      ]);
-    })),
+      ]));
+      if (detailRow) tbody.append(detailRow);
+  }
+  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    el('thead', {}, [el('tr', {}, [
+      el('th', {}, ['Código']),
+      el('th', {}, ['Referencia']),
+      el('th', {}, ['Cliente']),
+      el('th', {}, ['Status']),
+      el('th', { class: 'text-right' }, ['Aceptado']),
+      el('th', { class: 'text-right' }, ['Asignado']),
+      el('th', { class: 'text-right' }, ['Despachado']),
+      el('th', { class: 'text-center' }, ['Baches']),
+      el('th', {}, ['Entrega']),
+      el('th', {}, ['Drying-start']),
+      anyActions ? el('th', { class: 'text-right' }, ['Acciones']) : null,
+    ])]),
+    tbody,
   ]);
   wrap.append(t);
   return wrap;
