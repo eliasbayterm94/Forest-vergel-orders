@@ -55,6 +55,16 @@ export async function forestDashboardView() {
   // lotes (incluyendo Delivered, agrupados como "delivered"). Si no
   // contamos Delivered, un pedido entregado en parte aparece como
   // pendiente esa parte y se sobre-asigna.
+  // Despachos por lote (para mostrarlos en el dropdown de baches por
+  // pedido). shipments[].lots[].id es el lot_id.
+  const shipmentsByLot = new Map();
+  for (const s of shipments) {
+    for (const lot of s.lots || []) {
+      if (!shipmentsByLot.has(lot.id)) shipmentsByLot.set(lot.id, []);
+      shipmentsByLot.get(lot.id).push({ code: s.shipment_code, date: s.shipment_date });
+    }
+  }
+
   const orderRollup = new Map();
   for (const lot of allLots) {
     for (const a of lot.assignments || []) {
@@ -72,7 +82,14 @@ export async function forestDashboardView() {
       r.lots.push({
         id: lot.id,
         code: lot.bache_code || lot.lot_code,
+        bache_code: lot.bache_code,
+        lot_code: lot.lot_code,
         status: lot.status,
+        process_type: lot.process_type,
+        factor_rendimiento: lot.factor_rendimiento,
+        kg_dried_output: lot.kg_dried_output,
+        varieties: (lot.varieties || []).map((v) => v.name),
+        shipments: shipmentsByLot.get(lot.id) || [],
         kg,
       });
     }
@@ -591,10 +608,57 @@ export function orderRow(o, opts = {}) {
 }
 
 // Lista compacta de baches asignados al pedido. Una fila por bache con
-// código, status y kg verde asignado. Se monta dentro de un wrap
-// hidden que el orderRow toggle con el botón "▾ N baches".
+// los datos clave (bache, despacho si aplica, factor, proceso, kg seco,
+// variedades) + kg verde asignado al pedido. Se monta dentro de un
+// wrap hidden que el orderRow / tabla toggle con su botón.
 function assignedLotsDetail(lots) {
   const total = lots.reduce((s, l) => s + Number(l.kg || 0), 0);
+
+  const headerRow = el('div', {
+    class: 'grid gap-2 px-2 py-1.5 text-[10px] font-display uppercase tracking-eyebrow text-ink-300',
+    style: 'grid-template-columns: minmax(80px,auto) minmax(80px,auto) minmax(50px,auto) minmax(70px,auto) minmax(70px,auto) 1fr minmax(70px,80px);',
+  }, [
+    el('span', { text: 'Bache' }),
+    el('span', { text: 'Despacho' }),
+    el('span', { class: 'text-right', text: 'Factor' }),
+    el('span', { text: 'Proceso' }),
+    el('span', { class: 'text-right', text: 'Café seco' }),
+    el('span', { text: 'Variedades' }),
+    el('span', { class: 'text-right', text: 'kg verde' }),
+  ]);
+
+  const rows = lots
+    .slice()
+    .sort((a, b) => (a.bache_code || a.lot_code || '').localeCompare(b.bache_code || b.lot_code || ''))
+    .map((l) => {
+      const ships = (l.shipments || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const shipCell = ships.length === 0
+        ? el('span', { class: 'text-ink-300', text: '—' })
+        : el('div', { class: 'flex flex-wrap gap-1' }, ships.map((s) =>
+            el('span', {
+              class: 'ctrm-code text-[10px]',
+              title: `${s.code} · ${fmtDate(s.date)}`,
+              style: 'border-color:#3a6f4a;color:#3a6f4a;',
+            }, [s.code])));
+      return el('div', {
+        class: 'grid gap-2 items-center px-2 py-1.5 bg-cream rounded-md text-[11px] cursor-pointer hover:bg-sand',
+        style: 'grid-template-columns: minmax(80px,auto) minmax(80px,auto) minmax(50px,auto) minmax(70px,auto) minmax(70px,auto) 1fr minmax(70px,80px);',
+        onClick: () => { location.hash = '/finca/lots'; },
+        title: `Ir a Producción · ${l.bache_code || l.lot_code}`,
+      }, [
+        el('div', { class: 'flex items-center gap-1 flex-wrap' }, [
+          el('span', { class: 'ctrm-code text-[10px]', text: l.bache_code || l.lot_code }),
+          el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
+        ]),
+        shipCell,
+        el('span', { class: 'text-right font-mono', text: l.factor_rendimiento != null ? String(l.factor_rendimiento) : '—' }),
+        el('span', { class: 'text-[10px]', text: l.process_type || '—' }),
+        el('span', { class: 'text-right font-mono', text: l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—' }),
+        el('span', { class: 'text-[10px] text-ink-700', text: (l.varieties || []).join(', ') || '—' }),
+        el('span', { class: 'text-right font-mono font-semibold text-ink-700', text: fmtKg(l.kg) }),
+      ]);
+    });
+
   return el('div', {}, [
     el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-1' }, [
       el('span', { class: 'eyebrow text-[10px]', text: 'Baches asignados' }),
@@ -603,20 +667,12 @@ function assignedLotsDetail(lots) {
         ` · ${lots.length} ${lots.length === 1 ? 'bache' : 'baches'}`,
       ]),
     ]),
-    el('div', { class: 'flex flex-col gap-1' }, lots
-      .slice()
-      .sort((a, b) => (a.bache_code || a.lot_code || '').localeCompare(b.bache_code || b.lot_code || ''))
-      .map((l) => el('div', {
-        class: 'flex items-center justify-between gap-2 px-2 py-1.5 bg-cream rounded-md text-[11px] cursor-pointer hover:bg-sand',
-        onClick: () => { location.hash = '/finca/lots'; },
-        title: `Ir a Producción · ${l.bache_code || l.lot_code}`,
-      }, [
-        el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
-          el('span', { class: 'ctrm-code text-[10px]', text: l.bache_code || l.lot_code }),
-          el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
-        ]),
-        el('span', { class: 'font-mono font-semibold text-ink-700 shrink-0', text: fmtKg(l.kg) }),
-      ]))),
+    el('div', { class: 'overflow-x-auto' }, [
+      el('div', { class: 'min-w-[640px]' }, [
+        headerRow,
+        el('div', { class: 'flex flex-col gap-1' }, rows),
+      ]),
+    ]),
   ]);
 }
 
