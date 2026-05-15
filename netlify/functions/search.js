@@ -42,7 +42,7 @@ exports.handler = requireAuth(async (event) => {
       .select(`
         id, bache_code, lot_code, status, process_type,
         kg_green_actual, kg_green_expected,
-        coffee_references ( name )
+        coffee_references!left ( name )
       `)
       .or(`bache_code.ilike.${pat},lot_code.ilike.${pat}`)
       .order('start_date', { ascending: false })

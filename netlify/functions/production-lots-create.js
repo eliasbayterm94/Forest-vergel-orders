@@ -125,6 +125,13 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (/bache_code/i.test(insErr.message) && /unique|duplicate/i.test(insErr.message)) {
       return conflict('Ya existe un lote con ese código de bache', 'BACHE_CODE_TAKEN');
     }
+    if (/null value in column "?reference_id"?/i.test(insErr.message)) {
+      return badReq(
+        'La columna reference_id sigue NOT NULL en la BD. Aplica la migración ' +
+        '0023_lot_optional_reference.sql o selecciona una referencia para este lote.',
+        'REFERENCE_NOT_NULLABLE',
+      );
+    }
     return serverErr('Failed to create lot', insErr.message);
   }
 

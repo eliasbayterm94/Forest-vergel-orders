@@ -25,7 +25,7 @@ exports.handler = requireAuth(async (event) => {
     start_date, drying_start_date, ready_date, delivered_date,
     notes, created_by, created_at, updated_at,
     infusion_id, infusion_pct,
-    coffee_references ( id, name ),
+    coffee_references!left ( id, name ),
     infusions ( id, name ),
     production_lot_varieties ( coffee_varieties ( id, name ) ),
     lot_partials (

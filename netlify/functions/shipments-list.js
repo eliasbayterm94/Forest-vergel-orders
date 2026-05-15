@@ -26,7 +26,7 @@ exports.handler = requireAuth(async (event) => {
           kg_cherry_input, kg_despulpado_input,
           kg_dried_output, factor_rendimiento,
           kg_green_expected, kg_green_actual,
-          coffee_references ( id, name ),
+          coffee_references!left ( id, name ),
           production_lot_varieties ( coffee_varieties ( id, name ) ),
           lot_order_assignments (
             id, kg_green_allocated,
