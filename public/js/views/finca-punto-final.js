@@ -196,7 +196,7 @@ export async function fincaPuntoFinalView() {
     const allShownSelected = items.length > 0 && items.every((l) => selected.has(l.id));
     if (allShownSelected) headerCb.checked = true;
 
-    const COLSPAN = 12;
+    const COLSPAN = 14;
     const tbody = el('tbody', {});
     for (const l of items) {
       const isSel = selected.has(l.id);
@@ -244,7 +244,9 @@ export async function fincaPuntoFinalView() {
         cellTxt('Referencia', '', l.reference_name || '—'),
         cellTxt('Proceso', 'text-[11px]', l.process_type),
         cellTxt('Variedades', 'text-[11px]', l._variety_names.length > 0 ? l._variety_names.join(', ') : '—'),
+        cellTxt('kg seco', 'text-right font-mono', l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—'),
         cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
+        cellTxt('Conversión', 'text-right font-mono', l.conversion_factor != null ? `${l.conversion_factor}×` : '—'),
         cellNode('Parciales', 'text-center', expandBtn),
         cellTxt('Días bodega', `text-right font-mono ${dwCls}`, l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`),
         cellTxt('Días proceso', 'text-right font-mono', l.days_since_start == null ? '—' : `${l.days_since_start}d`),
@@ -267,7 +269,9 @@ export async function fincaPuntoFinalView() {
         el('th', {}, ['Referencia']),
         el('th', {}, ['Proceso']),
         el('th', {}, ['Variedades']),
+        el('th', { class: 'text-right' }, ['kg seco']),
         el('th', { class: 'text-right' }, ['kg verde']),
+        el('th', { class: 'text-right' }, ['Conversión']),
         el('th', { class: 'text-center' }, ['Parciales']),
         el('th', { class: 'text-right' }, ['Días bodega']),
         el('th', { class: 'text-right' }, ['Días proceso']),
