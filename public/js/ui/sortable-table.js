@@ -1,7 +1,5 @@
-// Tabla con headers clickeables para ordenar. Stateful: una vez
-// renderizada, conserva el sort entre re-renders del padre porque
-// devuelve un node + un método `rerender()` que reconstruye el
-// <tbody> con el orden actual.
+// Tabla con headers clickeables para ordenar y, opcionalmente, una
+// fila de totales en tfoot.
 //
 // Uso:
 //   const t = sortableTable({
@@ -13,21 +11,33 @@
 //     ],
 //     items,
 //     renderRow: (item) => el('tr', {}, [...]),
-//     defaultSort: { index: 1, dir: 'desc' },   // opcional
+//     defaultSort: { index: 1, dir: 'desc' },
+//     // Totales opcionales: array alineado con headers; cada slot es
+//     // null (sin total para esa columna) o un objeto:
+//     //   { value: (items) => string|Node, cls?: string, label?: string }
+//     // El primer label no nulo se usa como rótulo "Total".
+//     totals: [
+//       { label: 'Total', value: () => 'Total', cls: 'font-semibold text-ink-700' },
+//       null,
+//       { value: (arr) => fmtKg(sum(arr, 'kg_seco')), cls: 'text-right font-mono' },
+//     ],
 //   });
-//   container.append(t.el);
-//
-// El sort se evalúa con localeCompare(es) para strings y comparación
-// numérica/temporal para el resto. nulls van al final siempre.
 
 import { el } from './el.js';
 
-export function sortableTable({ headers, items, renderRow, defaultSort = null, wrapClass = 'overflow-x-auto ctrm-card' }) {
+export function sortableTable({
+  headers, items, renderRow,
+  defaultSort = null,
+  wrapClass = 'overflow-x-auto ctrm-card',
+  totals = null,
+}) {
   let _sort = defaultSort;  // { index, dir } | null
 
   const tbody = el('tbody', {});
   const thead = el('thead', {});
-  const table = el('table', { class: 'w-full text-[12px] responsive-stack' }, [thead, tbody]);
+  const tfoot = totals ? el('tfoot', {}) : null;
+  const table = el('table', { class: 'w-full text-[12px] responsive-stack' },
+    tfoot ? [thead, tbody, tfoot] : [thead, tbody]);
   const wrap  = el('div', { class: wrapClass }, [table]);
 
   function sortedItems() {
@@ -94,8 +104,33 @@ export function sortableTable({ headers, items, renderRow, defaultSort = null, w
     }
   }
 
+  function renderFoot() {
+    if (!tfoot) return;
+    tfoot.innerHTML = '';
+    if (items.length === 0) return;
+    const tr = el('tr', { class: 'border-t-2 border-ink-300 bg-cream' });
+    headers.forEach((h, idx) => {
+      const tdef = totals[idx];
+      if (!tdef) {
+        tr.append(el('td', { class: `${h.cls || ''} px-2 py-2` }, []));
+        return;
+      }
+      let v = tdef.value ? tdef.value(items) : '';
+      const td = el('td', { class: `${tdef.cls || h.cls || ''} px-2 py-2` });
+      td.setAttribute('data-label', h.label);
+      if (v instanceof Node) td.append(v);
+      else td.append(document.createTextNode(String(v == null ? '' : v)));
+      tr.append(td);
+    });
+    tfoot.append(tr);
+  }
+
   renderHead();
   renderBody();
+  renderFoot();
 
-  return { el: wrap, table, thead, tbody, rerender: () => { renderHead(); renderBody(); } };
+  return {
+    el: wrap, table, thead, tbody, tfoot,
+    rerender: () => { renderHead(); renderBody(); renderFoot(); },
+  };
 }

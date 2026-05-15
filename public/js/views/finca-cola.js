@@ -271,6 +271,15 @@ function queueTable(orders, today) {
       { label: 'Drying-start', sortGetter: (o) => o.latest_drying_start_date },
       { label: 'Entrega',    sortGetter: (o) => o.max_delivery_date },
     ],
+    totals: [
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null, null, null,
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.kg_green_accepted || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.allocated_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.shipped_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-ok' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.pending_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-warn' },
+      null, null,
+    ],
     items: orders,
     renderRow: (o) => {
       const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;

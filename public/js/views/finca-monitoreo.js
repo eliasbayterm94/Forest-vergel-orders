@@ -1091,6 +1091,13 @@ function ordersSinLoteTable(orders) {
       { label: 'Proceso',    sortGetter: (o) => o.process_type || '' },
       { label: 'Infusión',   sortGetter: (o) => (o.infusion_names || []).join(', ') },
     ],
+    totals: [
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null,
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.pendiente_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-warn' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.kg_green_accepted || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      null, null, null,
+    ],
     items: orders,
     renderRow: (o) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
@@ -1120,6 +1127,13 @@ function fermentationTable(lots) {
       { label: 'Proceso',    sortGetter: (l) => l.process_type || '' },
       { label: 'Infusión',   sortGetter: (l) => l.infusion_name || '' },
     ],
+    totals: [
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null, null,
+      { value: (arr) => fmtKg(arr.reduce((s, l) => s + Number(l.kg_cherry_input || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      { value: (arr) => fmtKg(arr.reduce((s, l) => s + Number(l.kg_green_expected || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      null, null,
+    ],
     items: lots,
     defaultSort: { index: 2, dir: 'desc' },
     renderRow: (l) => el('tr', {
@@ -1148,6 +1162,10 @@ function restingTable(lots) {
       { label: 'Humedad',       cls: 'text-right', sortGetter: (l) => Number(l.resting_humidity || 0) },
       { label: 'Inicio',        sortGetter: (l) => l.resting_start_date },
       { label: 'Proceso',       sortGetter: (l) => l.process_type || '' },
+    ],
+    totals: [
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null, null, null, null, null,
     ],
     items: lots,
     defaultSort: { index: 2, dir: 'desc' },
@@ -1179,6 +1197,12 @@ function dryingTable(lots) {
       { label: 'Parciales',   cls: 'text-right', sortGetter: (l) => (l.partials || []).length },
       { label: 'Proceso',     sortGetter: (l) => l.process_type || '' },
       { label: 'Infusión',    sortGetter: (l) => l.infusion_name || '' },
+    ],
+    totals: [
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null, null, null,
+      { value: (arr) => String(arr.reduce((s, l) => s + (l.partials || []).length, 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      null, null,
     ],
     items: lots,
     defaultSort: { index: 2, dir: 'desc' },

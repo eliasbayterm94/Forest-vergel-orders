@@ -107,9 +107,19 @@ export async function fincaPuntoFinalView() {
   function redraw() {
     clear(root);
     const shown = enriched.filter(passes);
-    const totalKg = shown.reduce((s, l) => s + Number(l.kg_verde || 0), 0);
+    const totalKg     = shown.reduce((s, l) => s + Number(l.kg_verde || 0), 0);
+    const totalSeco   = shown.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
     const uniqueOrders = new Set();
     for (const l of shown) for (const a of l.enriched_assignments) if (a.order_id) uniqueOrders.add(a.order_id);
+
+    // Por proceso (Natural / Honey / Lavado): kg seco + kg verde.
+    const byProcess = { Natural: { seco: 0, verde: 0 }, Honey: { seco: 0, verde: 0 }, Lavado: { seco: 0, verde: 0 } };
+    for (const l of shown) {
+      const p = byProcess[l.process_type];
+      if (!p) continue;
+      p.seco  += Number(l.kg_dried_output || 0);
+      p.verde += Number(l.kg_verde || 0);
+    }
 
     const b_0_10  = bucketCount(shown, 0, 10);
     const b_11_20 = bucketCount(shown, 11, 20);
@@ -147,13 +157,43 @@ export async function fincaPuntoFinalView() {
       pageTitle('Punto Final', `Lotes en bodega · ${shown.length} de ${enriched.length}`, cta),
 
       // KPI cards
-      el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4' }, [
+      el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3' }, [
         kpiCard('Lotes',   String(shown.length),   'En bodega'),
         kpiCard('Pedidos', String(uniqueOrders.size), 'Únicos asignados'),
         kpiCard('Verde',   fmtKg(totalKg),         'Total kg verde'),
         kpiCard('0–10 d',  String(b_0_10),  'Recientes', 'ok'),
         kpiCard('11–20 d', String(b_11_20), 'Atención',  b_11_20 > 0 ? 'warn' : null),
         kpiCard('>20 d',   String(b_21),    'Críticos',  b_21 > 0 ? 'crit' : null),
+      ]),
+
+      // Resumen compacto por proceso: una sola card horizontal con tres
+      // bloques (Natural / Honey / Lavado) mostrando kg seco · kg verde.
+      el('div', { class: 'ctrm-card ctrm-card-pad mb-4' }, [
+        el('div', { class: 'flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]' }, [
+          el('span', { class: 'eyebrow text-[10px] text-ink-500 mr-2', text: 'Por proceso' }),
+          ...['Natural', 'Honey', 'Lavado'].map((p) => {
+            const v = byProcess[p];
+            return el('div', { class: 'flex items-baseline gap-2 font-mono' }, [
+              el('span', { class: 'text-[11px] text-ink-700 font-display font-semibold uppercase tracking-eyebrow', text: p }),
+              el('span', { class: 'text-ink-700' }, [
+                el('strong', { text: fmtKg(v.seco) }),
+                el('span', { class: 'text-ink-300', text: ' seco' }),
+              ]),
+              el('span', { class: 'text-ink-300', text: '·' }),
+              el('span', { class: 'text-ink-700' }, [
+                el('strong', { text: fmtKg(v.verde) }),
+                el('span', { class: 'text-ink-300', text: ' verde' }),
+              ]),
+            ]);
+          }),
+          el('div', { class: 'ml-auto flex items-baseline gap-2 font-mono text-navy' }, [
+            el('span', { class: 'text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Total' }),
+            el('strong', { text: fmtKg(totalSeco) }),
+            el('span', { class: 'text-ink-300', text: 'seco ·' }),
+            el('strong', { text: fmtKg(totalKg) }),
+            el('span', { class: 'text-ink-300', text: 'verde' }),
+          ]),
+        ]),
       ]),
 
       // Filtros + fechas
@@ -262,6 +302,32 @@ export async function fincaPuntoFinalView() {
       }
     }
 
+    // Totales sobre el set ya filtrado (items, no paged) para que el
+    // operador vea la suma de lo que está mirando ahora.
+    const sumSeco  = items.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
+    const sumVerde = items.reduce((s, l) => s + Number(l.kg_verde || 0), 0);
+    // Conversión promedio ponderada por kg seco (sólo lotes con valor).
+    let convAvg = null;
+    let cwNum = 0, cwDen = 0;
+    for (const l of items) {
+      const c = Number(l.conversion_factor || 0);
+      const w = Number(l.kg_dried_output || 0);
+      if (c > 0 && w > 0) { cwNum += c * w; cwDen += w; }
+    }
+    if (cwDen > 0) convAvg = Math.round((cwNum / cwDen) * 10000) / 10000;
+
+    const tfoot = items.length > 0
+      ? el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
+          el('td', { class: 'w-8' }, []),
+          el('td', { class: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700', text: `Total · ${items.length}` }),
+          el('td', {}, []), el('td', {}, []), el('td', {}, []),
+          el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(sumSeco) }),
+          el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(sumVerde) }),
+          el('td', { class: 'text-right font-mono text-ink-700', text: convAvg != null ? `${convAvg}× prom.` : '—' }),
+          el('td', {}, []), el('td', {}, []), el('td', {}, []), el('td', {}, []), el('td', {}, []), el('td', {}, []),
+        ])])
+      : null;
+
     const table = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
       el('thead', {}, [el('tr', {}, [
         el('th', { class: 'w-8' }, [headerCb]),
@@ -280,6 +346,7 @@ export async function fincaPuntoFinalView() {
         el('th', {}, ['Región']),
       ])]),
       tbody,
+      tfoot,
     ]);
     wrap.append(table);
     return wrap;

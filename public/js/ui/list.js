@@ -247,6 +247,21 @@ export function listView(opts) {
     } else if (vm && vm.mode() === 'table' && tableHeaders && tableRow) {
       // Table mode
       const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
+      const hasTotals = tableHeaders.some((h) => typeof h.total === 'function');
+      // Los totales se computan sobre el filtered set completo, no sobre la página visible.
+      const footer = hasTotals && filtered.length > 0
+        ? el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' },
+            tableHeaders.map((h) => {
+              const td = el('td', { class: `${h.cls || ''} px-2 py-2 ${h.totalCls || 'font-mono font-semibold'}` });
+              td.setAttribute('data-label', h.label);
+              if (typeof h.total === 'function') {
+                const v = h.total(filtered);
+                if (v instanceof Node) td.append(v);
+                else td.append(document.createTextNode(String(v == null ? '' : v)));
+              }
+              return td;
+            }))])
+        : null;
       const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
         el('thead', {}, [el('tr', {}, tableHeaders.map((h, idx) => {
           if (!h.sortGetter) return el('th', { class: h.cls || '' }, [h.label]);
@@ -274,6 +289,7 @@ export function listView(opts) {
           ]);
         }))]),
         el('tbody', {}, paged.map((item) => tableRow(item)).filter(Boolean)),
+        footer,
       ]);
       wrap.append(t);
       listContent.append(wrap);
