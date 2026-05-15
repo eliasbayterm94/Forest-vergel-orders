@@ -8,6 +8,7 @@ import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { createTabBar } from '../ui/tab-bar.js';
+import { sortableTable } from '../ui/sortable-table.js';
 import { restingRule } from './finca-lots.js';
 
 const STAGE_ORDER = ['InFermentation', 'Drying', 'Resting', 'Ready', 'Delivered'];
@@ -1070,16 +1071,6 @@ function lastNMonths(todayYmd, n) {
 }
 
 // ─── Table renderers ──────────────────────────────────────────────
-function tableShell(headers, rows) {
-  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
-  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
-    el('thead', {}, [el('tr', {}, headers.map((h) =>
-      el('th', { class: h.cls || '' }, [h.label])))]),
-    el('tbody', {}, rows),
-  ]);
-  wrap.append(t);
-  return wrap;
-}
 function tcell(label, classes, content) {
   const td = el('td', { class: classes });
   td.setAttribute('data-label', label);
@@ -1089,13 +1080,19 @@ function tcell(label, classes, content) {
 }
 
 function ordersSinLoteTable(orders) {
-  return tableShell(
-    [
-      { label: 'Pedido' }, { label: 'Referencia' }, { label: 'Cliente' },
-      { label: 'Pendiente', cls: 'text-right' }, { label: 'Aceptado', cls: 'text-right' },
-      { label: 'Entrega' }, { label: 'Proceso' }, { label: 'Infusión' },
+  return sortableTable({
+    headers: [
+      { label: 'Pedido',     sortGetter: (o) => o.order_code || '' },
+      { label: 'Referencia', sortGetter: (o) => o.reference_name || '' },
+      { label: 'Cliente',    sortGetter: (o) => o.client_name || '' },
+      { label: 'Pendiente',  cls: 'text-right', sortGetter: (o) => Number(o.pendiente_kg || 0) },
+      { label: 'Aceptado',   cls: 'text-right', sortGetter: (o) => Number(o.kg_green_accepted || 0) },
+      { label: 'Entrega',    sortGetter: (o) => o.max_delivery_date },
+      { label: 'Proceso',    sortGetter: (o) => o.process_type || '' },
+      { label: 'Infusión',   sortGetter: (o) => (o.infusion_names || []).join(', ') },
     ],
-    orders.map((o) => el('tr', {
+    items: orders,
+    renderRow: (o) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
       onClick: () => navigate('/finca/lots'),
     }, [
@@ -1107,19 +1104,25 @@ function ordersSinLoteTable(orders) {
       tcell('Entrega', 'font-mono text-[11px]', fmtDate(o.max_delivery_date)),
       tcell('Proceso', 'text-[11px]', o.process_type),
       tcell('Infusión', 'text-[11px]', (o.infusion_names || []).join(', ') || '—'),
-    ])),
-  );
+    ]),
+  }).el;
 }
 
 function fermentationTable(lots) {
-  return tableShell(
-    [
-      { label: 'Bache' }, { label: 'Referencia' },
-      { label: 'Días', cls: 'text-right' }, { label: 'Inicio' },
-      { label: 'Cereza', cls: 'text-right' }, { label: 'Verde esp.', cls: 'text-right' },
-      { label: 'Proceso' }, { label: 'Infusión' },
+  return sortableTable({
+    headers: [
+      { label: 'Bache',      sortGetter: (l) => l.bache_code || l.lot_code || '' },
+      { label: 'Referencia', sortGetter: (l) => l.reference_name || '' },
+      { label: 'Días',       cls: 'text-right', sortGetter: (l) => Number(l.days_in_fermentation || 0) },
+      { label: 'Inicio',     sortGetter: (l) => l.start_date },
+      { label: 'Cereza',     cls: 'text-right', sortGetter: (l) => Number(l.kg_cherry_input || 0) },
+      { label: 'Verde esp.', cls: 'text-right', sortGetter: (l) => Number(l.kg_green_expected || 0) },
+      { label: 'Proceso',    sortGetter: (l) => l.process_type || '' },
+      { label: 'Infusión',   sortGetter: (l) => l.infusion_name || '' },
     ],
-    lots.map((l) => el('tr', {
+    items: lots,
+    defaultSort: { index: 2, dir: 'desc' },
+    renderRow: (l) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
       onClick: () => navigate('/finca/lots'),
     }, [
@@ -1131,19 +1134,24 @@ function fermentationTable(lots) {
       tcell('Verde esp.', 'text-right font-mono', fmtKg(l.kg_green_expected)),
       tcell('Proceso', 'text-[11px]', l.process_type),
       tcell('Infusión', 'text-[11px]', l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—'),
-    ])),
-  );
+    ]),
+  }).el;
 }
 
 function restingTable(lots) {
-  return tableShell(
-    [
-      { label: 'Bache' }, { label: 'Referencia' },
-      { label: 'Días descanso', cls: 'text-right' }, { label: 'Máx', cls: 'text-right' },
-      { label: 'Humedad', cls: 'text-right' },
-      { label: 'Inicio' }, { label: 'Proceso' },
+  return sortableTable({
+    headers: [
+      { label: 'Bache',         sortGetter: (l) => l.bache_code || l.lot_code || '' },
+      { label: 'Referencia',    sortGetter: (l) => l.reference_name || '' },
+      { label: 'Días descanso', cls: 'text-right', sortGetter: (l) => Number(l.days_in_resting || 0) },
+      { label: 'Máx',           cls: 'text-right', sortGetter: (l) => Number(l.resting_max_days || 0) },
+      { label: 'Humedad',       cls: 'text-right', sortGetter: (l) => Number(l.resting_humidity || 0) },
+      { label: 'Inicio',        sortGetter: (l) => l.resting_start_date },
+      { label: 'Proceso',       sortGetter: (l) => l.process_type || '' },
     ],
-    lots.map((l) => el('tr', {
+    items: lots,
+    defaultSort: { index: 2, dir: 'desc' },
+    renderRow: (l) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
       onClick: () => navigate('/finca/lots'),
     }, [
@@ -1156,19 +1164,25 @@ function restingTable(lots) {
         l.resting_humidity != null ? `${l.resting_humidity}%` : '—'),
       tcell('Inicio', 'font-mono text-[11px]', fmtDate(l.resting_start_date)),
       tcell('Proceso', 'text-[11px]', l.process_type),
-    ])),
-  );
+    ]),
+  }).el;
 }
 
 function dryingTable(lots) {
-  return tableShell(
-    [
-      { label: 'Bache' }, { label: 'Referencia' },
-      { label: 'Días drying', cls: 'text-right' }, { label: 'Esperado', cls: 'text-right' },
-      { label: 'Inicio' }, { label: 'Parciales', cls: 'text-right' },
-      { label: 'Proceso' }, { label: 'Infusión' },
+  return sortableTable({
+    headers: [
+      { label: 'Bache',       sortGetter: (l) => l.bache_code || l.lot_code || '' },
+      { label: 'Referencia',  sortGetter: (l) => l.reference_name || '' },
+      { label: 'Días drying', cls: 'text-right', sortGetter: (l) => Number(l.days_in_drying || 0) },
+      { label: 'Esperado',    cls: 'text-right', sortGetter: (l) => Number(l.drying_days_expected || 0) },
+      { label: 'Inicio',      sortGetter: (l) => l.drying_start_date },
+      { label: 'Parciales',   cls: 'text-right', sortGetter: (l) => (l.partials || []).length },
+      { label: 'Proceso',     sortGetter: (l) => l.process_type || '' },
+      { label: 'Infusión',    sortGetter: (l) => l.infusion_name || '' },
     ],
-    lots.map((l) => el('tr', {
+    items: lots,
+    defaultSort: { index: 2, dir: 'desc' },
+    renderRow: (l) => el('tr', {
       class: 'cursor-pointer hover:bg-cream',
       onClick: () => navigate('/finca/lots'),
     }, [
@@ -1181,6 +1195,6 @@ function dryingTable(lots) {
       tcell('Parciales', 'text-right font-mono', `${(l.partials || []).length}/6`),
       tcell('Proceso', 'text-[11px]', l.process_type),
       tcell('Infusión', 'text-[11px]', l.infusion_name ? `${l.infusion_name} ${l.infusion_pct}%` : '—'),
-    ])),
-  );
+    ]),
+  }).el;
 }

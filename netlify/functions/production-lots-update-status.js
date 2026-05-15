@@ -50,6 +50,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     kg_dried_output, factor_rendimiento, kg_green_actual,
     drying_start_date, drying_locations,
     resting_start_date, resting_humidity,
+    resting_exit_humidity, // requerida al salir de Resting (a Drying o Ready)
   } = body || {};
   if (!lot_id) return badReq('lot_id required', 'LOT_ID_REQUIRED');
   if (!Object.values(LOT_STATUS).includes(targetStatus)) return badReq('invalid status', 'INVALID_STATUS');
@@ -78,6 +79,14 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     }
     normalizedHumidity = Math.round(n * 100) / 100;
   }
+  let normalizedExitHumidity = null;
+  if (resting_exit_humidity != null) {
+    const n = Number(resting_exit_humidity);
+    if (!Number.isFinite(n) || n < 8 || n > 40) {
+      return badReq('resting_exit_humidity debe estar entre 8 y 40', 'INVALID_HUMIDITY');
+    }
+    normalizedExitHumidity = Math.round(n * 100) / 100;
+  }
 
   const sb = getSupabase();
   const { data: lot, error: loadErr } = await sb
@@ -91,6 +100,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
 
   const today = bogotaToday();
   const update = { status: targetStatus };
+  const isLeavingResting = lot.status === LOT_STATUS.Resting &&
+    (targetStatus === LOT_STATUS.Drying || targetStatus === LOT_STATUS.Ready);
+
+  if (isLeavingResting && normalizedExitHumidity == null) {
+    return badReq('resting_exit_humidity es requerido al salir de Descanso', 'EXIT_HUMIDITY_REQUIRED');
+  }
 
   if (targetStatus === LOT_STATUS.Drying) {
     // InFermentation → Drying (primera vez) o Resting → Drying (regreso).
@@ -183,9 +198,52 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     }
   }
 
+  // Si vamos a cerrar el bache (Ready), calcular conversion_factor a partir
+  // del kg_input_initial (congelado al crear) y el kg_dried_output final.
+  if (targetStatus === LOT_STATUS.Ready) {
+    const finalDried = update.kg_dried_output != null ? Number(update.kg_dried_output) : lot.kg_dried_output;
+    const initial    = lot.kg_input_initial != null ? Number(lot.kg_input_initial) : null;
+    if (initial != null && finalDried != null && finalDried > 0) {
+      update.conversion_factor = Math.round((initial / finalDried) * 10000) / 10000;
+    }
+  }
+
   const { data: updated, error: updErr } = await sb
     .from('production_lots').update(update).eq('id', lot_id).select().single();
   if (updErr) return serverErr('Update failed', updErr.message);
+
+  // Histórico de ciclos de descanso. Cada Drying → Resting abre un ciclo;
+  // cada Resting → Drying / Ready lo cierra con su humedad de salida.
+  if (targetStatus === LOT_STATUS.Resting) {
+    const { data: prev } = await sb
+      .from('lot_resting_cycles').select('cycle_number')
+      .eq('production_lot_id', lot_id)
+      .order('cycle_number', { ascending: false }).limit(1);
+    const nextCycle = (prev && prev[0] ? prev[0].cycle_number : 0) + 1;
+    const { error: cycErr } = await sb.from('lot_resting_cycles').insert({
+      production_lot_id: lot_id,
+      cycle_number: nextCycle,
+      start_date: update.resting_start_date,
+      start_humidity: normalizedHumidity,
+    });
+    if (cycErr) console.warn('Resting cycle insert failed', cycErr.message);
+  }
+  if (isLeavingResting) {
+    // Cerramos el ciclo activo (el de mayor cycle_number sin end_date).
+    const { data: active } = await sb
+      .from('lot_resting_cycles').select('id')
+      .eq('production_lot_id', lot_id).is('end_date', null)
+      .order('cycle_number', { ascending: false }).limit(1);
+    const activeId = active && active[0] && active[0].id;
+    if (activeId) {
+      const { error: cycErr } = await sb.from('lot_resting_cycles').update({
+        end_date: today,
+        end_humidity: normalizedExitHumidity,
+        end_reason: targetStatus === LOT_STATUS.Drying ? 'back_to_drying' : 'to_ready',
+      }).eq('id', activeId);
+      if (cycErr) console.warn('Resting cycle close failed', cycErr.message);
+    }
+  }
 
   // Cascade: when lot reaches Delivered, check each assigned order for completion.
   const completions = [];

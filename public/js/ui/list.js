@@ -66,6 +66,9 @@ export function listView(opts) {
   const _filterValues = {};
   let _query = '';
   let _sortKey = defaultSort || (sorts[0] && sorts[0].key) || null;
+  // Column sort takes precedence over _sortKey when active. Click en el
+  // mismo header alterna asc/desc; click en otro header lo resetea.
+  let _columnSort = null;  // { index, dir: 'asc'|'desc' }
   let _page = 0;
 
   // View mode toggle si el caller paso renderers de tabla + un key.
@@ -107,15 +110,37 @@ export function listView(opts) {
     }
 
     let sorted = filtered.slice();
-    const sortDef = sorts.find((s) => s.key === _sortKey);
-    if (sortDef) {
-      const dir = sortDef.dir === 'desc' ? -1 : 1;
+    // Active sorter: el column-sort (click en header) gana sobre el
+    // dropdown global; si no hay column-sort cae al sort por defecto.
+    let activeGetter = null;
+    let activeDir = 'asc';
+    if (_columnSort && tableHeaders) {
+      const h = tableHeaders[_columnSort.index];
+      if (h && h.sortGetter) {
+        activeGetter = h.sortGetter;
+        activeDir = _columnSort.dir;
+      }
+    }
+    if (!activeGetter) {
+      const sortDef = sorts.find((s) => s.key === _sortKey);
+      if (sortDef) {
+        activeGetter = sortDef.getter;
+        activeDir = sortDef.dir || 'asc';
+      }
+    }
+    if (activeGetter) {
+      const dir = activeDir === 'desc' ? -1 : 1;
       sorted.sort((a, b) => {
-        const av = sortDef.getter(a);
-        const bv = sortDef.getter(b);
+        const av = activeGetter(a);
+        const bv = activeGetter(b);
         if (av == null && bv == null) return 0;
         if (av == null) return 1;
         if (bv == null) return -1;
+        // Comparación case-insensitive para strings.
+        if (typeof av === 'string' && typeof bv === 'string') {
+          const cmp = av.localeCompare(bv, 'es', { sensitivity: 'base' });
+          return cmp * dir;
+        }
         if (av < bv) return -1 * dir;
         if (av > bv) return 1 * dir;
         return 0;
@@ -223,8 +248,31 @@ export function listView(opts) {
       // Table mode
       const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
       const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
-        el('thead', {}, [el('tr', {}, tableHeaders.map((h) =>
-          el('th', { class: h.cls || '' }, [h.label])))]),
+        el('thead', {}, [el('tr', {}, tableHeaders.map((h, idx) => {
+          if (!h.sortGetter) return el('th', { class: h.cls || '' }, [h.label]);
+          const isActive = _columnSort && _columnSort.index === idx;
+          const arrow = isActive ? (_columnSort.dir === 'asc' ? '↑' : '↓') : '↕';
+          const arrowClass = isActive ? 'text-navy' : 'text-ink-300';
+          return el('th', { class: h.cls || '' }, [
+            el('button', {
+              type: 'button',
+              class: 'inline-flex items-center gap-1 hover:text-navy text-left w-full',
+              style: 'background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;',
+              onClick: () => {
+                if (_columnSort && _columnSort.index === idx) {
+                  _columnSort = { index: idx, dir: _columnSort.dir === 'asc' ? 'desc' : 'asc' };
+                } else {
+                  _columnSort = { index: idx, dir: 'asc' };
+                }
+                _page = 0;
+                rerender();
+              },
+            }, [
+              el('span', { text: h.label }),
+              el('span', { class: `${arrowClass} text-[10px]`, text: arrow }),
+            ]),
+          ]);
+        }))]),
         el('tbody', {}, paged.map((item) => tableRow(item)).filter(Boolean)),
       ]);
       wrap.append(t);

@@ -112,14 +112,20 @@ export async function fincaLotsView() {
       renderItem: lotCard,
       viewModeKey: 'finca-lots',
       tableHeaders: [
-        { label: 'Bache' }, { label: 'Referencia' }, { label: 'Variedades' },
-        { label: 'Status' }, { label: 'Proceso' }, { label: 'Infusión' },
-        { label: 'Inicio' }, { label: 'Secado' }, { label: 'Descanso' },
-        { label: 'Cereza',     cls: 'text-right' },
-        { label: 'Verde esp.', cls: 'text-right' },
-        { label: 'Verde real', cls: 'text-right' },
-        { label: 'Asignado',   cls: 'text-right' },
-        { label: 'Parciales',  cls: 'text-right' },
+        { label: 'Bache',      sortGetter: (l) => l.bache_code || l.lot_code || '' },
+        { label: 'Referencia', sortGetter: (l) => l.reference_name || '' },
+        { label: 'Variedades', sortGetter: (l) => (l.varieties || []).map((v) => v.name).join(', ') },
+        { label: 'Status',     sortGetter: (l) => LOT_STATUSES.indexOf(l.status) },
+        { label: 'Proceso',    sortGetter: (l) => l.process_type || '' },
+        { label: 'Infusión',   sortGetter: (l) => l.infusion_name || '' },
+        { label: 'Inicio',     sortGetter: (l) => l.start_date },
+        { label: 'Secado',     sortGetter: (l) => l.drying_start_date },
+        { label: 'Descanso',   sortGetter: (l) => l.resting_start_date },
+        { label: 'Cereza',     cls: 'text-right', sortGetter: (l) => Number(l.kg_cherry_input || 0) },
+        { label: 'Verde esp.', cls: 'text-right', sortGetter: (l) => Number(l.kg_green_expected || 0) },
+        { label: 'Verde real', cls: 'text-right', sortGetter: (l) => l.kg_green_actual != null ? Number(l.kg_green_actual) : null },
+        { label: 'Asignado',   cls: 'text-right', sortGetter: (l) => (l.assignments || []).reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0) },
+        { label: 'Parciales',  cls: 'text-right', sortGetter: (l) => (l.partials || []).length },
         { label: 'Acciones',   cls: 'text-right' },
       ],
       tableRow: lotTableRow,
@@ -225,12 +231,20 @@ export async function fincaLotsView() {
       : el('div', { class: 'flex flex-wrap gap-1' }, varieties.map((v) =>
           el('span', { class: 'ctrm-pill dark text-[10px]', text: v.name })));
 
-    const restingCell = l.resting_start_date
+    const restingCell = l.resting_start_date || (l.resting_cycles_count || 0) > 0
       ? el('div', { class: 'flex flex-col gap-0.5 items-start' }, [
-          el('span', { class: 'font-mono text-[11px]', text: fmtDate(l.resting_start_date) }),
+          l.resting_start_date
+            ? el('span', { class: 'font-mono text-[11px]', text: fmtDate(l.resting_start_date) })
+            : null,
           l.resting_humidity != null
             ? el('span', { class: `ctrm-pill text-[10px] ${humidityPillKind(l.resting_humidity)}`,
                 text: `${l.resting_humidity}%` })
+            : null,
+          (l.resting_cycles_count || 0) > 1
+            ? el('span', { class: 'ctrm-pill text-[10px]',
+                style: 'background:#1a3a5c;color:#fff;',
+                title: `${l.resting_cycles_count} ciclos`,
+                text: `× ${l.resting_cycles_count}` })
             : null,
         ])
       : document.createTextNode('—');
@@ -312,6 +326,11 @@ export async function fincaLotsView() {
             ? el('span', { class: `ctrm-pill ${humidityPillKind(l.resting_humidity)}`,
                 text: `Humedad ${l.resting_humidity}%` })
             : null,
+          (l.resting_cycles_count || 0) > 1
+            ? el('span', { class: 'ctrm-pill', style: 'background:#1a3a5c;color:#fff;',
+                title: `${l.resting_cycles_count} ciclos de descanso registrados`,
+                text: `Descansos: ${l.resting_cycles_count}` })
+            : null,
         ]),
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           primaryTransition ? el('button', {
@@ -349,6 +368,7 @@ export async function fincaLotsView() {
         meta('Verde esperado', fmtKg(l.kg_green_expected)),
         l.kg_dried_output != null ? meta(DRIED_LABEL_GENERIC, fmtKg(l.kg_dried_output)) : null,
         l.factor_rendimiento != null ? meta('Factor', String(l.factor_rendimiento)) : null,
+        l.conversion_factor != null ? meta('Conversión', `${l.conversion_factor}×`) : null,
         l.kg_green_actual != null ? meta('Verde real', fmtKg(l.kg_green_actual)) : null,
         meta('Inicio', fmtDate(l.start_date)),
         l.drying_start_date ? meta('Drying', fmtDate(l.drying_start_date)) : null,
@@ -841,9 +861,18 @@ export async function fincaLotsView() {
     let yieldValues = null;
     let dryingPayload = null;   // { drying_start_date, drying_locations[] }
     let restingPayload = null;  // { resting_start_date, resting_humidity }
+    let restingExitHumidity = null;  // humedad de salida al dejar Descanso
     const partials = lot.partials || [];
     const hasPartials = partials.length > 0;
     const isReturnToDrying = lot.status === 'Resting' && target === 'Drying';
+    const isLeavingResting = lot.status === 'Resting' && (target === 'Drying' || target === 'Ready');
+
+    // Si el bache está en Descanso y se mueve a Drying o Ready,
+    // pedimos primero la humedad de salida (trazabilidad del ciclo).
+    if (isLeavingResting) {
+      restingExitHumidity = await promptExitHumidity(lot, target);
+      if (restingExitHumidity === undefined) return;
+    }
 
     if (target === 'Ready' && hasPartials) {
       const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
@@ -877,6 +906,7 @@ export async function fincaLotsView() {
         payload.resting_start_date = restingPayload.resting_start_date;
         payload.resting_humidity   = restingPayload.resting_humidity;
       }
+      if (restingExitHumidity != null) payload.resting_exit_humidity = restingExitHumidity;
       if (yieldValues) {
         if (yieldValues.kg_dried_output    != null) payload.kg_dried_output    = yieldValues.kg_dried_output;
         if (yieldValues.factor_rendimiento != null) payload.factor_rendimiento = yieldValues.factor_rendimiento;
@@ -995,6 +1025,51 @@ export async function fincaLotsView() {
         ]),
       ]);
     }, { title: 'Entrada a Descanso' });
+  }
+
+  // Humedad de salida del Descanso. La pedimos en su propio modal
+  // antes de abrir el siguiente (drying / yield) para mantener cada
+  // paso atómico y fácil de cancelar.
+  function promptExitHumidity(lot, target) {
+    return openModal(({ close }) => {
+      const humInput = el('input', {
+        type: 'number', min: '8', max: '40', step: '0.1',
+        placeholder: 'Ej: 12.5',
+        class: 'ctrm-input mono',
+      });
+      const targetLabel = target === 'Drying' ? 'volver a Secado' : 'pasar a Listo';
+      const entryHum = lot.resting_humidity != null ? `${lot.resting_humidity}%` : '—';
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+          `El bache `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+          ` va a `, el('strong', { class: 'text-navy', text: targetLabel }),
+          `. Antes registramos la humedad actual del bache.`,
+        ]),
+        el('p', { class: 'text-[11px] text-ink-500 font-mono', text: `Humedad de entrada al descanso: ${entryHum}` }),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Humedad de salida % ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          humInput,
+          el('p', { class: 'ctrm-hint', text: 'Rango 8% a 40%.' }),
+        ]),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(undefined) }, ['Cancelar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-primary',
+            type: 'button',
+            onClick: () => {
+              const v = Number(humInput.value);
+              if (!Number.isFinite(v) || v < 8 || v > 40) {
+                toast('Humedad: ingresa un valor entre 8 y 40', 'warning'); return;
+              }
+              close(v);
+            },
+          }, ['Continuar']),
+        ]),
+      ]);
+    }, { title: 'Humedad de salida del descanso' });
   }
 
   function promptYield(lot, target) {

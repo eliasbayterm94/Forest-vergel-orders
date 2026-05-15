@@ -25,8 +25,13 @@ exports.handler = requireAuth(async (event) => {
     start_date, drying_start_date, ready_date, delivered_date,
     drying_locations,
     resting_start_date, resting_humidity,
+    kg_input_initial, conversion_factor,
     notes, created_by, created_at, updated_at,
     infusion_id, infusion_pct,
+    lot_resting_cycles (
+      id, cycle_number, start_date, start_humidity,
+      end_date, end_humidity, end_reason
+    ),
     coffee_references!left ( id, name ),
     infusions ( id, name ),
     production_lot_varieties ( coffee_varieties ( id, name ) ),
@@ -85,11 +90,24 @@ exports.handler = requireAuth(async (event) => {
       kg_green_allocated: Number(a.kg_green_allocated),
       order: a.demand_orders,
     })),
+    resting_cycles: (l.lot_resting_cycles || [])
+      .map((c) => ({
+        id: c.id,
+        cycle_number: c.cycle_number,
+        start_date: c.start_date,
+        start_humidity: c.start_humidity != null ? Number(c.start_humidity) : null,
+        end_date: c.end_date,
+        end_humidity: c.end_humidity != null ? Number(c.end_humidity) : null,
+        end_reason: c.end_reason,
+      }))
+      .sort((a, b) => a.cycle_number - b.cycle_number),
+    resting_cycles_count: (l.lot_resting_cycles || []).length,
     coffee_references: undefined,
     infusions: undefined,
     production_lot_varieties: undefined,
     lot_partials: undefined,
     lot_order_assignments: undefined,
+    lot_resting_cycles: undefined,
   }));
 
   return ok({ lots });

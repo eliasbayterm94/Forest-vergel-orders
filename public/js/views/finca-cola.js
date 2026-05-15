@@ -11,6 +11,7 @@ import { fmtKg, fmtDate, statusLabel, statusPillKind, relDate } from '../ui/form
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
+import { sortableTable } from '../ui/sortable-table.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
@@ -249,7 +250,6 @@ export async function fincaColaView() {
 
 // ─── Table renderer ────────────────────────────────────────────────
 function queueTable(orders, today) {
-  const wrap = el('div', { class: 'overflow-x-auto ctrm-card' });
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
     td.setAttribute('data-label', label);
@@ -257,21 +257,22 @@ function queueTable(orders, today) {
     else td.append(document.createTextNode(String(content == null ? '—' : content)));
     return td;
   };
-  const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
-    el('thead', {}, [el('tr', {}, [
-      el('th', {}, ['Código']),
-      el('th', {}, ['Referencia']),
-      el('th', {}, ['Cliente']),
-      el('th', {}, ['Status']),
-      el('th', {}, ['Infusión']),
-      el('th', { class: 'text-right' }, ['Aceptado']),
-      el('th', { class: 'text-right' }, ['Asignado']),
-      el('th', { class: 'text-right' }, ['Despachado']),
-      el('th', { class: 'text-right' }, ['Pendiente']),
-      el('th', {}, ['Drying-start']),
-      el('th', {}, ['Entrega']),
-    ])]),
-    el('tbody', {}, orders.map((o) => {
+  return sortableTable({
+    headers: [
+      { label: 'Código',     sortGetter: (o) => o.order_code || '' },
+      { label: 'Referencia', sortGetter: (o) => o.reference_name || '' },
+      { label: 'Cliente',    sortGetter: (o) => o.client_name || '' },
+      { label: 'Status',     sortGetter: (o) => o.status || '' },
+      { label: 'Infusión',   sortGetter: (o) => (o.infusion_names || []).join(', ') },
+      { label: 'Aceptado',   cls: 'text-right', sortGetter: (o) => Number(o.kg_green_accepted || 0) },
+      { label: 'Asignado',   cls: 'text-right', sortGetter: (o) => Number(o.allocated_kg || 0) },
+      { label: 'Despachado', cls: 'text-right', sortGetter: (o) => Number(o.shipped_kg || 0) },
+      { label: 'Pendiente',  cls: 'text-right', sortGetter: (o) => Number(o.pending_kg || 0) },
+      { label: 'Drying-start', sortGetter: (o) => o.latest_drying_start_date },
+      { label: 'Entrega',    sortGetter: (o) => o.max_delivery_date },
+    ],
+    items: orders,
+    renderRow: (o) => {
       const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
       const dryColor = isOverdue ? 'text-crit'
         : (daysBetween(today, o.latest_drying_start_date) <= 5 ? 'text-warn'
@@ -298,10 +299,8 @@ function queueTable(orders, today) {
         cell('Entrega', 'font-mono text-[11px]',
           o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
       ]);
-    })),
-  ]);
-  wrap.append(t);
-  return wrap;
+    },
+  }).el;
 }
 
 function kpiCard(label, value, hint, kind) {

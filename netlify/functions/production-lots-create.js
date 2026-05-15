@@ -113,6 +113,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       process_type,
       processing_stage,
       ...stageInsert,
+      kg_input_initial: kg_input_amount,
       kg_green_expected,
       fermentation_hours,
       start_date,
