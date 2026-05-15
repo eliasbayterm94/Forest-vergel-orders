@@ -448,6 +448,51 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
       ]));
       if (detailRow) tbody.append(detailRow);
   }
+  // Totales sobre el set de pedidos visible. Aceptado y Asignado en kg
+  // verde; Despachado idem. kg seco agregado proviene del rollup.lots
+  // de todos los pedidos (sumamos kg_dried_output por lote único).
+  const totAccepted = orders.reduce((s, o) => s + Number(o.kg_green_accepted ?? o.kg_green_required ?? 0), 0);
+  const totAssigned = orders.reduce((s, o) => {
+    const r = rollupMap?.get(o.id);
+    return s + (r ? Number(r.total || 0) : 0);
+  }, 0);
+  const totShipped = orders.reduce((s, o) => {
+    const ships = shipmentsMap?.get(o.id) || [];
+    return s + ships.reduce((ss, x) => ss + Number(x.kg || 0), 0);
+  }, 0);
+  // kg seco total: sumar kg_dried_output por lote único asignado a
+  // alguno de los pedidos visibles. Sin doble conteo si el lote cubre
+  // varios pedidos del set.
+  const seenLotIds = new Set();
+  let totDried = 0;
+  let totBaches = 0;
+  for (const o of orders) {
+    const r = rollupMap?.get(o.id);
+    if (!r) continue;
+    for (const l of r.lots || []) {
+      if (seenLotIds.has(l.id)) continue;
+      seenLotIds.add(l.id);
+      totBaches += 1;
+      if (l.kg_dried_output != null) totDried += Number(l.kg_dried_output);
+    }
+  }
+
+  const tfoot = orders.length > 0
+    ? el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
+        cell('Código', 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700', `Total · ${orders.length}`),
+        cell('Referencia', '', ''),
+        cell('Cliente', '', ''),
+        cell('Status', '', el('span', { class: 'text-[10px] font-mono text-ink-500', text: `${totBaches} baches · ${fmtKg(totDried)} seco` })),
+        cell('Aceptado', 'text-right font-mono font-semibold text-navy', fmtKg(totAccepted)),
+        cell('Asignado', 'text-right font-mono font-semibold text-navy', fmtKg(totAssigned)),
+        cell('Despachado', 'text-right font-mono font-semibold text-ok', totShipped > 0 ? fmtKg(totShipped) : '—'),
+        cell('Baches', '', ''),
+        cell('Entrega', '', ''),
+        cell('Drying-start', '', ''),
+        anyActions ? cell('Acciones', '', '') : null,
+      ])])
+    : null;
+
   const t = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
     el('thead', {}, [el('tr', {}, [
       el('th', {}, ['Código']),
@@ -463,6 +508,7 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
       anyActions ? el('th', { class: 'text-right' }, ['Acciones']) : null,
     ])]),
     tbody,
+    tfoot,
   ]);
   wrap.append(t);
   return wrap;
@@ -655,14 +701,57 @@ function assignedLotsDetail(lots) {
     ]);
   });
 
+  // Totales globales + breakdown por estado del lote (cuántos baches,
+  // kg seco y kg verde asignado para cada Status: InFermentation,
+  // Drying, Resting, Ready, Delivered).
+  const totalDried = sorted.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
+  const STATE_ORDER = ['InFermentation', 'Drying', 'Resting', 'Ready', 'Delivered'];
+  const byState = new Map();
+  for (const l of sorted) {
+    if (!byState.has(l.status)) byState.set(l.status, { count: 0, dried: 0, green: 0 });
+    const b = byState.get(l.status);
+    b.count += 1;
+    b.dried += Number(l.kg_dried_output || 0);
+    b.green += Number(l.kg || 0);
+  }
+  const stateRows = STATE_ORDER
+    .filter((st) => byState.has(st))
+    .map((st) => {
+      const b = byState.get(st);
+      return el('span', { class: 'inline-flex items-center gap-1.5 text-[11px] font-mono text-ink-700' }, [
+        el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(st)}`, text: statusLabel(st) }),
+        el('span', { class: 'text-ink-500', text: `${b.count}` }),
+        el('span', { class: 'text-ink-300', text: '·' }),
+        el('span', {}, [el('strong', { text: fmtKg(b.dried) }), el('span', { class: 'text-ink-300', text: ' seco' })]),
+        el('span', { class: 'text-ink-300', text: '·' }),
+        el('span', {}, [el('strong', { text: fmtKg(b.green) }), el('span', { class: 'text-ink-300', text: ' verde' })]),
+      ]);
+    });
+
+  const tfoot = el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
+    el('td', { class: 'px-2 py-1.5 font-display text-[10px] uppercase tracking-eyebrow text-ink-700' }, [`Total · ${lots.length}`]),
+    el('td', { class: 'px-2 py-1.5' }, []),
+    el('td', { class: 'px-2 py-1.5' }, []),
+    el('td', { class: 'px-2 py-1.5' }, []),
+    el('td', { class: 'px-2 py-1.5 text-right font-mono font-semibold text-navy', text: fmtKg(totalDried) }),
+    el('td', { class: 'px-2 py-1.5' }, []),
+    el('td', { class: 'px-2 py-1.5 text-right font-mono font-semibold text-navy', text: fmtKg(total) }),
+  ])]);
+
   return el('div', {}, [
     el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-2' }, [
       el('span', { class: 'eyebrow text-[10px]', text: 'Baches asignados' }),
       el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
+        `${lots.length} ${lots.length === 1 ? 'bache' : 'baches'} · `,
+        el('strong', { class: 'text-navy', text: fmtKg(totalDried) }),
+        el('span', { text: ' seco · ' }),
         el('strong', { class: 'text-navy', text: fmtKg(total) }),
-        ` · ${lots.length} ${lots.length === 1 ? 'bache' : 'baches'}`,
+        el('span', { text: ' verde' }),
       ]),
     ]),
+    stateRows.length > 0
+      ? el('div', { class: 'flex flex-wrap gap-x-4 gap-y-1 mb-2 px-1' }, stateRows)
+      : null,
     el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
       el('table', { class: 'w-full text-[11px] responsive-stack' }, [
         el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
@@ -675,6 +764,7 @@ function assignedLotsDetail(lots) {
           el('th', { class: 'text-right px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['kg verde']),
         ])]),
         el('tbody', {}, rows),
+        tfoot,
       ]),
     ]),
   ]);
