@@ -607,70 +607,74 @@ export function orderRow(o, opts = {}) {
   ]);
 }
 
-// Lista compacta de baches asignados al pedido. Una fila por bache con
-// los datos clave (bache, despacho si aplica, factor, proceso, kg seco,
-// variedades) + kg verde asignado al pedido. Se monta dentro de un
-// wrap hidden que el orderRow / tabla toggle con su botón.
+// Lista compacta de baches asignados al pedido. Se renderiza como
+// tabla con el mismo design system que las demás (thead eyebrow,
+// border-t sand entre rows). Una fila por bache con: Bache (código +
+// status pill), Despacho (chips si aplica), Factor, Proceso, Café
+// seco, Variedades y kg verde asignado al pedido.
 function assignedLotsDetail(lots) {
   const total = lots.reduce((s, l) => s + Number(l.kg || 0), 0);
+  const tcell = (label, classes, content) => {
+    const td = el('td', { class: `px-2 py-1.5 ${classes || ''}` });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
 
-  const headerRow = el('div', {
-    class: 'grid gap-2 px-2 py-1.5 text-[10px] font-display uppercase tracking-eyebrow text-ink-300',
-    style: 'grid-template-columns: minmax(80px,auto) minmax(80px,auto) minmax(50px,auto) minmax(70px,auto) minmax(70px,auto) 1fr minmax(70px,80px);',
-  }, [
-    el('span', { text: 'Bache' }),
-    el('span', { text: 'Despacho' }),
-    el('span', { class: 'text-right', text: 'Factor' }),
-    el('span', { text: 'Proceso' }),
-    el('span', { class: 'text-right', text: 'Café seco' }),
-    el('span', { text: 'Variedades' }),
-    el('span', { class: 'text-right', text: 'kg verde' }),
-  ]);
-
-  const rows = lots
+  const sorted = lots
     .slice()
-    .sort((a, b) => (a.bache_code || a.lot_code || '').localeCompare(b.bache_code || b.lot_code || ''))
-    .map((l) => {
-      const ships = (l.shipments || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-      const shipCell = ships.length === 0
-        ? el('span', { class: 'text-ink-300', text: '—' })
-        : el('div', { class: 'flex flex-wrap gap-1' }, ships.map((s) =>
-            el('span', {
-              class: 'ctrm-code text-[10px]',
-              title: `${s.code} · ${fmtDate(s.date)}`,
-              style: 'border-color:#3a6f4a;color:#3a6f4a;',
-            }, [s.code])));
-      return el('div', {
-        class: 'grid gap-2 items-center px-2 py-1.5 bg-cream rounded-md text-[11px] cursor-pointer hover:bg-sand',
-        style: 'grid-template-columns: minmax(80px,auto) minmax(80px,auto) minmax(50px,auto) minmax(70px,auto) minmax(70px,auto) 1fr minmax(70px,80px);',
-        onClick: () => { location.hash = '/finca/lots'; },
-        title: `Ir a Producción · ${l.bache_code || l.lot_code}`,
-      }, [
-        el('div', { class: 'flex items-center gap-1 flex-wrap' }, [
-          el('span', { class: 'ctrm-code text-[10px]', text: l.bache_code || l.lot_code }),
-          el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
-        ]),
-        shipCell,
-        el('span', { class: 'text-right font-mono', text: l.factor_rendimiento != null ? String(l.factor_rendimiento) : '—' }),
-        el('span', { class: 'text-[10px]', text: l.process_type || '—' }),
-        el('span', { class: 'text-right font-mono', text: l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—' }),
-        el('span', { class: 'text-[10px] text-ink-700', text: (l.varieties || []).join(', ') || '—' }),
-        el('span', { class: 'text-right font-mono font-semibold text-ink-700', text: fmtKg(l.kg) }),
-      ]);
-    });
+    .sort((a, b) => (a.bache_code || a.lot_code || '').localeCompare(b.bache_code || b.lot_code || ''));
+
+  const rows = sorted.map((l) => {
+    const ships = (l.shipments || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const shipNode = ships.length === 0
+      ? document.createTextNode('—')
+      : el('div', { class: 'flex flex-wrap gap-1' }, ships.map((s) =>
+          el('span', {
+            class: 'ctrm-code text-[10px]',
+            title: `${s.code} · ${fmtDate(s.date)}`,
+            style: 'border-color:#3a6f4a;color:#3a6f4a;',
+          }, [s.code])));
+    const bacheNode = el('div', { class: 'flex items-center gap-1 flex-wrap' }, [
+      el('span', { class: 'ctrm-code text-[10px]', text: l.bache_code || l.lot_code }),
+      el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
+    ]);
+    return el('tr', {
+      class: 'border-t border-sand hover:bg-sand cursor-pointer',
+      onClick: () => { location.hash = '/finca/lots'; },
+      title: `Ir a Producción · ${l.bache_code || l.lot_code}`,
+    }, [
+      tcell('Bache', '', bacheNode),
+      tcell('Despacho', '', shipNode),
+      tcell('Factor', 'text-right font-mono', l.factor_rendimiento != null ? String(l.factor_rendimiento) : '—'),
+      tcell('Proceso', 'text-[10px]', l.process_type || '—'),
+      tcell('Café seco', 'text-right font-mono', l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—'),
+      tcell('Variedades', 'text-[10px] text-ink-700', (l.varieties || []).join(', ') || '—'),
+      tcell('kg verde', 'text-right font-mono font-semibold text-ink-700', fmtKg(l.kg)),
+    ]);
+  });
 
   return el('div', {}, [
-    el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-1' }, [
+    el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-2' }, [
       el('span', { class: 'eyebrow text-[10px]', text: 'Baches asignados' }),
       el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
         el('strong', { class: 'text-navy', text: fmtKg(total) }),
         ` · ${lots.length} ${lots.length === 1 ? 'bache' : 'baches'}`,
       ]),
     ]),
-    el('div', { class: 'overflow-x-auto' }, [
-      el('div', { class: 'min-w-[640px]' }, [
-        headerRow,
-        el('div', { class: 'flex flex-col gap-1' }, rows),
+    el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
+      el('table', { class: 'w-full text-[11px] responsive-stack' }, [
+        el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+          el('th', { class: 'text-left px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Bache']),
+          el('th', { class: 'text-left px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Despacho']),
+          el('th', { class: 'text-right px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Factor']),
+          el('th', { class: 'text-left px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Proceso']),
+          el('th', { class: 'text-right px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Café seco']),
+          el('th', { class: 'text-left px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['Variedades']),
+          el('th', { class: 'text-right px-2 py-1.5 font-display text-[10px] tracking-eyebrow' }, ['kg verde']),
+        ])]),
+        el('tbody', {}, rows),
       ]),
     ]),
   ]);
