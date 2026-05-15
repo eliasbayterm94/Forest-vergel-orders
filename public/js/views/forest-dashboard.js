@@ -1102,7 +1102,7 @@ function seguimientoTable(rows, rollupMap, shipmentsMap, expandedSet, onToggle) 
     if (isExp) {
       const expandRow = el('tr', { class: 'bg-cream' }, [
         el('td', { colspan: '11', class: 'p-3' }, [
-          renderLotsBreakdown(o, rollupMap, shipmentsMap),
+          renderLotsBreakdown(o, rollupMap),
         ]),
       ]);
       tbody.append(expandRow);
@@ -1174,7 +1174,7 @@ function seguimientoCard(r, rollupMap, shipmentsMap, expandedSet, onToggle) {
       el('span', { text: isExp ? 'Ocultar lotes' : `Ver lotes asignados (${lotsCount})${shipsCount > 0 ? ` + ${shipsCount} despacho${shipsCount === 1 ? '' : 's'}` : ''}` }),
     ]),
     isExp ? el('div', { class: 'p-3 border-t border-sand bg-cream' }, [
-      renderLotsBreakdown(o, rollupMap, shipmentsMap),
+      renderLotsBreakdown(o, rollupMap),
     ]) : null,
   ]);
 }
@@ -1196,74 +1196,13 @@ const STAGE_COLORS = {
 };
 const STAGE_ORDER = { InFermentation: 1, Drying: 2, Ready: 3, Delivered: 4 };
 
-function renderLotsBreakdown(order, rollupMap, shipmentsMap) {
+function renderLotsBreakdown(order, rollupMap) {
   const rollup = rollupMap.get(order.id);
   const lots = (rollup && rollup.lots) || [];
-  const ships = shipmentsMap.get(order.id) || [];
-
-  if (lots.length === 0 && ships.length === 0) {
+  if (lots.length === 0) {
     return el('p', { class: 'text-[11px] text-ink-500 italic', text: 'Este pedido aún no tiene lotes asignados.' });
   }
-
-  const sortedLots = lots.slice().sort((a, b) =>
-    (STAGE_ORDER[a.status] || 99) - (STAGE_ORDER[b.status] || 99));
-
-  return el('div', { class: 'space-y-3' }, [
-    lots.length > 0 ? el('div', {}, [
-      el('p', { class: 'eyebrow text-[10px] mb-1', text: `Lotes asignados (${lots.length})` }),
-      lotsBreakdownTable(sortedLots),
-    ]) : null,
-    ships.length > 0 ? el('div', {}, [
-      el('p', { class: 'eyebrow text-[10px] mb-1', text: `Despachos (${ships.length})` }),
-      shipsBreakdownTable(ships),
-    ]) : null,
-  ]);
-}
-
-function lotsBreakdownTable(lots) {
-  return el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
-    el('table', { class: 'w-full text-[11px]' }, [
-      el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
-        el('th', { class: 'text-left px-3 py-1.5' }, ['Bache']),
-        el('th', { class: 'text-left px-3 py-1.5' }, ['Status']),
-        el('th', { class: 'text-right px-3 py-1.5' }, ['kg verde']),
-      ])]),
-      el('tbody', {}, lots.map((l) => {
-        const color = STAGE_COLORS[l.status] || '#9aa3ae';
-        return el('tr', { class: 'border-t border-sand' }, [
-          el('td', { class: 'px-3 py-1.5 font-mono font-semibold' }, [
-            el('span', {
-              class: 'inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle',
-              style: `background:${color};`,
-            }),
-            l.code,
-          ]),
-          el('td', { class: 'px-3 py-1.5', style: `color:${color};font-weight:600;`,
-            text: STAGE_LABELS[l.status] || l.status }),
-          el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: fmtKg(l.kg) }),
-        ]);
-      })),
-    ]),
-  ]);
-}
-
-function shipsBreakdownTable(ships) {
-  const sorted = ships.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  return el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
-    el('table', { class: 'w-full text-[11px]' }, [
-      el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
-        el('th', { class: 'text-left px-3 py-1.5' }, ['Despacho']),
-        el('th', { class: 'text-left px-3 py-1.5' }, ['Fecha']),
-        el('th', { class: 'text-right px-3 py-1.5' }, ['kg verde']),
-      ])]),
-      el('tbody', {}, sorted.map((s) => el('tr', { class: 'border-t border-sand' }, [
-        el('td', { class: 'px-3 py-1.5 font-mono font-semibold', style: 'color:#3a6f4a;',
-          text: s.code }),
-        el('td', { class: 'px-3 py-1.5 font-mono', text: fmtDate(s.date) }),
-        el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: fmtKg(s.kg) }),
-      ]))),
-    ]),
-  ]);
+  return assignedLotsDetail(lots);
 }
 
 function kpiBlock(label, value, color) {
