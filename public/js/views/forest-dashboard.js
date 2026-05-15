@@ -686,7 +686,6 @@ function assignedLotsDetail(lots) {
     .filter((st) => byState.has(st))
     .map((st) => {
       const b = byState.get(st);
-      const f = weightedFactor(b.items);
       return el('span', { class: 'inline-flex items-center gap-1.5 text-[11px] font-mono text-ink-700' }, [
         el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(st)}`, text: statusLabel(st) }),
         el('span', { class: 'text-ink-500', text: `${b.count}` }),
@@ -694,12 +693,6 @@ function assignedLotsDetail(lots) {
         el('span', {}, [el('strong', { text: fmtKg(b.dried) }), el('span', { class: 'text-ink-300', text: ' seco' })]),
         el('span', { class: 'text-ink-300', text: '·' }),
         el('span', {}, [el('strong', { text: fmtKg(b.green) }), el('span', { class: 'text-ink-300', text: ' verde' })]),
-        f != null
-          ? el('span', { class: 'text-ink-300' }, [
-              el('span', { text: '· factor ' }),
-              el('strong', { class: 'text-ink-700', text: String(f) }),
-            ])
-          : null,
       ]);
     });
 
