@@ -716,21 +716,10 @@ function assignedLotsDetail(lots) {
   return el('div', {}, [
     el('div', { class: 'flex items-baseline justify-between flex-wrap gap-2 mb-2' }, [
       el('span', { class: 'eyebrow text-[10px]', text: 'Baches asignados' }),
-      el('span', { class: 'text-[11px] font-mono text-ink-500' }, [
-        `${lots.length} ${lots.length === 1 ? 'bache' : 'baches'} · `,
-        el('strong', { class: 'text-navy', text: fmtKg(totalDried) }),
-        el('span', { text: ' seco · ' }),
-        el('strong', { class: 'text-navy', text: fmtKg(total) }),
-        el('span', { text: ' verde' }),
-        totalFactor != null ? el('span', {}, [
-          el('span', { text: ' · factor ' }),
-          el('strong', { class: 'text-navy', text: String(totalFactor) }),
-        ]) : null,
-      ]),
+      stateRows.length > 0
+        ? el('div', { class: 'flex flex-wrap gap-x-4 gap-y-1 justify-end' }, stateRows)
+        : null,
     ]),
-    stateRows.length > 0
-      ? el('div', { class: 'flex flex-wrap gap-x-4 gap-y-1 mb-2 px-1' }, stateRows)
-      : null,
     el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
       el('table', { class: 'w-full text-[11px] responsive-stack' }, [
         el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
