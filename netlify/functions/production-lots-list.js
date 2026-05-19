@@ -49,6 +49,7 @@ exports.handler = requireAuth(async (event) => {
     )
   `);
 
+  if (q.id)            query = query.eq('id', q.id);
   if (q.status)        query = query.in('status', q.status.split(',').map((s) => s.trim()).filter(Boolean));
   if (q.reference_id)  query = query.eq('reference_id', q.reference_id);
   if (q.process_type)  query = query.eq('process_type', q.process_type);

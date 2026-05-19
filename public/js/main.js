@@ -12,6 +12,7 @@ import { fincaDashboardView }       from './views/finca-dashboard.js';
 import { fincaInboxView }           from './views/finca-inbox.js';
 import { fincaLotsView }            from './views/finca-lots.js';
 import { fincaLotsBulkFormView }    from './views/finca-lots-bulk-form.js';
+import { fincaBacheDetailView }     from './views/finca-bache-detail.js';
 import { fincaPuntoFinalView }      from './views/finca-punto-final.js';
 import { fincaDespachosView }       from './views/finca-despachos.js';
 import { fincaMonitoreoView }       from './views/finca-monitoreo.js';
@@ -35,6 +36,7 @@ defineRoute('/finca/inbox',        { roles: FINCA_OR_ADMIN,  view: fincaInboxVie
 defineRoute('/finca/cola',         { roles: FINCA_OR_ADMIN,  view: fincaColaView });
 defineRoute('/finca/lots',         { roles: FINCA_OR_ADMIN,  view: fincaLotsView });
 defineRoute('/finca/lots-bulk',    { roles: FINCA_OR_ADMIN,  view: fincaLotsBulkFormView });
+defineRoute('/finca/bache',        { roles: FINCA_OR_ADMIN,  view: fincaBacheDetailView });
 defineRoute('/finca/punto-final',  { roles: FINCA_OR_ADMIN,  view: fincaPuntoFinalView });
 defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
 defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitoreoView });
