@@ -292,7 +292,14 @@ export async function fincaLotsView() {
       tcell('Referencia', l.reference_name ? '' : 'italic text-ink-300',
         l.reference_name || 'Sin referencia'),
       tcell('Variedades', '', varietiesCell),
-      tcell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) })),
+      tcell('Status', '', el('div', { class: 'flex flex-wrap items-center gap-1' }, [
+        el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
+        ...(l.status === 'Drying'
+          ? (l.drying_locations || []).map((loc) =>
+              el('span', { class: 'ctrm-pill text-[10px]',
+                style: 'background:#dde7ee;color:#1a3a5c;', text: loc }))
+          : []),
+      ])),
       tcell('Proceso', 'text-[11px]', l.process_type),
       tcell('Infusión', 'text-[11px]', l.infusion_name
         ? `${l.infusion_name} ${l.infusion_pct}%`
@@ -905,7 +912,7 @@ export async function fincaLotsView() {
     // pedimos primero la humedad de salida (trazabilidad del ciclo).
     if (isLeavingResting) {
       restingExitHumidity = await promptExitHumidity(lot, target);
-      if (restingExitHumidity === undefined) return;
+      if (restingExitHumidity == null) return;
     }
 
     if (target === 'Ready' && hasPartials) {
@@ -919,13 +926,13 @@ export async function fincaLotsView() {
       if (!ok) return;
     } else if (target === 'Ready' || target === 'Delivered') {
       yieldValues = await promptYield(lot, target);
-      if (yieldValues === undefined) return;
+      if (yieldValues == null) return;
     } else if (target === 'Drying') {
       dryingPayload = await promptDrying(lot, isReturnToDrying);
-      if (dryingPayload === undefined) return;
+      if (!dryingPayload) return;
     } else if (target === 'Resting') {
       restingPayload = await promptResting(lot);
-      if (restingPayload === undefined) return;
+      if (!restingPayload) return;
     } else {
       const ok = await confirmModal(`Avanzar ${lot.bache_code || lot.lot_code} a "${statusLabel(target)}"?`, { title: 'Cambio de estado' });
       if (!ok) return;
@@ -1219,20 +1226,70 @@ export async function fincaLotsView() {
     render();
   }
 
-  // ---------- Edit bache code ----------
+  // ---------- Edit bache ----------
+  // Edita los campos básicos del bache: código, kg inicial, fecha de
+  // inicio, variedades y observaciones. Bloqueado para baches ya
+  // despachados (status === 'Delivered').
   function editBacheCode(lot) {
+    if (lot.status === 'Delivered') {
+      toast('No se puede editar un bache ya despachado.', 'warning', 5000);
+      return;
+    }
     return openModal(({ close }) => {
-      const inp = el('input', {
+      const codeInput = el('input', {
         type: 'text', value: lot.bache_code || '',
         class: 'ctrm-input mono uppercase',
         maxlength: '60',
       });
+      const dateInput = el('input', {
+        type: 'date', value: lot.start_date || '',
+        class: 'ctrm-input',
+      });
+      const stageLabel = lot.processing_stage === 'cereza'     ? 'Cereza fresca'
+                      :  lot.processing_stage === 'despulpado' ? 'Despulpado'
+                      :  lot.processing_stage === 'seco'       ? 'Café seco' : 'kg inicial';
+      const kgInput = el('input', {
+        type: 'number', min: '0', step: '0.01',
+        value: lot.kg_input_initial != null ? String(lot.kg_input_initial) : '',
+        class: 'ctrm-input mono',
+      });
+      const initialVarieties = (lot.varieties || []).map((v) => ({ id: v.id, name: v.name }));
+      const vCombo = createMultiCombobox({
+        placeholder: 'Variedades...',
+        items: allVarieties,
+        values: initialVarieties,
+        onCreate: async (text) => {
+          try {
+            const r = await api.varietyAdd(text);
+            toast(`Variedad creada: ${r.variety.name}`, 'success');
+            return r.variety;
+          } catch (e) { toast(e.message, 'error'); return null; }
+        },
+        createLabel: '+ Crear variedad',
+      });
+      const notesInput = el('textarea', {
+        rows: '3',
+        class: 'ctrm-textarea',
+      });
+      notesInput.value = lot.notes || '';
+
       return el('div', { class: 'space-y-3' }, [
         el('p', { class: 'text-[12px] text-ink-500' }, [
           `Lote interno: `, el('strong', { class: 'font-mono text-ink-700', text: lot.lot_code }),
+          ' · ', el('strong', { text: lot.process_type || '—' }),
+          lot.processing_stage ? ` · stage ${lot.processing_stage}` : '',
         ]),
-        labelled('Código de bache', inp),
-        el('p', { class: 'ctrm-hint', text: 'Único entre todos los lotes.' }),
+        labelled('Código de bache', codeInput),
+        labelled('Fecha de inicio', dateInput),
+        labelled(`${stageLabel} (kg)`, kgInput),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label' }, [
+            'Variedades ',
+            el('span', { class: 'ctrm-req', text: '*' }),
+          ]),
+          vCombo.el,
+        ]),
+        labelled('Observaciones', notesInput),
         el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
           el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
           el('button', {
@@ -1240,13 +1297,26 @@ export async function fincaLotsView() {
             type: 'button',
             onClick: async (e) => {
               const btn = e.currentTarget;
-              const v = inp.value.trim();
-              if (!v) { toast('Código requerido', 'warning'); return; }
-              if (v === lot.bache_code) { close(null); return; }
+              const code = codeInput.value.trim();
+              const startDate = dateInput.value || null;
+              const kg = kgInput.value === '' ? null : Number(kgInput.value);
+              const varietyIds = vCombo.getValues().map((v) => v.id);
+              const notesVal = notesInput.value.trim();
+              if (!code) { toast('Código requerido', 'warning'); return; }
+              if (!startDate) { toast('Fecha de inicio requerida', 'warning'); return; }
+              if (kg == null || !(kg > 0)) { toast('Kg inicial debe ser > 0', 'warning'); return; }
+              if (varietyIds.length === 0) { toast('Al menos una variedad', 'warning'); return; }
+
+              const fields = {
+                bache_code: code,
+                start_date: startDate,
+                kg_input_initial: kg,
+                notes: notesVal || null,
+              };
               try {
                 await withBusy(btn, 'Guardando…', () =>
-                  api.lotUpdate({ lot_id: lot.id, fields: { bache_code: v } }));
-                toast(`Código actualizado a ${v}`, 'success');
+                  api.lotUpdate({ lot_id: lot.id, fields, variety_ids: varietyIds }));
+                toast(`Bache ${code} actualizado`, 'success');
                 close({ ok: true });
                 reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
               } catch (err) {
@@ -1257,7 +1327,7 @@ export async function fincaLotsView() {
           }, ['Guardar']),
         ]),
       ]);
-    }, { title: 'Editar código de bache' });
+    }, { title: 'Editar bache' });
   }
 
   // ---------- Delete bache ----------
