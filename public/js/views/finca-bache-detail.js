@@ -350,11 +350,10 @@ function renderHistory(lot, isLocked, reload) {
           ev.editable
             ? el('button', {
                 type: 'button',
-                class: 'text-[11px] text-ink-300 hover:text-navy',
-                style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
+                class: 'ctrm-btn ctrm-btn-primary ctrm-btn-xs',
                 title: 'Editar fecha',
                 onClick: () => editEventDate(ev, reload),
-              }, ['✎'])
+              }, ['Editar'])
             : null,
         ]),
         ev.detail
