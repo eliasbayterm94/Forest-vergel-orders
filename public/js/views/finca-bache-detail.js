@@ -64,6 +64,11 @@ export async function fincaBacheDetailView() {
     clear(root);
     const isLocked = lot.status === 'Delivered';
     const transitions = NEXT_TRANSITIONS[lot.status] || { primary: null, secondary: [] };
+    const heroColor = HERO_COLORS[lot.status] || HERO_COLORS.default;
+    const heroLabel = HERO_LABELS[lot.status] || statusLabel(lot.status).toUpperCase();
+    const varietyNames = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
+    const isDried = lot.kg_dried_output != null && lot.kg_dried_output > 0;
+    const isClosed = lot.status === 'Ready' || lot.status === 'Delivered';
 
     root.append(
       // ── Breadcrumb ──
@@ -76,31 +81,66 @@ export async function fincaBacheDetailView() {
         }, ['← Producción']),
       ]),
 
-      // ── Header con acciones ──
-      el('div', { class: 'ctrm-card ctrm-card-pad mb-4' }, [
-        el('div', { class: 'flex flex-wrap items-start justify-between gap-3 mb-2' }, [
+      // ── Hero banner: status grande + KPIs + título + acciones ──
+      el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+        // Fila superior: bloque de status + grid de KPIs.
+        el('div', { class: 'flex flex-col md:flex-row' }, [
+          // Status block (color por etapa, label grande).
+          el('div', {
+            class: 'flex flex-col items-center justify-center px-6 py-5 md:min-w-[180px]',
+            style: `background:${heroColor};color:#fff;`,
+          }, [
+            el('span', {
+              class: 'font-display uppercase tracking-eyebrow text-[10px] opacity-80 mb-1',
+              text: 'Estado',
+            }),
+            el('span', {
+              class: 'font-display font-bold uppercase tracking-eyebrow text-[20px] leading-tight',
+              text: heroLabel,
+            }),
+            ...(lot.status === 'Drying' && (lot.drying_locations || []).length > 0
+              ? [el('span', { class: 'text-[11px] font-mono opacity-90 mt-2',
+                  text: (lot.drying_locations || []).join(' · ') })]
+              : []),
+            ...(lot.status === 'Resting' && lot.resting_humidity != null
+              ? [el('span', { class: 'text-[11px] font-mono opacity-90 mt-2',
+                  text: `Humedad ${lot.resting_humidity}%` })]
+              : []),
+          ]),
+          // KPI grid.
+          el('div', {
+            class: 'flex-1 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 px-5 py-4',
+          }, [
+            heroKpi('Variedad', varietyNames, 'text-[12px]'),
+            heroKpi('Inicial', lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—',
+              null, stageLabel(lot.processing_stage)),
+            isDried
+              ? heroKpi('Café seco', fmtKg(lot.kg_dried_output), null,
+                  lot.factor_rendimiento != null ? `factor ${lot.factor_rendimiento}` : null)
+              : heroKpi('Café seco', '—', 'text-ink-300', null),
+            isClosed && lot.conversion_factor != null
+              ? heroKpi('Conversión', `${lot.conversion_factor}×`)
+              : isClosed && lot.kg_green_actual != null
+                ? heroKpi('Verde real', fmtKg(lot.kg_green_actual))
+                : heroKpi('Conversión', '—', 'text-ink-300'),
+          ]),
+        ]),
+        // Fila inferior: título + botones de acción.
+        el('div', { class: 'px-5 py-3 border-t border-sand bg-cream flex flex-wrap items-center justify-between gap-3' }, [
           el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
             el('span', { class: 'ctrm-code text-[13px]', text: lot.bache_code || lot.lot_code }),
             (lot.bache_code && lot.bache_code !== lot.lot_code)
               ? el('span', { class: 'text-[10px] text-ink-300 font-mono', text: lot.lot_code })
               : null,
             lot.reference_name
-              ? el('span', { class: 'font-display font-semibold text-navy text-[14px]', text: lot.reference_name })
+              ? el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: lot.reference_name })
               : el('span', { class: 'font-display italic text-ink-300 text-[13px]', text: 'Sin referencia' }),
-            el('span', { class: `ctrm-pill ${statusPillKind(lot.status)}`, text: statusLabel(lot.status) }),
-            ...(lot.status === 'Drying'
-              ? (lot.drying_locations || []).map((loc) =>
-                  el('span', { class: 'ctrm-pill text-[10px]',
-                    style: 'background:#dde7ee;color:#1a3a5c;', text: loc }))
-              : []),
-            lot.status === 'Resting' && lot.resting_humidity != null
-              ? el('span', { class: 'ctrm-pill', style: 'background:#fbe6c2;color:#8a5100;',
-                  text: `Humedad ${lot.resting_humidity}%` })
-              : null,
-            (lot.resting_cycles_count || 0) > 1
-              ? el('span', { class: 'ctrm-pill', style: 'background:#1a3a5c;color:#fff;',
-                  text: `Descansos: ${lot.resting_cycles_count}` })
-              : null,
+            el('span', { class: 'text-[11px] text-ink-500 font-mono' }, [
+              `${lot.process_type || '—'}`,
+              lot.client_name ? ` · ${lot.client_name}` : '',
+              (lot.resting_cycles_count || 0) > 1
+                ? ` · ${lot.resting_cycles_count} descansos` : '',
+            ]),
           ]),
           el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
             transitions.primary && !isLocked
@@ -125,10 +165,6 @@ export async function fincaBacheDetailView() {
               : null,
           ]),
         ]),
-        el('p', { class: 'text-[11px] text-ink-500 font-mono', text:
-          `${lot.process_type || '—'}` +
-          (lot.processing_stage ? ` · stage ${lot.processing_stage}` : '') +
-          (lot.client_name ? ` · ${lot.client_name}` : '') }),
       ]),
 
       // ── Datos del bache ──
@@ -153,7 +189,15 @@ export async function fincaBacheDetailView() {
         ]) : null,
       ]),
 
-      // ── Historial ──
+      // ── Evolución (stepper) ──
+      el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+        el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
+          el('p', { class: 'eyebrow text-[10px]', text: 'Evolución' }),
+        ]),
+        el('div', { class: 'p-4' }, [renderEvolution(lot)]),
+      ]),
+
+      // ── Historial detallado (editable) ──
       el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
         el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
           el('p', { class: 'eyebrow text-[10px]', text: 'Historial' }),
@@ -226,20 +270,52 @@ function metaField(label, value) {
   ]);
 }
 
+// Hero KPI block (label arriba, valor grande, opcional hint).
+function heroKpi(label, value, valueClass, hint) {
+  return el('div', { class: 'min-w-0' }, [
+    el('p', { class: 'text-[10px] uppercase tracking-eyebrow text-ink-500 mb-0.5 font-display font-semibold', text: label }),
+    el('p', { class: `font-display font-semibold text-navy text-[16px] leading-tight ${valueClass || ''}`,
+      text: String(value) }),
+    hint ? el('p', { class: 'text-[10px] text-ink-500 font-mono mt-0.5', text: hint }) : null,
+  ]);
+}
+
+// Colores y labels grandes del bloque de status en el hero. El status
+// pill chiquito sigue presente en el resto del sistema; aquí lo
+// elevamos a tipografía 20px sobre fondo de color.
+const HERO_COLORS = {
+  InFermentation: '#7e9ec1', // navy-soft
+  Drying:         '#ddae3e', // mustard
+  Resting:        '#a8b89c', // sage
+  Ready:          '#5d8b66', // forest
+  Delivered:      '#9aa3ae', // ink-300
+  default:        '#1a3a5c', // navy
+};
+const HERO_LABELS = {
+  InFermentation: 'Fermentación',
+  Drying:         'Secado',
+  Resting:        'Descanso',
+  Ready:          'Listo',
+  Delivered:      'Despachado',
+};
+
 // ── Historial ──────────────────────────────────────────────────────
 // Reconstruye los eventos desde los timestamps + ciclos de descanso.
 // Cada evento muestra fecha + título + detalle, y un botón ✎ para
 // editar SÓLO la fecha (lo demás se edita en sus respectivos flows).
-function renderHistory(lot, isLocked, reload) {
+// ── Construcción de eventos (compartida entre stepper y timeline) ──
+// Cada evento es { kind, date, title, detail, color, editable?, onEditDate? }.
+// kind se usa para colorear el bullet en el stepper.
+function buildEvents(lot, isLocked) {
   const events = [];
 
-  // 1. Inicio de fermentación (siempre presente).
   if (lot.start_date) {
     events.push({
       kind: 'start',
       date: lot.start_date,
       title: 'Fermentación iniciada',
       detail: `${stageLabel(lot.processing_stage)} · ${lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—'}`,
+      color: EVENT_COLOR.start,
       editable: !isLocked,
       onEditDate: async (newDate) => {
         await api.lotUpdate({ lot_id: lot.id, fields: { start_date: newDate } });
@@ -247,7 +323,6 @@ function renderHistory(lot, isLocked, reload) {
     });
   }
 
-  // 2. Entrada a Secado.
   if (lot.drying_start_date) {
     events.push({
       kind: 'drying',
@@ -256,6 +331,7 @@ function renderHistory(lot, isLocked, reload) {
       detail: (lot.drying_locations || []).length > 0
         ? `Marquesinas: ${(lot.drying_locations || []).join(' · ')}`
         : 'Sin marquesinas registradas',
+      color: EVENT_COLOR.drying,
       editable: !isLocked,
       onEditDate: async (newDate) => {
         await api.lotUpdate({ lot_id: lot.id, fields: { drying_start_date: newDate } });
@@ -263,7 +339,6 @@ function renderHistory(lot, isLocked, reload) {
     });
   }
 
-  // 3. Ciclos de descanso (entrada + salida cuando existe).
   const cycles = (lot.resting_cycles || []).slice().sort((a, b) => a.cycle_number - b.cycle_number);
   for (const c of cycles) {
     events.push({
@@ -271,6 +346,7 @@ function renderHistory(lot, isLocked, reload) {
       date: c.start_date,
       title: `→ Descanso · ciclo ${c.cycle_number}`,
       detail: `Humedad entrada: ${c.start_humidity}%${maxDaysHint(c.start_humidity)}`,
+      color: EVENT_COLOR.resting,
       editable: !isLocked,
       onEditDate: async (newDate) => {
         await api.lotRestingCycleUpdate({ cycle_id: c.id, fields: { start_date: newDate } });
@@ -279,10 +355,11 @@ function renderHistory(lot, isLocked, reload) {
     if (c.end_date) {
       const action = c.end_reason === 'back_to_drying' ? '← Volver a Secado' : '→ Listo';
       events.push({
-        kind: 'resting-out',
+        kind: c.end_reason === 'back_to_drying' ? 'drying' : 'ready',
         date: c.end_date,
         title: action,
         detail: `Humedad salida: ${c.end_humidity != null ? c.end_humidity + '%' : '—'}`,
+        color: c.end_reason === 'back_to_drying' ? EVENT_COLOR.drying : EVENT_COLOR.ready,
         editable: !isLocked,
         onEditDate: async (newDate) => {
           await api.lotRestingCycleUpdate({ cycle_id: c.id, fields: { end_date: newDate } });
@@ -291,9 +368,6 @@ function renderHistory(lot, isLocked, reload) {
     }
   }
 
-  // 4. Ready (cuando la transición no pasó por descanso, agregamos un
-  // evento explícito; si pasó por descanso, ya se cubrió arriba con el
-  // ciclo cerrado con end_reason='to_ready').
   const lastCycle = cycles[cycles.length - 1];
   const readyFromResting = lastCycle && lastCycle.end_reason === 'to_ready' && lastCycle.end_date === lot.ready_date;
   if (lot.ready_date && !readyFromResting) {
@@ -306,13 +380,13 @@ function renderHistory(lot, isLocked, reload) {
         lot.factor_rendimiento != null ? `Factor ${lot.factor_rendimiento}` : null,
         lot.kg_green_actual != null ? `Verde ${fmtKg(lot.kg_green_actual)}` : null,
       ].filter(Boolean).join(' · '),
+      color: EVENT_COLOR.ready,
       editable: !isLocked,
       onEditDate: async (newDate) => {
         await api.lotUpdate({ lot_id: lot.id, fields: { ready_date: newDate } });
       },
     });
   } else if (lot.ready_date && readyFromResting) {
-    // Enriquecer el último evento (Ready desde descanso) con kg/factor.
     const ev = events[events.length - 1];
     const yieldDetail = [
       lot.kg_dried_output != null ? `Seco ${fmtKg(lot.kg_dried_output)}` : null,
@@ -322,23 +396,111 @@ function renderHistory(lot, isLocked, reload) {
     if (yieldDetail) ev.detail = `${ev.detail}\n${yieldDetail}`;
   }
 
-  // 5. Delivered.
   if (lot.delivered_date) {
     events.push({
       kind: 'delivered',
       date: lot.delivered_date,
       title: '→ Despachado',
       detail: '',
+      color: EVENT_COLOR.delivered,
       editable: false,
     });
   }
 
-  // Render: timeline vertical con bullets + línea.
+  return events;
+}
+
+const EVENT_COLOR = {
+  start:     '#7e9ec1', // navy-soft
+  drying:    '#ddae3e', // mustard
+  resting:   '#a8b89c', // sage
+  ready:     '#5d8b66', // forest
+  delivered: '#9aa3ae', // ink-300
+};
+
+// ── Stepper horizontal — resumen visual del historial ──
+function renderEvolution(lot) {
+  const events = buildEvents(lot, true);
+  if (events.length === 0) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin eventos registrados.' });
+  }
+  if (events.length === 1) {
+    // Único bullet centrado.
+    return el('div', { class: 'flex justify-center py-2' }, [stepperBullet(events[0])]);
+  }
+
+  // Calcular días entre cada par de eventos.
+  const segments = [];
+  for (let i = 0; i < events.length - 1; i++) {
+    segments.push({ days: daysBetween(events[i].date, events[i + 1].date) });
+  }
+  const totalDays = segments.reduce((s, x) => s + x.days, 0);
+
+  const children = [];
+  for (let i = 0; i < events.length; i++) {
+    children.push(stepperBullet(events[i]));
+    if (i < events.length - 1) {
+      // flex-grow proporcional a los días; mínimo 1 para tramos de 0d.
+      const seg = segments[i];
+      const grow = Math.max(1, seg.days || 1);
+      children.push(stepperSegment(seg, grow, events[i].color));
+    }
+  }
+  return el('div', { class: 'space-y-3' }, [
+    el('div', { class: 'flex items-stretch overflow-x-auto', style: 'min-height:96px;' }, children),
+    el('div', { class: 'flex items-center justify-end gap-3 text-[11px] font-mono text-ink-500' }, [
+      el('span', {}, [
+        el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] mr-1', text: 'Total' }),
+        el('strong', { class: 'text-navy', text: `${totalDays}d` }),
+      ]),
+    ]),
+  ]);
+}
+
+function stepperBullet(ev) {
+  return el('div', { class: 'flex flex-col items-center text-center shrink-0', style: 'min-width:110px;' }, [
+    el('span', { class: 'font-mono text-[10px] text-ink-500', text: fmtDate(ev.date) }),
+    el('span', {
+      class: 'inline-block w-4 h-4 rounded-full border-2 border-white my-1',
+      style: `background:${ev.color};box-shadow:0 0 0 2px ${ev.color};`,
+    }),
+    el('span', { class: 'font-display text-[11px] text-navy font-semibold leading-tight whitespace-nowrap', text: ev.title }),
+    ev.detail
+      ? el('span', { class: 'text-[10px] text-ink-500 font-mono leading-tight mt-0.5 max-w-[140px]',
+          style: 'white-space:normal;', text: ev.detail.split('\n')[0] })
+      : null,
+  ]);
+}
+
+function stepperSegment(seg, grow, color) {
+  return el('div', {
+    class: 'flex flex-col items-center justify-start pt-[18px]',
+    style: `flex:${grow} 1 0;min-width:32px;`,
+  }, [
+    el('span', { class: 'font-display text-[10px] uppercase tracking-eyebrow text-ink-500 mb-1',
+      text: `${seg.days}d` }),
+    el('span', {
+      class: 'block w-full h-[3px] rounded-full',
+      style: `background:${color};opacity:0.5;`,
+    }),
+  ]);
+}
+
+function daysBetween(fromIso, toIso) {
+  if (!fromIso || !toIso) return 0;
+  const a = new Date(fromIso + 'T00:00:00Z');
+  const b = new Date(toIso   + 'T00:00:00Z');
+  return Math.max(0, Math.floor((b - a) / 86400000));
+}
+
+function renderHistory(lot, isLocked, reload) {
+  const events = buildEvents(lot, isLocked);
   return el('div', { class: 'space-y-3' }, events.map((ev, i) => {
     const isLast = i === events.length - 1;
     return el('div', { class: 'flex gap-3' }, [
       el('div', { class: 'flex flex-col items-center pt-1 shrink-0' }, [
-        el('span', { class: 'inline-block w-2 h-2 rounded-full bg-navy' }),
+        el('span', { class: 'inline-block w-2 h-2 rounded-full',
+          style: `background:${ev.color};` }),
         !isLast ? el('span', { class: 'flex-1 w-px bg-sand mt-1', style: 'min-height:24px;' }) : null,
       ]),
       el('div', { class: 'flex-1 min-w-0 pb-2' }, [
