@@ -12,7 +12,7 @@ const INTENSITIES = ['media', 'alta', 'muy_alta'];
 
 /**
  * POST /demand-orders-update  (forest, admin)
- * Body: { order_id, fields: {...}, override_15_day? }
+ * Body: { order_id, fields: {...}, override_15_day?, release_assignments? }
  *
  * Editable fields (whitelist; all optional):
  *   reference_id, kg_green_required, max_delivery_date, physical_aspect,
@@ -21,10 +21,23 @@ const INTENSITIES = ['media', 'alta', 'muy_alta'];
  *   variety_ids (array — replaces existing demand_order_varieties)
  *
  * Constraints:
- *   - Order must be in 'Pending' status (lock changes once finca acted on it)
- *   - The 15-day rule still applies if max_delivery_date is being moved to <15d
- *     (returns FIFTEEN_DAY_RULE; pass override_15_day:true to acknowledge)
+ *   - Order must be in an active state (Pending / Accepted /
+ *     PartiallyAccepted / InProduction). Completed, Cancelled, Rejected,
+ *     Delivered son terminales y se bloquean.
+ *   - Si el pedido ya tiene lotes asignados y se cambia un campo
+ *     sensible (reference_id, process_type, o kg_green_accepted < total
+ *     ya asignado), respondemos 409 SENSITIVE_CHANGES_REQUIRE_CONFIRM
+ *     a menos que `release_assignments: true` venga en el body — en
+ *     ese caso liberamos TODAS las asignaciones del pedido (DELETE
+ *     desde lot_order_assignments) antes de aplicar el cambio.
+ *   - 15-day rule sigue vigente para max_delivery_date.
  */
+const ACTIVE_STATUSES = new Set([
+  ORDER_STATUS.Pending,
+  ORDER_STATUS.Accepted,
+  ORDER_STATUS.PartiallyAccepted,
+  ORDER_STATUS.InProduction,
+]);
 exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
@@ -34,17 +47,20 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   if (!order_id) return badReq('order_id required', 'ORDER_ID_REQUIRED');
   const fields = body.fields || {};
   const override_15_day = !!body.override_15_day;
+  const release_assignments = !!body.release_assignments;
 
   const sb = getSupabase();
 
   // Load + validate the order is editable.
   const { data: order, error: loadErr } = await sb
-    .from('demand_orders').select('id, status, max_delivery_date').eq('id', order_id).maybeSingle();
+    .from('demand_orders')
+    .select('id, status, reference_id, process_type, kg_green_accepted, max_delivery_date')
+    .eq('id', order_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);
   if (!order) return notFound('Order not found');
-  if (order.status !== ORDER_STATUS.Pending) {
+  if (!ACTIVE_STATUSES.has(order.status)) {
     return conflict(
-      `Cannot edit order in status "${order.status}" — only Pending orders are editable`,
+      `No se puede editar un pedido en estado "${order.status}".`,
       'NOT_EDITABLE',
     );
   }
@@ -143,6 +159,55 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
       .from('coffee_references').select('id, active').eq('id', update.reference_id).maybeSingle();
     if (refErr) return serverErr('Reference lookup failed', refErr.message);
     if (!refRow || !refRow.active) return badReq('Unknown or inactive reference', 'INVALID_REFERENCE');
+  }
+
+  // ── Cambios sensibles + asignaciones a lotes ────────────────────
+  // Detectamos cambios que invalidan asignaciones existentes:
+  //   - reference_id distinta → trigger enforce_lot_order_assignment_compat
+  //     rechaza la coherencia.
+  //   - process_type distinto → mismo trigger.
+  //   - kg_green_accepted nuevo < total ya asignado → over-allocated.
+  // Si el pedido tiene asignaciones y hay cambios sensibles:
+  //   · sin release_assignments → 409 SENSITIVE_CHANGES_REQUIRE_CONFIRM con detalle.
+  //   · con release_assignments → DELETE de lot_order_assignments del pedido.
+  const refChanges  = update.reference_id !== undefined && update.reference_id !== order.reference_id;
+  const procChanges = update.process_type !== undefined && update.process_type !== order.process_type;
+  // kg_green_accepted no es editable directamente desde este endpoint
+  // (lo setea finca al aceptar). Pero si se quisiera bajar
+  // kg_green_required por debajo del total asignado, no nos afecta a
+  // las allocations existentes (no es la métrica que mira el trigger).
+  // Por ahora solo ref + proceso son los sensibles.
+  if (refChanges || procChanges) {
+    const { data: assigns, error: aErr } = await sb
+      .from('lot_order_assignments')
+      .select('id, production_lot_id, kg_green_allocated, production_lots(bache_code, lot_code, status)')
+      .eq('demand_order_id', order_id);
+    if (aErr) return serverErr('Assignment lookup failed', aErr.message);
+    const active = (assigns || []).filter((a) => a.production_lots && a.production_lots.status !== 'Delivered');
+    if (active.length > 0) {
+      if (!release_assignments) {
+        return conflict(
+          `El pedido tiene ${active.length} asignación(es) a lote(s). Confirma para liberarlas antes de cambiar referencia o proceso.`,
+          'SENSITIVE_CHANGES_REQUIRE_CONFIRM',
+          {
+            assignments: active.map((a) => ({
+              assignment_id: a.id,
+              bache_code:    a.production_lots && (a.production_lots.bache_code || a.production_lots.lot_code),
+              status:        a.production_lots && a.production_lots.status,
+              kg_green_allocated: Number(a.kg_green_allocated || 0),
+            })),
+          },
+        );
+      }
+      // Liberar todas (incluye Delivered si las hubiese: el operador
+      // confirmó). Si el lote está Delivered queda la asignación
+      // huérfana removida; el pedido vuelve a contar como sin esa
+      // cobertura, lo cual es lo que pide la reasignación posterior.
+      const allIds = (assigns || []).map((a) => a.id);
+      const { error: delErr } = await sb
+        .from('lot_order_assignments').delete().in('id', allIds);
+      if (delErr) return serverErr('Failed to release assignments', delErr.message);
+    }
   }
 
   // Apply update

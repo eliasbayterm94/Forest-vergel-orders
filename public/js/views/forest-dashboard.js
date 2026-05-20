@@ -124,8 +124,11 @@ export async function forestDashboardView() {
     .filter((o) => !['Completed', 'Cancelled', 'Rejected'].includes(o.status))
     .filter((o) => o.delivery_urgency === 'red' || o.delivery_urgency === 'past' || o.drying_urgency === 'red' || o.drying_urgency === 'past');
 
-  // Renderer factory: pending rows get Editar/Cancelar actions; others don't.
-  const actionsFor = (o) => o.status === 'Pending' ? [
+  // Renderer factory: editar / cancelar disponibles para pedidos en
+  // estados activos (Pending, Accepted, PartiallyAccepted, InProduction).
+  // Completed, Cancelled, Rejected son terminales y no se tocan.
+  const EDITABLE_STATES = new Set(['Pending', 'Accepted', 'PartiallyAccepted', 'InProduction']);
+  const actionsFor = (o) => EDITABLE_STATES.has(o.status) ? [
     { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
     { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
   ] : null;
@@ -325,15 +328,16 @@ export async function forestDashboardView() {
   async function openEditOrder(order) {
     const result = await openOrderEditModal(order, allReferences, allVarieties);
     if (!result) return;
-    await trySaveEdit(order, result, false);
+    await trySaveEdit(order, result, {});
   }
 
-  async function trySaveEdit(order, payload, override) {
+  async function trySaveEdit(order, payload, opts = {}) {
     try {
       await api.orderUpdate({
         order_id: order.id,
         fields: payload.fields,
-        override_15_day: override,
+        override_15_day:     !!opts.override15Day,
+        release_assignments: !!opts.releaseAssignments,
       });
       toast(`Pedido ${order.order_code} actualizado`, 'success');
       // Trigger a re-fetch by re-navigating to the same route.
@@ -346,7 +350,16 @@ export async function forestDashboardView() {
           `La fecha de entrega es en ${days} día(s) (menos de 15). ¿Ya se confirmó con la planta de producción?`,
           { title: '⚠️ Plazo corto', confirmText: 'Confirmado, guardar', danger: true },
         );
-        if (ok) await trySaveEdit(order, payload, true);
+        if (ok) await trySaveEdit(order, payload, { ...opts, override15Day: true });
+      } else if (e.code === 'SENSITIVE_CHANGES_REQUIRE_CONFIRM') {
+        const lots = (e.detail?.assignments || [])
+          .map((a) => `• ${a.bache_code} (${a.status}) · ${a.kg_green_allocated} kg`)
+          .join('\n');
+        const ok = await confirmModal(
+          `Este pedido tiene asignaciones a lotes activos. Si cambias la referencia o el proceso, esas asignaciones quedarán incompatibles y se liberarán:\n\n${lots}\n\n¿Continuar?`,
+          { title: 'Liberar asignaciones', confirmText: 'Liberar y guardar', danger: true },
+        );
+        if (ok) await trySaveEdit(order, payload, { ...opts, releaseAssignments: true });
       } else {
         toast(e.message || 'Error al actualizar pedido', 'error');
       }
@@ -360,7 +373,19 @@ export async function forestDashboardView() {
       await api.orderCancel({ order_id: order.id, reason: result.reason || null });
       toast(`Pedido ${order.order_code} cancelado`, 'success');
       window.dispatchEvent(new HashChangeEvent('hashchange'));
-    } catch (e) { toast(e.message || 'Error al cancelar', 'error'); }
+    } catch (e) {
+      if (e.code === 'HAS_LOT_ASSIGNMENTS') {
+        const lots = (e.detail?.assignments || [])
+          .map((a) => `• ${a.bache_code} (${a.status}) · ${a.kg_green_allocated} kg`)
+          .join('\n');
+        toast(
+          `No se pudo cancelar: el pedido tiene asignaciones a lotes activos. Quítalas primero desde Producción:\n${lots}`,
+          'error', 8000,
+        );
+      } else {
+        toast(e.message || 'Error al cancelar', 'error');
+      }
+    }
   }
 
   return view;

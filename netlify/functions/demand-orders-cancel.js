@@ -9,11 +9,23 @@ const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson }
  * POST /demand-orders-cancel  (forest, admin)
  * Body: { order_id, reason? }
  *
- * Cancels a Pending order. To cancel orders already accepted by finca
- * (Accepted/PartiallyAccepted/InProduction) the operator must coordinate
- * out-of-band — that's not in MVP scope. The status trigger blocks
- * unsafe transitions anyway.
+ * Cancela un pedido (soft delete: status = Cancelled). Aplica a
+ * estados activos (Pending, Accepted, PartiallyAccepted, InProduction).
+ * El trigger en BD permite estas transiciones.
+ *
+ * Si el pedido tiene asignaciones a lotes que aún no se despacharon
+ * (status != Delivered), devolvemos 409 HAS_LOT_ASSIGNMENTS con el
+ * detalle: el operador debe liberar esas asignaciones desde
+ * Producción antes de cancelar (evitamos huérfanos en producción que
+ * apuntan a un pedido cancelado).
  */
+const ACTIVE_STATUSES = new Set([
+  ORDER_STATUS.Pending,
+  ORDER_STATUS.Accepted,
+  ORDER_STATUS.PartiallyAccepted,
+  ORDER_STATUS.InProduction,
+]);
+
 exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
@@ -28,10 +40,32 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
     .from('demand_orders').select('id, status, comments').eq('id', order_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);
   if (!order) return notFound('Order not found');
-  if (order.status !== ORDER_STATUS.Pending) {
+  if (!ACTIVE_STATUSES.has(order.status)) {
     return conflict(
-      `Cannot cancel order in status "${order.status}" — only Pending orders can be cancelled from Forest.`,
+      `No se puede cancelar un pedido en estado "${order.status}".`,
       'NOT_CANCELLABLE',
+    );
+  }
+
+  // Asignaciones a lotes no-Delivered bloquean la cancelación.
+  const { data: assigns, error: aErr } = await sb
+    .from('lot_order_assignments')
+    .select('id, kg_green_allocated, production_lots(bache_code, lot_code, status)')
+    .eq('demand_order_id', order_id);
+  if (aErr) return serverErr('Assignment lookup failed', aErr.message);
+  const active = (assigns || []).filter((a) => a.production_lots && a.production_lots.status !== 'Delivered');
+  if (active.length > 0) {
+    return conflict(
+      `El pedido tiene ${active.length} asignación(es) a lote(s) activo(s). Quita las asignaciones desde Producción antes de cancelar.`,
+      'HAS_LOT_ASSIGNMENTS',
+      {
+        assignments: active.map((a) => ({
+          assignment_id: a.id,
+          bache_code:    a.production_lots && (a.production_lots.bache_code || a.production_lots.lot_code),
+          status:        a.production_lots && a.production_lots.status,
+          kg_green_allocated: Number(a.kg_green_allocated || 0),
+        })),
+      },
     );
   }
 
