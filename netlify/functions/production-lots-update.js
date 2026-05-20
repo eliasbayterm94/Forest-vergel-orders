@@ -9,7 +9,8 @@ const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson }
  * Body: { lot_id, fields }
  * Updatable fields (whitelist):
  *   bache_code, start_date, kg_input_initial, notes,
- *   fermentation_hours, drying_start_date, ready_date, delivered_date,
+ *   process_type, fermentation_hours,
+ *   drying_start_date, ready_date, delivered_date,
  *   kg_dried_output, factor_rendimiento, kg_green_actual,
  *   infusion_id, infusion_pct
  *
@@ -20,10 +21,12 @@ const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson }
  */
 const ALLOWED = new Set([
   'bache_code', 'start_date', 'kg_input_initial', 'notes',
-  'fermentation_hours', 'drying_start_date', 'ready_date', 'delivered_date',
+  'process_type', 'fermentation_hours',
+  'drying_start_date', 'ready_date', 'delivered_date',
   'kg_dried_output', 'factor_rendimiento', 'kg_green_actual',
   'infusion_id', 'infusion_pct',
 ]);
+const PROCESS_TYPES = new Set(['Natural', 'Honey', 'Lavado']);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -55,6 +58,14 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     const n = Number(update.kg_input_initial);
     if (!Number.isFinite(n) || n <= 0) return badReq('kg_input_initial must be > 0', 'INVALID_KG');
     update.kg_input_initial = n;
+  }
+  if (update.process_type != null && !PROCESS_TYPES.has(update.process_type)) {
+    return badReq('process_type inválido', 'INVALID_PROCESS');
+  }
+  if (update.fermentation_hours != null) {
+    const n = Number(update.fermentation_hours);
+    if (!Number.isFinite(n) || n < 0) return badReq('fermentation_hours must be >= 0', 'INVALID_HOURS');
+    update.fermentation_hours = n;
   }
   if (varietyIds !== null && varietyIds.length === 0) {
     return badReq('Al menos una variedad es requerida', 'VARIETIES_REQUIRED');

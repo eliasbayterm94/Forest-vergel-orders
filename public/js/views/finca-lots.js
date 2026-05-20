@@ -14,6 +14,7 @@ import { withBusy } from '../ui/busy.js';
 import {
   NEXT_TRANSITIONS, INPUT_STAGE_DIVISORS, KG_PER_SACO,
   advanceStatus as advanceStatusShared,
+  editBacheModal,
 } from './_bache-actions.js';
 
 const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
@@ -935,107 +936,13 @@ export async function fincaLotsView() {
   }
 
   // ---------- Edit bache ----------
-  // Edita los campos básicos del bache: código, kg inicial, fecha de
-  // inicio, variedades y observaciones. Bloqueado para baches ya
-  // despachados (status === 'Delivered').
-  function editBacheCode(lot) {
-    if (lot.status === 'Delivered') {
-      toast('No se puede editar un bache ya despachado.', 'warning', 5000);
-      return;
+  // Delegamos al modal compartido en _bache-actions.js. Tras guardar,
+  // recargamos la lista.
+  async function editBacheCode(lot) {
+    const r = await editBacheModal(lot);
+    if (r && r.ok) {
+      reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
     }
-    return openModal(({ close }) => {
-      const codeInput = el('input', {
-        type: 'text', value: lot.bache_code || '',
-        class: 'ctrm-input mono uppercase',
-        maxlength: '60',
-      });
-      const dateInput = el('input', {
-        type: 'date', value: lot.start_date || '',
-        class: 'ctrm-input',
-      });
-      const stageLabel = lot.processing_stage === 'cereza'     ? 'Cereza fresca'
-                      :  lot.processing_stage === 'despulpado' ? 'Despulpado'
-                      :  lot.processing_stage === 'seco'       ? 'Café seco' : 'kg inicial';
-      const kgInput = el('input', {
-        type: 'number', min: '0', step: '0.01',
-        value: lot.kg_input_initial != null ? String(lot.kg_input_initial) : '',
-        class: 'ctrm-input mono',
-      });
-      const initialVarieties = (lot.varieties || []).map((v) => ({ id: v.id, name: v.name }));
-      const vCombo = createMultiCombobox({
-        placeholder: 'Variedades...',
-        items: allVarieties,
-        values: initialVarieties,
-        onCreate: async (text) => {
-          try {
-            const r = await api.varietyAdd(text);
-            toast(`Variedad creada: ${r.variety.name}`, 'success');
-            return r.variety;
-          } catch (e) { toast(e.message, 'error'); return null; }
-        },
-        createLabel: '+ Crear variedad',
-      });
-      const notesInput = el('textarea', {
-        rows: '3',
-        class: 'ctrm-textarea',
-      });
-      notesInput.value = lot.notes || '';
-
-      return el('div', { class: 'space-y-3' }, [
-        el('p', { class: 'text-[12px] text-ink-500' }, [
-          `Lote interno: `, el('strong', { class: 'font-mono text-ink-700', text: lot.lot_code }),
-          ' · ', el('strong', { text: lot.process_type || '—' }),
-          lot.processing_stage ? ` · stage ${lot.processing_stage}` : '',
-        ]),
-        labelled('Código de bache', codeInput),
-        labelled('Fecha de inicio', dateInput),
-        labelled(`${stageLabel} (kg)`, kgInput),
-        el('div', {}, [
-          el('label', { class: 'ctrm-label' }, [
-            'Variedades ',
-            el('span', { class: 'ctrm-req', text: '*' }),
-          ]),
-          vCombo.el,
-        ]),
-        labelled('Observaciones', notesInput),
-        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
-          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
-          el('button', {
-            class: 'ctrm-btn ctrm-btn-primary',
-            type: 'button',
-            onClick: async (e) => {
-              const btn = e.currentTarget;
-              const code = codeInput.value.trim();
-              const startDate = dateInput.value || null;
-              const kg = kgInput.value === '' ? null : Number(kgInput.value);
-              const varietyIds = vCombo.getValues().map((v) => v.id);
-              const notesVal = notesInput.value.trim();
-              if (!code) { toast('Código requerido', 'warning'); return; }
-              if (!startDate) { toast('Fecha de inicio requerida', 'warning'); return; }
-              if (kg == null || !(kg > 0)) { toast('Kg inicial debe ser > 0', 'warning'); return; }
-              if (varietyIds.length === 0) { toast('Al menos una variedad', 'warning'); return; }
-
-              const fields = {
-                bache_code: code,
-                start_date: startDate,
-                kg_input_initial: kg,
-                notes: notesVal || null,
-              };
-              try {
-                await withBusy(btn, 'Guardando…', () =>
-                  api.lotUpdate({ lot_id: lot.id, fields, variety_ids: varietyIds }));
-                toast(`Bache ${code} actualizado`, 'success');
-                close({ ok: true });
-                reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
-              } catch (err) {
-                console.error('lotUpdate failed', err);
-                toast(err.message || 'Error al guardar', 'error', 6000);
-              }
-            },
-          }, ['Guardar']),
-        ]),
-      ]);
-    }, { title: 'Editar bache' });
   }
 
   // ---------- Delete bache ----------

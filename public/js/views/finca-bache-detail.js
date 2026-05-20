@@ -12,7 +12,11 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { currentQuery, navigate } from '../router.js';
 import { withBusy } from '../ui/busy.js';
-import { NEXT_TRANSITIONS, advanceStatus as advanceStatusShared } from './_bache-actions.js';
+import {
+  NEXT_TRANSITIONS,
+  advanceStatus as advanceStatusShared,
+  editBacheModal,
+} from './_bache-actions.js';
 
 export async function fincaBacheDetailView() {
   const id = currentQuery().get('id');
@@ -143,6 +147,16 @@ export async function fincaBacheDetailView() {
             ]),
           ]),
           el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+            !isLocked
+              ? el('button', {
+                  class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+                  type: 'button',
+                  onClick: async () => {
+                    const r = await editBacheModal(lot);
+                    if (r && r.ok) await reload();
+                  },
+                }, ['Editar bache'])
+              : null,
             transitions.primary && !isLocked
               ? el('button', {
                   class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm',
