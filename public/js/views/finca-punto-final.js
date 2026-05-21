@@ -156,44 +156,36 @@ export async function fincaPuntoFinalView() {
     root.append(
       pageTitle('Punto Final', `Lotes en bodega · ${shown.length} de ${enriched.length}`, cta),
 
-      // KPI cards
+      // KPI cards — el kg que muestra el hero es SECO (bodega física).
       el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3' }, [
         kpiCard('Lotes',   String(shown.length),   'En bodega'),
         kpiCard('Pedidos', String(uniqueOrders.size), 'Únicos asignados'),
-        kpiCard('Verde',   fmtKg(totalKg),         'Total kg verde'),
+        kpiCard('Seco',    fmtKg(totalSeco),       'Total kg seco'),
         kpiCard('0–10 d',  String(b_0_10),  'Recientes', 'ok'),
         kpiCard('11–20 d', String(b_11_20), 'Atención',  b_11_20 > 0 ? 'warn' : null),
         kpiCard('>20 d',   String(b_21),    'Críticos',  b_21 > 0 ? 'crit' : null),
       ]),
 
-      // Resumen compacto por proceso: una sola card horizontal con tres
-      // bloques (Natural / Honey / Lavado) mostrando kg seco · kg verde.
-      el('div', { class: 'ctrm-card ctrm-card-pad mb-4' }, [
-        el('div', { class: 'flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]' }, [
-          el('span', { class: 'eyebrow text-[10px] text-ink-500 mr-2', text: 'Por proceso' }),
-          ...['Natural', 'Honey', 'Lavado'].map((p) => {
-            const v = byProcess[p];
-            return el('div', { class: 'flex items-baseline gap-2 font-mono' }, [
-              el('span', { class: 'text-[11px] text-ink-700 font-display font-semibold uppercase tracking-eyebrow', text: p }),
-              el('span', { class: 'text-ink-700' }, [
-                el('strong', { text: fmtKg(v.seco) }),
-                el('span', { class: 'text-ink-300', text: ' seco' }),
-              ]),
-              el('span', { class: 'text-ink-300', text: '·' }),
-              el('span', { class: 'text-ink-700' }, [
-                el('strong', { text: fmtKg(v.verde) }),
-                el('span', { class: 'text-ink-300', text: ' verde' }),
-              ]),
-            ]);
-          }),
-          el('div', { class: 'ml-auto flex items-baseline gap-2 font-mono text-navy' }, [
-            el('span', { class: 'text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Total' }),
-            el('strong', { text: fmtKg(totalSeco) }),
-            el('span', { class: 'text-ink-300', text: 'seco ·' }),
-            el('strong', { text: fmtKg(totalKg) }),
-            el('span', { class: 'text-ink-300', text: 'verde' }),
-          ]),
-        ]),
+      // Hero por proceso: kg seco grande (lo que está físicamente en
+      // bodega) y kg verde esperado como subtítulo. Tres tiles más
+      // visuales que la fila compacta anterior.
+      el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4' }, [
+        ...['Natural', 'Honey', 'Lavado'].map((p) => {
+          const v = byProcess[p];
+          const color = p === 'Natural' ? '#3a6f4a'
+                      : p === 'Honey'   ? '#ddae3e'
+                      :                    '#7e9ec1';
+          return el('div', { class: 'ctrm-card ctrm-card-pad relative' }, [
+            el('div', { class: 'absolute top-0 left-0 right-0 h-1', style: `background:${color};` }),
+            el('p', { class: 'eyebrow text-[10px] text-ink-500 mt-1', text: p }),
+            el('p', { class: 'font-display text-[22px] font-semibold text-navy mt-0.5' }, [
+              fmtKg(v.seco),
+              el('span', { class: 'text-[12px] text-ink-500 font-mono ml-1', text: 'kg seco' }),
+            ]),
+            el('p', { class: 'text-[11px] font-mono text-ink-500 mt-0.5',
+              text: `${fmtKg(v.verde)} kg verde esperado` }),
+          ]);
+        }),
       ]),
 
       // Filtros + fechas

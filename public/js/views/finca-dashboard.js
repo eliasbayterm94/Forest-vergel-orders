@@ -76,22 +76,42 @@ export async function fincaDashboardView() {
   shipments.forEach((s) => (s.lots || []).forEach((l) => shippedLotIds.add(l.id)));
   const readyUnshipped = lots.filter((l) => l.status === 'Ready' && !shippedLotIds.has(l.id));
 
-  // 3) kg verde despachado este mes (current calendar month, Bogota).
+  // 3) kg SECO despachado este mes — prorratea por bache:
+  //    kg_dried_output × (kg_green_in_shipment / kg_green_actual).
+  //    Para baches despachados completos da kg_dried_output directo.
   const mesKey = today.slice(0, 7);
-  const verdeDespachadoMes = shipments
+  const secoDespachadoMes = shipments
     .filter((s) => (s.shipment_date || '').slice(0, 7) === mesKey)
-    .reduce((s, x) => s + Number(x.totals?.kg_green || 0), 0);
+    .reduce((sum, ship) => {
+      let total = 0;
+      for (const lot of (ship.lots || [])) {
+        const dried   = Number(lot.kg_dried_output || 0);
+        const greenIn = Number(lot.kg_green_in_shipment || 0);
+        const greenAc = Number(lot.kg_green_actual || lot.kg_green_expected || 0);
+        if (dried > 0 && greenAc > 0) total += dried * (greenIn / greenAc);
+        else total += greenIn; // fallback si falta el seco
+      }
+      return sum + total;
+    }, 0);
 
-  // 4) Factor promedio de los últimos 30 días.
+  // 4) Factor promedio de los últimos 30 días, agrupado por proceso.
+  //    El promedio agregado mezcla procesos con factores muy distintos
+  //    (Natural ~3.4, Lavado ~1.34) y no da un número de valor.
   const thirtyDaysAgo = isoDateNDaysAgo(today, 30);
   const recentDelivered = lots.filter((l) =>
     l.status === 'Delivered'
     && (l.delivered_date || '') >= thirtyDaysAgo
     && l.factor_rendimiento != null
   );
-  const factorPromedio = recentDelivered.length > 0
-    ? recentDelivered.reduce((s, l) => s + Number(l.factor_rendimiento || 0), 0) / recentDelivered.length
-    : null;
+  const factorByProcess = { Natural: { sum: 0, n: 0 }, Honey: { sum: 0, n: 0 }, Lavado: { sum: 0, n: 0 } };
+  for (const l of recentDelivered) {
+    const p = l.process_type;
+    if (!factorByProcess[p]) continue;
+    factorByProcess[p].sum += Number(l.factor_rendimiento || 0);
+    factorByProcess[p].n += 1;
+  }
+  const factorAvg = (p) => factorByProcess[p].n > 0
+    ? (factorByProcess[p].sum / factorByProcess[p].n).toFixed(2) : null;
 
   return chrome(el('div', {}, [
     pageTitle('Tablero El Vergel', `Hoy: ${today}`),
@@ -108,8 +128,8 @@ export async function fincaDashboardView() {
     statRow([
       stat('Cereza por procesar', fmtKg(kgCherryPending), `${fmtKg(kgGreenPending)} verde sin asignar`, null, { kind: kgCherryPending > 0 ? 'warn' : 'ok' }),
       stat('Listos sin despachar', readyUnshipped.length, readyUnshipped.length > 0 ? 'Crear despacho' : 'Al día', () => navigate('/finca/despachos'), { kind: readyUnshipped.length > 0 ? 'warn' : 'ok' }),
-      stat('Despachado este mes',  fmtKg(verdeDespachadoMes), `${shipments.filter((s) => (s.shipment_date||'').slice(0,7) === mesKey).length} despacho(s)`, () => navigate('/finca/despachos')),
-      stat('Factor promedio (30d)', factorPromedio != null ? factorPromedio.toFixed(2) : '—', `${recentDelivered.length} lote(s) recientes`, null),
+      stat('Despachado este mes',  `${fmtKg(secoDespachadoMes)} seco`, `${shipments.filter((s) => (s.shipment_date||'').slice(0,7) === mesKey).length} despacho(s)`, () => navigate('/finca/despachos')),
+      factorByProcessCard(factorByProcess, recentDelivered.length),
     ]),
 
     section('Urgencias',
@@ -136,6 +156,27 @@ export async function fincaDashboardView() {
 
 function statRow(items) {
   return el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5' }, items);
+}
+
+// Card especial: factor promedio dividido por proceso. Cada proceso
+// tiene un factor con escala muy distinta (Natural ~3.4, Lavado
+// ~1.34), promediarlos juntos no aporta — mejor desglose.
+function factorByProcessCard(byProc, totalLots) {
+  const row = (label, val, n) => el('div', { class: 'flex items-baseline justify-between' }, [
+    el('span', { class: 'text-[10px] font-mono text-ink-500', text: label }),
+    el('span', { class: 'font-display font-semibold text-navy text-[13px]',
+      text: val != null ? `${val} (${n})` : '—' }),
+  ]);
+  const avg = (p) => byProc[p].n > 0 ? (byProc[p].sum / byProc[p].n).toFixed(2) : null;
+  return el('div', { class: 'stat-card' }, [
+    el('p', { class: 'stat-label', text: 'Factor promedio (30d)' }),
+    el('div', { class: 'space-y-0.5 my-1' }, [
+      row('Natural', avg('Natural'), byProc.Natural.n),
+      row('Honey',   avg('Honey'),   byProc.Honey.n),
+      row('Lavado',  avg('Lavado'),  byProc.Lavado.n),
+    ]),
+    el('p', { class: 'stat-sub', text: `${totalLots} lote(s) recientes` }),
+  ]);
 }
 
 function stat(label, value, hint, onClick, opts = {}) {

@@ -3,6 +3,7 @@
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 
 /**
  * POST /production-lots-update  (finca, admin)
@@ -90,6 +91,34 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   }
 
   const sb = getSupabase();
+
+  // Si cambia kg_input_initial, recalcular los campos derivados
+  // (kg_cherry_input/kg_despulpado_input/kg_dried_output según stage,
+  // y kg_green_expected). Sin esto, la tabla de producción seguía
+  // mostrando los valores viejos.
+  if (update.kg_input_initial != null) {
+    const { data: cur } = await sb
+      .from('production_lots')
+      .select('processing_stage, kg_cherry_input, kg_despulpado_input, kg_dried_output')
+      .eq('id', lot_id).maybeSingle();
+    if (!cur) return notFound('Lot not found');
+    const stage = cur.processing_stage;
+    if (stage && INPUT_STAGE_DIVISORS[stage]) {
+      update.kg_green_expected = inputToGreen(update.kg_input_initial, stage);
+      if (stage === 'cereza')         update.kg_cherry_input      = update.kg_input_initial;
+      else if (stage === 'despulpado') update.kg_despulpado_input = update.kg_input_initial;
+      // Para stage 'seco' solo recalculamos kg_dried_output si el
+      // bache aún no se cerró (kg_dried_output == kg_input_initial al
+      // crear). Si ya hay un kg_dried_output distinto, respetamos
+      // el del usuario porque puede haberlo medido post-secado.
+      else if (stage === 'seco' && (cur.kg_dried_output == null
+               || Number(cur.kg_dried_output) === Number(cur.kg_cherry_input || 0)
+               || Number(cur.kg_dried_output) === Number(cur.kg_despulpado_input || 0))) {
+        update.kg_dried_output = update.kg_input_initial;
+      }
+    }
+  }
+
   let updated = null;
   if (Object.keys(update).length > 0) {
     const { data, error } = await sb
