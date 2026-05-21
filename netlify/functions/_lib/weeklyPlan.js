@@ -32,15 +32,29 @@
 
 const INPUT_TO_GREEN = { cereza: 7.65, despulpado: 4.20, seco: 1.34 };
 
-// Capacidades simultáneas (kg físicos del momento, no kg verde).
-// Patios y mecánico separan capacidad por proceso porque el material
-// que entra es distinto (cereza vs despulpado) y ocupa diferente.
+// Capacidades simultáneas. Fermentación y los secadores son recursos
+// compartidos: en el mismo tanque/patio puede haber cereza Natural y
+// despulpado H/L al tiempo. Como ocupan distinto espacio por kg, las
+// capacidades se modelan como fracciones por proceso:
+//
+//   ocupación_total = sum sobre baches de (kg_actual / cap_base_proceso)
+//   saturado cuando ocupación_total > 1.0
+//
+// CAP exporta los kg "puros" para el caso de un solo proceso (uso en
+// snapshot inicial y mostrar al usuario).
 const CAPACITY = {
-  fermentation_kg:     25000,
-  mecanico_natural_kg: 12000,   // cereza al mecánico Natural
-  mecanico_hl_kg:      10000,   // despulpado al mecánico H/L
-  patios_natural_kg:   60000,   // cereza fresca a patios Natural
-  patios_hl_kg:       100000,   // despulpado a patios H/L
+  fermentation_kg: 40000,            // tanque de ferm: 40k físicos
+  mecanico_natural_kg: 12000,        // cereza sola al mecánico
+  mecanico_hl_kg: 10000,             // despulpado solo al mecánico
+  patios_natural_kg: 60000,          // cereza sola en patios
+  patios_hl_kg: 100000,              // despulpado solo en patios
+};
+
+// Bases por (secadero × proceso) — usadas para el cálculo de fracción
+// cuando el recurso está mezclado.
+const DRYER_BASIS = {
+  mecanico: { Natural: 12000, Honey: 10000, Lavado: 10000 },
+  patios:   { Natural: 60000, Honey: 100000, Lavado: 100000 },
 };
 
 // Factores de conversión de peso durante el secado, por (secadero, proceso).
@@ -98,10 +112,13 @@ function dateRangeInclusive(fromISO, toISO) {
   return out;
 }
 
-// Snapshot inicial de planta para los semáforos de capacidad. Usa kg
-// físicos (kg_input_initial) — mismo principio que el simulador.
+// Snapshot inicial de planta. Para los secadores compartidos
+// devuelve tanto kg físicos totales como % de capacidad utilizada
+// (suma de fracciones por proceso).
 function plantSnapshot(lots) {
-  let ferm = 0, mecN = 0, mecHL = 0, patN = 0, patHL = 0;
+  let ferm = 0;
+  let mecKg = 0, mecFrac = 0;
+  let patKg = 0, patFrac = 0;
   for (const l of lots || []) {
     const kg = Number(l.kg_input_initial || l.kg_cherry_input
       || (Number(l.kg_green_expected || l.kg_green_actual || 0) * 7.65) || 0);
@@ -109,22 +126,19 @@ function plantSnapshot(lots) {
     if (l.status === 'Drying') {
       const locs = Array.isArray(l.drying_locations) ? l.drying_locations : [];
       const useMecanico = locs.includes('Silos') && !locs.includes('Patio');
-      if (useMecanico) {
-        if (l.process_type === 'Natural') mecN += kg;
-        else mecHL += kg;
-      } else if (l.process_type === 'Natural') {
-        patN += kg;
-      } else {
-        patHL += kg;
-      }
+      const dryer = useMecanico ? 'mecanico' : 'patios';
+      const basis = (DRYER_BASIS[dryer] || {})[l.process_type] || null;
+      const frac = basis ? kg / basis : 0;
+      if (useMecanico) { mecKg += kg; mecFrac += frac; }
+      else             { patKg += kg; patFrac += frac; }
     }
   }
   return {
-    fermentation_used_kg:     round2(ferm),
-    mecanico_natural_used_kg: round2(mecN),
-    mecanico_hl_used_kg:      round2(mecHL),
-    patios_natural_used_kg:   round2(patN),
-    patios_hl_used_kg:        round2(patHL),
+    fermentation_used_kg: round2(ferm),
+    mecanico_used_kg:     round2(mecKg),
+    mecanico_used_pct:    round2(mecFrac * 100),
+    patios_used_kg:       round2(patKg),
+    patios_used_pct:      round2(patFrac * 100),
   };
 }
 
@@ -280,11 +294,11 @@ function computePlan({ weekStartDate, dayInputs, orders, lots }) {
   // 2. Cuellos de botella — simulador de flujo (real + planeado)
   const flow = simulateFlow({ weekStartDate, planDays: plan, lots, totals });
   for (const b of flow.bottlenecks) {
+    const msg = b.resource === 'fermentation'
+      ? `${b.label}: ${fmtNum(b.kg)} / ${fmtNum(b.limit)} kg el ${b.day} (excede ${fmtNum(b.over_kg)} kg).`
+      : `${b.label}: ${b.pct}% capacidad usada el ${b.day} (${fmtNum(b.kg)} kg físicos, excede ${b.over_pct}%).`;
     alerts.push({
-      kind: 'capacity_exceeded',
-      day: b.day,
-      resource: b.resource,
-      message: `${b.label}: ${b.kg} / ${b.limit} kg el ${b.day} (excede ${b.over_kg} kg).`,
+      kind: 'capacity_exceeded', day: b.day, resource: b.resource, message: msg,
     });
   }
   for (const s of flow.suggestions || []) {
@@ -350,71 +364,76 @@ function timelineFor(batch, startDate) {
   const proc = batch.process_type;
   const isHL = proc === 'Honey' || proc === 'Lavado';
 
-  // ── 1. Fermentación ────────────────────────────────────────────
-  // Solo cuando entra como cereza. La cereza Honey/Lavado fermenta
-  // primero (en cereza) y luego se despulpa al iniciar el secado.
-  // Sin pérdida de peso (lo que entra sale).
-  const fermDays = stage_input === 'cereza' ? (FERM_DAYS[proc] || 0) : 0;
-  let kgPostFerm = batch.kg_input; // masa al salir de fermentación
-  if (fermDays > 0) {
-    const end = addDaysISO(cursor, fermDays - 1);
-    stages.push({
-      stage: 'Fermentación', category: 'fermentation', resource: 'fermentation',
-      from: cursor, to: end, kg_initial: kgPostFerm, kg_final: kgPostFerm,
-    });
-    cursor = addDaysISO(end, 1);
-  }
-
-  // ── 2. Despulpado (instantáneo, solo si cereza llega a H/L) ────
-  // Reduce el peso a la mitad. No ocupa capacidad de planta (es paso).
-  let kgEnteringDryer = kgPostFerm;
+  // ── 0. Despulpado (instantáneo, ANTES de fermentar para H/L) ──
+  // Si llega cereza a un pedido Honey/Lavado, se despulpa primero y
+  // lo que entra al tanque de fermentación es despulpado (kg/2).
+  let kgCurrent = batch.kg_input;
+  let despulpadoAction = null;
   if (stage_input === 'cereza' && isHL) {
-    kgEnteringDryer = kgPostFerm / CHERRY_TO_PULPED;
+    const kgPulped = kgCurrent / CHERRY_TO_PULPED;
+    despulpadoAction = { kg_cereza_in: kgCurrent, kg_despulpado_out: kgPulped };
+    kgCurrent = kgPulped;
   }
 
-  // ── 3. Secado ──────────────────────────────────────────────────
+  // ── 1. Fermentación ──────────────────────────────────────────
+  // · Natural: fermenta cereza.
+  // · H/L: fermenta despulpado (post-despulpe).
+  // · Despulpado/seco directos: no fermentan (vienen post-ferm).
+  const needsFerm = stage_input === 'cereza';
+  if (needsFerm) {
+    const fermDays = FERM_DAYS[proc] || 0;
+    if (fermDays > 0) {
+      const end = addDaysISO(cursor, fermDays - 1);
+      stages.push({
+        stage: 'Fermentación', category: 'fermentation', resource: 'fermentation',
+        from: cursor, to: end,
+        kg_initial: kgCurrent, kg_final: kgCurrent,
+        process: proc,
+        despulpado_action: despulpadoAction, // visible solo en la primera etapa
+      });
+      cursor = addDaysISO(end, 1);
+    }
+  }
+
+  // ── 2. Secado (recurso unificado mecanico/patios) ────────────
   if (stage_input !== 'seco') {
     const dryer = batch.target_dryer === 'Mecánico' ? 'mecanico' : 'patios';
     const dryingDays = (DRYING_DAYS[dryer] && DRYING_DAYS[dryer][proc]) || 0;
-    let resource = null, stageLabel = null;
-    if (dryer === 'mecanico') {
-      if (proc === 'Natural') { resource = 'mecanico_natural'; stageLabel = 'Mecánico N'; }
-      else                    { resource = 'mecanico_hl';      stageLabel = 'Mecánico H/L'; }
-    } else {
-      if (proc === 'Natural') { resource = 'patios_natural';   stageLabel = 'Patios N'; }
-      else                    { resource = 'patios_hl';        stageLabel = 'Patios H/L'; }
-    }
     const factor = (DRYING_FACTOR[dryer] && DRYING_FACTOR[dryer][proc]) || 1;
-    const kgDryEnd = kgEnteringDryer / factor;
-
-    if (dryingDays > 0 && resource) {
+    const kgDryEnd = kgCurrent / factor;
+    if (dryingDays > 0) {
       const end = addDaysISO(cursor, dryingDays - 1);
       stages.push({
-        stage: stageLabel, category: 'drying', resource,
+        stage: dryer === 'mecanico' ? 'Mecánico' : 'Patios',
+        category: 'drying',
+        resource: dryer, // 'mecanico' o 'patios' — compartido entre procesos
         from: cursor, to: end,
-        kg_initial: kgEnteringDryer, kg_final: kgDryEnd,
+        kg_initial: kgCurrent, kg_final: kgDryEnd,
+        process: proc,
+        capacity_basis: DRYER_BASIS[dryer][proc] || null,
         humidity_start: HUMIDITY_START, humidity_end: HUMIDITY_END,
       });
       cursor = addDaysISO(end, 1);
-      kgEnteringDryer = kgDryEnd; // ahora es kg seco
+      kgCurrent = kgDryEnd;
     }
   }
-  const kgPostDry = kgEnteringDryer; // kg seco (o kg input si era 'seco' ya)
 
-  // ── 4. Reposo (peso constante: ya está seco) ───────────────────
+  // ── 3. Reposo ─────────────────────────────────────────────────
   if (RESTING_DAYS > 0) {
     const end = addDaysISO(cursor, RESTING_DAYS - 1);
     stages.push({
       stage: 'Reposo', category: 'resting', resource: 'resting',
-      from: cursor, to: end, kg_initial: kgPostDry, kg_final: kgPostDry,
+      from: cursor, to: end, kg_initial: kgCurrent, kg_final: kgCurrent,
+      process: proc,
     });
     cursor = addDaysISO(end, 1);
   }
 
-  // ── 5. Listo para bodega (día marcador) ────────────────────────
+  // ── 4. Listo para bodega ─────────────────────────────────────
   stages.push({
     stage: 'Listo', category: 'ready', resource: 'ready',
-    from: cursor, to: cursor, kg_initial: kgPostDry, kg_final: kgPostDry,
+    from: cursor, to: cursor, kg_initial: kgCurrent, kg_final: kgCurrent,
+    process: proc,
   });
 
   return stages;
@@ -452,13 +471,17 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
   for (let i = 0; i < SIMULATION_HORIZON_DAYS; i++) {
     horizon.push(addDaysISO(weekStartDate, i));
   }
-  const RES_KEYS = [
-    'fermentation', 'mecanico_natural', 'mecanico_hl',
-    'patios_natural', 'patios_hl', 'resting', 'ready',
-  ];
+  // Recursos: fermentación (cap fija 40k) + secadores compartidos
+  // (sumamos kg físicos + fracción de capacidad por proceso) + reposo
+  // + listo. Fracción se compara contra 1.0 para detectar saturación.
   const occByDay = {};
   for (const d of horizon) {
-    occByDay[d] = Object.fromEntries(RES_KEYS.map((k) => [k, 0]));
+    occByDay[d] = {
+      fermentation: 0,
+      mecanico_kg: 0,   mecanico_frac: 0,
+      patios_kg: 0,     patios_frac: 0,
+      resting: 0,       ready: 0,
+    };
   }
   // Para el pase temprano: por (día, recurso) registramos qué baches
   // están en secado y a qué humedad estimada — si ≤25% son candidatos.
@@ -479,8 +502,8 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
 
   // ── Baches reales (no Delivered) ───────────────────────────────
   // Ocupación constante esta semana. Usamos kg_input_initial (peso
-  // bruto inicial). El peso seco se asume aprox (no curva — no
-  // sabemos cuánto llevan).
+  // bruto inicial) y para secadores compartidos sumamos la fracción
+  // según el proceso del bache.
   for (const l of lots || []) {
     const kg = Number(l.kg_input_initial || l.kg_cherry_input
       || (Number(l.kg_green_expected || l.kg_green_actual || 0) * 7.65) || 0);
@@ -493,26 +516,26 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
         kg_input: round2(kg),
         stages: [{ stage: 'Fermentación', category: 'fermentation',
           resource: 'fermentation', from: weekDays[0], to: weekDays[6],
-          kg_initial: kg, kg_final: kg }],
+          kg_initial: kg, kg_final: kg, process: l.process_type }],
       });
     } else if (l.status === 'Drying') {
       const locs = Array.isArray(l.drying_locations) ? l.drying_locations : [];
       const useMecanico = locs.includes('Silos') && !locs.includes('Patio');
-      let resource, stageLabel;
-      if (useMecanico) {
-        if (l.process_type === 'Natural') { resource = 'mecanico_natural'; stageLabel = 'Mecánico N'; }
-        else                              { resource = 'mecanico_hl';      stageLabel = 'Mecánico H/L'; }
-      } else {
-        if (l.process_type === 'Natural') { resource = 'patios_natural';   stageLabel = 'Patios N'; }
-        else                              { resource = 'patios_hl';        stageLabel = 'Patios H/L'; }
+      const dryer = useMecanico ? 'mecanico' : 'patios';
+      const basis = (DRYER_BASIS[dryer] || {})[l.process_type] || null;
+      const frac = basis ? kg / basis : 0;
+      for (const d of weekDays) {
+        occByDay[d][dryer === 'mecanico' ? 'mecanico_kg' : 'patios_kg'] += kg;
+        occByDay[d][dryer === 'mecanico' ? 'mecanico_frac' : 'patios_frac'] += frac;
       }
-      for (const d of weekDays) occByDay[d][resource] += kg;
       gantt.push({
         kind: 'real', label, process: l.process_type,
         kg_input: round2(kg),
-        stages: [{ stage: stageLabel, category: 'drying',
-          resource, from: weekDays[0], to: weekDays[6],
-          kg_initial: kg, kg_final: kg }],
+        stages: [{ stage: dryer === 'mecanico' ? 'Mecánico' : 'Patios',
+          category: 'drying', resource: dryer,
+          from: weekDays[0], to: weekDays[6],
+          kg_initial: kg, kg_final: kg,
+          process: l.process_type, capacity_basis: basis }],
       });
     }
   }
@@ -534,18 +557,27 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
         stages,
       });
 
-      // Ocupación día a día — curva lineal de peso entre kg_initial y kg_final.
+      // Ocupación día a día — curva lineal de peso. Para secadores
+      // (mecanico/patios) acumulamos kg físicos y fracción de
+      // capacidad por proceso (recurso compartido).
       for (const s of stages) {
         for (const d of dateRangeInclusive(s.from, s.to)) {
           if (!occByDay[d]) continue;
           const w = weightOnDay(s, d);
-          occByDay[d][s.resource] += w;
-          if (s.category === 'drying' && candidatesByDay[d]) {
-            const h = humidityOnDay(s, d);
-            candidatesByDay[d].push({
-              label: batch.order_code || 'A designar',
-              resource: s.resource, current_kg: w, humidity: h,
-            });
+          if (s.resource === 'mecanico' || s.resource === 'patios') {
+            occByDay[d][s.resource + '_kg'] += w;
+            if (s.capacity_basis) {
+              occByDay[d][s.resource + '_frac'] += w / s.capacity_basis;
+            }
+            if (candidatesByDay[d]) {
+              const h = humidityOnDay(s, d);
+              candidatesByDay[d].push({
+                label: batch.order_code || 'A designar',
+                resource: s.resource, current_kg: w, humidity: h,
+              });
+            }
+          } else {
+            occByDay[d][s.resource] += w;
           }
         }
       }
@@ -560,24 +592,31 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
   }
 
   // ── Cuellos de botella ─────────────────────────────────────────
+  // Ferm: kg físicos vs cap (40k).
+  // Secadores: fracción de capacidad (suma de kg/cap_proceso) > 1.0.
   const bottlenecks = [];
-  const RESOURCE_CHECKS = [
-    { resource: 'fermentation',     label: 'Fermentación',     limit: CAPACITY.fermentation_kg },
-    { resource: 'mecanico_natural', label: 'Mecánico Natural', limit: CAPACITY.mecanico_natural_kg },
-    { resource: 'mecanico_hl',      label: 'Mecánico H/L',     limit: CAPACITY.mecanico_hl_kg },
-    { resource: 'patios_natural',   label: 'Patios Natural',   limit: CAPACITY.patios_natural_kg },
-    { resource: 'patios_hl',        label: 'Patios H/L',       limit: CAPACITY.patios_hl_kg },
-  ];
   for (const d of weekDays) {
     const occ = occByDay[d];
-    for (const c of RESOURCE_CHECKS) {
-      const used = occ[c.resource] || 0;
-      if (used > c.limit + 0.01) {
-        bottlenecks.push({
-          day: d, resource: c.resource, label: c.label,
-          kg: round2(used), limit: c.limit, over_kg: round2(used - c.limit),
-        });
-      }
+    if (occ.fermentation > CAPACITY.fermentation_kg + 0.01) {
+      bottlenecks.push({
+        day: d, resource: 'fermentation', label: 'Fermentación',
+        kg: round2(occ.fermentation), limit: CAPACITY.fermentation_kg,
+        over_kg: round2(occ.fermentation - CAPACITY.fermentation_kg),
+      });
+    }
+    if (occ.mecanico_frac > 1.001) {
+      bottlenecks.push({
+        day: d, resource: 'mecanico', label: 'Mecánico',
+        kg: round2(occ.mecanico_kg), pct: round2(occ.mecanico_frac * 100), limit_pct: 100,
+        over_pct: round2((occ.mecanico_frac - 1) * 100),
+      });
+    }
+    if (occ.patios_frac > 1.001) {
+      bottlenecks.push({
+        day: d, resource: 'patios', label: 'Patios',
+        kg: round2(occ.patios_kg), pct: round2(occ.patios_frac * 100), limit_pct: 100,
+        over_pct: round2((occ.patios_frac - 1) * 100),
+      });
     }
   }
 
@@ -588,17 +627,16 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
   const suggestions = [];
   const seen = new Set();
   for (const bn of bottlenecks) {
-    if (!bn.resource.startsWith('patios_')) continue;
+    if (bn.resource !== 'patios' && bn.resource !== 'mecanico') continue;
     const cands = (candidatesByDay[bn.day] || [])
       .filter((c) => c.resource === bn.resource && c.humidity != null && c.humidity <= HUMIDITY_EARLY_REST)
-      .sort((a, b) => a.humidity - b.humidity); // los más secos primero
+      .sort((a, b) => a.humidity - b.humidity);
     for (const c of cands) {
       const key = `${bn.day}|${c.label}|${bn.resource}`;
       if (seen.has(key)) continue;
       seen.add(key);
       suggestions.push({
-        kind: 'early_resting',
-        day: bn.day, resource: bn.resource,
+        kind: 'early_resting', day: bn.day, resource: bn.resource,
         message: `Considera pasar ${c.label} a reposo anticipado el ${bn.day}: humedad estimada ${Math.round(c.humidity)}%, libera ~${fmtNum(c.current_kg)} kg de ${bn.label}.`,
       });
     }
@@ -617,20 +655,16 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
       }
     }
   }
-  const natOverDays = new Set(bottlenecks.filter((b) => b.resource === 'patios_natural').map((b) => b.day));
-  if (natOverDays.size > 0 && cherryExcessNatural > 0) {
-    // ¿Hay capacidad libre en patios_hl algún día de la semana?
-    let freeHL = 0;
-    for (const d of weekDays) {
-      const free = CAPACITY.patios_hl_kg - (occByDay[d].patios_hl || 0);
-      if (free > freeHL) freeHL = free;
-    }
-    if (freeHL > 1000) {
-      suggestions.push({
-        kind: 'process_swap',
-        message: `Patios Natural saturado ${natOverDays.size} día(s). Hay ~${fmtNum(freeHL)} kg libres en patios H/L. Considera procesar parte del excedente Natural como Honey/Lavado (capacidad muy superior, sale más rápido).`,
-      });
-    }
+  // Si patios satura algún día Y hay excedente "a designar" Natural,
+  // sugerir desviar parte a H/L. Como el recurso es compartido, la
+  // ganancia viene de que H/L ocupa menos fracción de capacidad por
+  // kg que Natural (1/100k vs 1/60k).
+  const patSatDays = new Set(bottlenecks.filter((b) => b.resource === 'patios').map((b) => b.day));
+  if (patSatDays.size > 0 && cherryExcessNatural > 0) {
+    suggestions.push({
+      kind: 'process_swap',
+      message: `Patios saturado ${patSatDays.size} día(s). Hay ${fmtNum(cherryExcessNatural)} kg de cereza Natural sin pedido asociado. Si los procesas como Honey/Lavado, ocupan ~60% menos espacio en patios (base 100k vs 60k) y se secan más rápido.`,
+    });
   }
 
   // Redondeo final
@@ -644,7 +678,102 @@ function simulateFlow({ weekStartDate, planDays, lots, totals }) {
     }
   }
 
-  return { gantt, daily_occupancy: occByDay, stage_balance: stageBalance, bottlenecks, suggestions };
+  // ── Pipeline de acciones operativas por día ────────────────────
+  // Construye una lista de tareas concretas por día de la semana
+  // para que el operador sepa qué hacer con lo que llega y con los
+  // baches en curso (entradas, despulpes, transiciones entre etapas,
+  // salidas a bodega).
+  const actions = buildActionPipeline({ weekDays, gantt, bottlenecks, suggestions });
+
+  return {
+    gantt, daily_occupancy: occByDay, stage_balance: stageBalance,
+    bottlenecks, suggestions, actions,
+  };
+}
+
+function buildActionPipeline({ weekDays, gantt, bottlenecks, suggestions }) {
+  const byDay = {};
+  for (const d of weekDays) byDay[d] = [];
+
+  for (const row of gantt) {
+    // Acciones por etapa: 'arrival' (día de inicio), 'transition'
+    // (entre etapas), 'ready' (día listo p/ bodega).
+    const isReal = row.kind === 'real';
+    const targetLabel = row.label
+      + (row.client_name ? ' (' + row.client_name + ')' : '');
+
+    for (let i = 0; i < row.stages.length; i++) {
+      const s = row.stages[i];
+      const next = row.stages[i + 1];
+
+      // Acción de inicio: solo para baches planeados (los reales ya
+      // están en curso, no hay "entrada" hoy).
+      if (i === 0 && !isReal && byDay[s.from]) {
+        if (s.despulpado_action) {
+          byDay[s.from].push({
+            type: 'arrival', icon: '↓',
+            text: `Recibir ${fmtNum(s.despulpado_action.kg_cereza_in)} kg cereza ${row.process} · despulpar → ${fmtNum(s.despulpado_action.kg_despulpado_out)} kg para ${targetLabel}`,
+            process: row.process, target: row.label,
+          });
+        } else if (row.stage_input === 'cereza') {
+          byDay[s.from].push({
+            type: 'arrival', icon: '↓',
+            text: `Recibir ${fmtNum(row.kg_input)} kg cereza ${row.process} para ${targetLabel}`,
+            process: row.process, target: row.label,
+          });
+        } else {
+          byDay[s.from].push({
+            type: 'arrival', icon: '↓',
+            text: `Recibir ${fmtNum(row.kg_input)} kg ${row.stage_input} ${row.process} para ${targetLabel}`,
+            process: row.process, target: row.label,
+          });
+        }
+        byDay[s.from].push({
+          type: 'start', icon: '•',
+          text: `Iniciar ${s.stage.toLowerCase()} de ${targetLabel} (${fmtNum(s.kg_initial)} kg)`,
+          process: row.process,
+        });
+      }
+
+      // Acción de transición: el día siguiente al fin de la etapa
+      // (cuando el bache pasa a la próxima). Solo si la próxima cae
+      // dentro de la semana visible.
+      if (next && byDay[next.from]) {
+        const nextStageLabel = next.stage.toLowerCase();
+        byDay[next.from].push({
+          type: 'transition', icon: '↑',
+          text: `Mover ${targetLabel} de ${s.stage.toLowerCase()} a ${nextStageLabel} (${fmtNum(s.kg_final)} kg)`,
+          process: row.process,
+        });
+      }
+
+      // Acción "listo para bodega".
+      if (s.category === 'ready' && byDay[s.from]) {
+        byDay[s.from].push({
+          type: 'ready', icon: '✓',
+          text: `${targetLabel} listo para bodega (${fmtNum(s.kg_initial)} kg seco)`,
+          process: row.process,
+        });
+      }
+    }
+  }
+
+  // Acciones derivadas de cuellos y sugerencias.
+  for (const bn of bottlenecks) {
+    if (!byDay[bn.day]) continue;
+    const text = bn.resource === 'fermentation'
+      ? `${bn.label} excedida: ${fmtNum(bn.kg)} / ${fmtNum(bn.limit)} kg`
+      : `${bn.label} excedido: ${bn.pct}% capacidad (excede ${bn.over_pct}%)`;
+    byDay[bn.day].push({ type: 'warning', icon: '⚠', text });
+  }
+  for (const s of suggestions || []) {
+    const day = s.day || weekDays[0]; // las globales van al lunes
+    if (!byDay[day]) continue;
+    byDay[day].push({ type: 'suggestion', icon: '💡', text: s.message });
+  }
+
+  // Devolver array ordenado por día.
+  return weekDays.map((d) => ({ date: d, actions: byDay[d] }));
 }
 
 function fmtNum(n) { return Math.round(n).toLocaleString('es-CO'); }

@@ -100,6 +100,9 @@ export async function fincaPlaneacionView() {
           : el('p', { class: 'text-[11px] font-mono text-ink-300 italic', text: 'Sin plan calculado' }),
       ]),
 
+      // ── Pipeline de acciones operativas ─────────────────────────
+      state.plan_row ? actionPipeline(state.plan_row) : null,
+
       // ── Doble columna: inputs + estado de planta ──────────────────
       el('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4' }, [
         // Inputs (2 cols en lg)
@@ -128,11 +131,9 @@ export async function fincaPlaneacionView() {
             el('p', { class: 'eyebrow text-[10px]', text: 'Estado actual de la planta' }),
           ]),
           el('div', { class: 'p-3 space-y-2' }, [
-            capacityBar('Fermentación',  snap.fermentation_used_kg     || 0, cap.fermentation_kg     ||  25000, '#7e9ec1'),
-            capacityBar('Mecánico N',    snap.mecanico_natural_used_kg || snap.mecanico_used_kg || 0, cap.mecanico_natural_kg ||  12000, '#ddae3e'),
-            capacityBar('Mecánico H/L',  snap.mecanico_hl_used_kg      || 0, cap.mecanico_hl_kg      ||  10000, '#e0c266'),
-            capacityBar('Patios Natural', snap.patios_natural_used_kg  || 0, cap.patios_natural_kg   ||  60000, '#a8b89c'),
-            capacityBar('Patios H/L',     snap.patios_hl_used_kg       || 0, cap.patios_hl_kg        || 100000, '#5d8b66'),
+            capacityBar('Fermentación', snap.fermentation_used_kg || 0, cap.fermentation_kg || 40000, '#7e9ec1'),
+            sharedCapacityBar('Mecánico', snap.mecanico_used_kg || 0, snap.mecanico_used_pct || 0, '#ddae3e'),
+            sharedCapacityBar('Patios',   snap.patios_used_kg   || 0, snap.patios_used_pct   || 0, '#5d8b66'),
           ]),
           el('div', { class: 'px-3 py-2 border-t border-sand bg-cream text-[11px] font-mono text-ink-700' }, [
             el('strong', { text: String(state.queue_summary?.orders_count || 0) }),
@@ -308,15 +309,76 @@ function alertLine(a) {
   ]);
 }
 
+// ── Pipeline de acciones operativas por día ────────────────────────
+// Lista chronológica de qué hacer cada día: recibir, despulpar,
+// iniciar baches, mover entre etapas, sacar a bodega, alertas.
+function actionPipeline(planRow) {
+  const flow = planFlow(planRow);
+  if (!flow || !Array.isArray(flow.actions)) return null;
+
+  const totalActions = flow.actions.reduce((s, d) => s + d.actions.length, 0);
+  if (totalActions === 0) {
+    return el('div', { class: 'ctrm-card ctrm-card-pad mb-4 text-center' }, [
+      el('p', { class: 'text-[12px] text-ink-300 italic',
+        text: 'No hay acciones programadas para esta semana.' }),
+    ]);
+  }
+
+  return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+    el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
+      el('p', { class: 'eyebrow text-[10px]', text: 'Plan de trabajo · qué hacer cada día' }),
+    ]),
+    el('div', { class: 'divide-y divide-sand' }, flow.actions.map((d, idx) =>
+      actionDayBlock(d, idx))),
+  ]);
+}
+
+function actionDayBlock(day, idx) {
+  const acts = day.actions || [];
+  return el('div', { class: 'flex gap-4 px-3 py-2.5' }, [
+    el('div', { class: 'shrink-0 w-24' }, [
+      el('p', { class: 'font-display font-semibold text-navy text-[13px]', text: DAY_LABELS[idx] }),
+      el('p', { class: 'text-[10px] font-mono text-ink-500', text: fmtDate(day.date) }),
+    ]),
+    el('div', { class: 'flex-1 min-w-0' }, [
+      acts.length === 0
+        ? el('p', { class: 'text-[11px] italic text-ink-300', text: 'Sin actividad.' })
+        : el('ul', { class: 'space-y-1' }, acts.map((a) => actionLine(a))),
+    ]),
+  ]);
+}
+
+function actionLine(a) {
+  const cls = a.type === 'warning' ? 'text-crit'
+            : a.type === 'suggestion' ? 'text-navy'
+            : a.type === 'arrival' ? 'text-ok'
+            : a.type === 'ready' ? 'text-ok'
+            : a.type === 'transition' ? 'text-warn'
+            : 'text-ink-500';
+  const procColor = a.process === 'Natural' ? '#3a6f4a'
+                  : a.process === 'Honey'   ? '#ddae3e'
+                  : a.process === 'Lavado'  ? '#7e9ec1'
+                  : null;
+  return el('li', { class: 'flex items-baseline gap-2 text-[12px]' }, [
+    procColor
+      ? el('span', { class: 'shrink-0', style: `display:inline-block;width:6px;height:6px;border-radius:1px;background:${procColor};margin-top:1px;` })
+      : el('span', { class: 'shrink-0', style: 'display:inline-block;width:6px;' }),
+    el('span', { class: `font-semibold ${cls} shrink-0`, text: a.icon }),
+    el('span', { class: 'text-ink-700', text: a.text }),
+  ]);
+}
+
 // ── Heatmap de ocupación por recurso × día ─────────────────────────
 // Filas: fermentación, mecánico, patios N, patios H/L.
 // Columnas: 7 días. Cada celda: kg usados / capacidad + color semáforo.
+// Recursos del heatmap. Fermentación tiene capacidad en kg físicos
+// (40k). Mecánico y Patios son compartidos entre procesos: la
+// 'capacidad' efectiva se mide como fracción (suma de kg/cap_proceso
+// por bache) — saturado al 100%.
 const RESOURCES = [
-  { key: 'fermentation',     label: 'Fermentación',     cap_key: 'fermentation_kg' },
-  { key: 'mecanico_natural', label: 'Mecánico N',       cap_key: 'mecanico_natural_kg' },
-  { key: 'mecanico_hl',      label: 'Mecánico H/L',     cap_key: 'mecanico_hl_kg' },
-  { key: 'patios_natural',   label: 'Patios N',         cap_key: 'patios_natural_kg' },
-  { key: 'patios_hl',        label: 'Patios H/L',       cap_key: 'patios_hl_kg' },
+  { key: 'fermentation', label: 'Fermentación', cap_kg: 40000, shared: false },
+  { key: 'mecanico',     label: 'Mecánico',     shared: true, sub: 'N 12k · H/L 10k' },
+  { key: 'patios',       label: 'Patios',       shared: true, sub: 'N 60k · H/L 100k' },
 ];
 
 function occupancyHeatmap(planRow, capacity) {
@@ -327,7 +389,7 @@ function occupancyHeatmap(planRow, capacity) {
 
   return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
     el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
-      el('p', { class: 'eyebrow text-[10px]', text: 'Cuellos de botella — kg en planta por día (kg físicos)' }),
+      el('p', { class: 'eyebrow text-[10px]', text: 'Cuellos de botella — kg físicos en planta por día' }),
     ]),
     el('div', { class: 'overflow-x-auto' }, [
       el('table', { class: 'w-full text-[11px] font-mono' }, [
@@ -342,20 +404,45 @@ function occupancyHeatmap(planRow, capacity) {
           el('th', { class: 'text-right px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Capacidad' }),
         ])]),
         el('tbody', {}, RESOURCES.map((r) => {
-          const cap = capacity[r.cap_key] || 0;
+          const cells = days.map((d) => {
+            const day = occ[d] || {};
+            if (r.shared) {
+              const kg  = Number(day[r.key + '_kg']   || 0);
+              const pct = Number(day[r.key + '_frac'] || 0) * 100;
+              return heatCellPct(kg, pct);
+            }
+            return heatCellKg(Number(day[r.key] || 0), r.cap_kg);
+          });
           return el('tr', { class: 'border-b border-sand' }, [
-            el('td', { class: 'px-3 py-1.5 text-navy font-display font-semibold text-[11px]', text: r.label }),
-            ...days.map((d) => heatCell(Number((occ[d] || {})[r.key] || 0), cap)),
-            el('td', { class: 'px-3 py-1.5 text-right text-ink-500', text: `${fmtKg(cap)} kg` }),
+            el('td', { class: 'px-3 py-1.5' }, [
+              el('div', { class: 'text-navy font-display font-semibold text-[11px]', text: r.label }),
+              r.sub
+                ? el('div', { class: 'text-[9px] text-ink-300', text: r.sub })
+                : null,
+            ]),
+            ...cells,
+            el('td', { class: 'px-3 py-1.5 text-right text-ink-500',
+              text: r.shared ? 'Compartido' : `${fmtKg(r.cap_kg)} kg` }),
           ]);
         })),
       ]),
     ]),
+    el('div', { class: 'px-3 py-2 border-t border-sand bg-cream text-[10px] font-mono text-ink-500' }, [
+      'Mecánico y patios son recursos compartidos: el % suma fracciones por proceso (cereza Natural ocupa 1/12k mec ó 1/60k patios por kg; despulpado H/L ocupa 1/10k ó 1/100k). Saturado al 100%.',
+    ]),
   ]);
 }
 
-function heatCell(used, cap) {
+function heatCellKg(used, cap) {
   const pct = cap > 0 ? (used / cap) * 100 : 0;
+  return paintCell(used, pct, `${fmtKg(used)} kg`);
+}
+
+function heatCellPct(used_kg, pct) {
+  return paintCell(used_kg, pct, `${Math.round(pct)}%`, `${fmtKg(used_kg)} kg`);
+}
+
+function paintCell(used, pct, primary, secondary) {
   let bg = 'transparent', color = '#5a6371';
   if (pct >= 100) { bg = '#c45a4f'; color = 'white'; }
   else if (pct >= 80) { bg = '#ddae3e'; color = '#3d2a00'; }
@@ -365,8 +452,34 @@ function heatCell(used, cap) {
     class: 'text-center px-2 py-1.5',
     style: `background:${bg};color:${color};`,
   }, [
-    el('div', { class: 'font-semibold text-[12px]', text: used > 0 ? `${fmtKg(used)} kg` : '—' }),
-    used > 0 ? el('div', { class: 'text-[9px] opacity-75', text: `${Math.round(pct)}%` }) : null,
+    el('div', { class: 'font-semibold text-[12px]', text: used > 0 ? primary : '—' }),
+    used > 0 && secondary
+      ? el('div', { class: 'text-[9px] opacity-75', text: secondary })
+      : (used > 0 && !secondary ? el('div', { class: 'text-[9px] opacity-75', text: `${Math.round(pct)}%` }) : null),
+  ]);
+}
+
+// Barra de capacidad para recurso compartido: el % es fracción suma,
+// los kg son la masa física total.
+function sharedCapacityBar(label, used_kg, used_pct, color) {
+  const pct = Math.min(100, used_pct || 0);
+  const danger = used_pct >= 90;
+  return el('div', {}, [
+    el('div', { class: 'flex items-baseline justify-between text-[11px] font-mono mb-1' }, [
+      el('span', { class: 'text-ink-700' }, [
+        label,
+        el('span', { class: 'text-ink-300 text-[10px]', text: ' (compartido)' }),
+      ]),
+      el('span', {}, [
+        el('strong', { class: danger ? 'text-crit' : 'text-navy',
+          text: `${Math.round(used_pct || 0)}%` }),
+        el('span', { class: 'text-ink-300', text: `  ${fmtKg(used_kg)} kg` }),
+      ]),
+    ]),
+    el('div', { class: 'h-2 rounded-md bg-cream relative overflow-hidden border border-sand' }, [
+      el('div', { class: 'h-full',
+        style: `width:${pct}%;background:${danger ? '#c45a4f' : color};` }),
+    ]),
   ]);
 }
 
