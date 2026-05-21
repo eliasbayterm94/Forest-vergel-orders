@@ -30,7 +30,7 @@ exports.handler = requireAuth(async (event) => {
   // Snapshot fresco de planta (baches no Delivered).
   const { data: lots, error: lErr } = await sb
     .from('production_lots')
-    .select('id, bache_code, lot_code, status, process_type, kg_green_expected, kg_green_actual, drying_locations')
+    .select('id, bache_code, lot_code, status, process_type, kg_input_initial, kg_cherry_input, kg_green_expected, kg_green_actual, drying_locations')
     .neq('status', 'Delivered');
   if (lErr) return serverErr('Lots lookup failed', lErr.message);
 

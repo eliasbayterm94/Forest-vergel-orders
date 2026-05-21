@@ -148,6 +148,9 @@ export async function fincaPlaneacionView() {
       // ── Heatmap de ocupación ───────────────────────────────────
       state.plan_row ? occupancyHeatmap(state.plan_row, state.capacity || {}) : null,
 
+      // ── Balance por etapa (entradas / salidas por día) ─────────
+      state.plan_row ? stageBalanceTable(state.plan_row) : null,
+
       // ── Mini-Gantt de baches ───────────────────────────────────
       state.plan_row ? ganttTable(state.plan_row) : null,
 
@@ -320,7 +323,7 @@ function occupancyHeatmap(planRow, capacity) {
 
   return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
     el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
-      el('p', { class: 'eyebrow text-[10px]', text: 'Cuellos de botella — % ocupación por día' }),
+      el('p', { class: 'eyebrow text-[10px]', text: 'Cuellos de botella — kg en planta por día (kg físicos)' }),
     ]),
     el('div', { class: 'overflow-x-auto' }, [
       el('table', { class: 'w-full text-[11px] font-mono' }, [
@@ -360,6 +363,84 @@ function heatCell(used, cap) {
   }, [
     el('div', { class: 'font-semibold text-[12px]', text: used > 0 ? `${fmtKg(used)} kg` : '—' }),
     used > 0 ? el('div', { class: 'text-[9px] opacity-75', text: `${Math.round(pct)}%` }) : null,
+  ]);
+}
+
+// ── Balance por etapa: kg entrando y saliendo cada día ─────────────
+// Filas: Fermentación, Secado, Reposo, Listo para bodega.
+// Cada celda muestra '↓ X / ↑ Y' (entrando / saliendo). Última col:
+// total semanal.
+const STAGE_BALANCE_ROWS = [
+  { key: 'fermentation', label: 'Fermentación' },
+  { key: 'drying',       label: 'Secado' },
+  { key: 'resting',      label: 'Reposo' },
+  { key: 'ready',        label: 'Listo p/ bodega' },
+];
+
+function stageBalanceTable(planRow) {
+  const flow = planFlow(planRow);
+  if (!flow || !flow.stage_balance) return null;
+  const days = planDays(planRow).map((d) => d.date);
+  const bal = flow.stage_balance;
+
+  return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+    el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-center justify-between' }, [
+      el('p', { class: 'eyebrow text-[10px]', text: 'Flujo por etapa — entradas y salidas por día' }),
+      el('p', { class: 'text-[10px] font-mono text-ink-500' }, [
+        el('span', { class: 'text-ok font-semibold', text: '↓' }), ' entra  ',
+        el('span', { class: 'text-warn font-semibold', text: '↑' }), ' sale',
+      ]),
+    ]),
+    el('div', { class: 'overflow-x-auto' }, [
+      el('table', { class: 'w-full text-[11px] font-mono' }, [
+        el('thead', {}, [el('tr', { class: 'border-b border-sand' }, [
+          el('th', { class: 'text-left px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Etapa' }),
+          ...days.map((d, i) => el('th', {
+            class: 'text-center px-2 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500',
+          }, [
+            el('div', {}, [DAY_LABELS[i]]),
+            el('div', { class: 'text-ink-300 text-[9px]', text: fmtDate(d) }),
+          ])),
+          el('th', { class: 'text-right px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Semana' }),
+        ])]),
+        el('tbody', {}, STAGE_BALANCE_ROWS.map((row) => {
+          let weekIn = 0, weekOut = 0;
+          const cells = days.map((d) => {
+            const b = (bal[d] || {})[row.key] || { in: 0, out: 0 };
+            weekIn  += b.in;
+            weekOut += b.out;
+            return stageBalanceCell(b, row.key);
+          });
+          return el('tr', { class: 'border-b border-sand' }, [
+            el('td', { class: 'px-3 py-1.5 text-navy font-display font-semibold text-[11px]', text: row.label }),
+            ...cells,
+            el('td', { class: 'px-3 py-1.5 text-right text-[10px]' }, [
+              weekIn > 0 ? el('div', { class: 'text-ok font-semibold', text: `↓ ${fmtKg(weekIn)}` }) : null,
+              weekOut > 0 ? el('div', { class: 'text-warn font-semibold', text: `↑ ${fmtKg(weekOut)}` }) : null,
+              weekIn === 0 && weekOut === 0 ? el('span', { class: 'text-ink-300', text: '—' }) : null,
+            ]),
+          ]);
+        })),
+      ]),
+    ]),
+    el('div', { class: 'px-3 py-2 border-t border-sand bg-cream text-[10px] font-mono text-ink-500' }, [
+      'Cantidades en kg de input bruto (cereza/despulpado/seco según el origen del bache). El "Listo p/ bodega" muestra los kg que salen de reposo y pasan a trilla/bodega.',
+    ]),
+  ]);
+}
+
+function stageBalanceCell(b, stageKey) {
+  if (b.in === 0 && b.out === 0) {
+    return el('td', { class: 'text-center px-1 py-1.5 text-ink-300', text: '·' });
+  }
+  return el('td', { class: 'text-center px-1 py-1.5' }, [
+    b.in > 0
+      ? el('div', { class: 'text-ok text-[10px] font-semibold', text: `↓ ${fmtKg(b.in)}` })
+      : null,
+    // 'ready' usa 'in' como "llega a bodega": no mostramos 'out'.
+    b.out > 0 && stageKey !== 'ready'
+      ? el('div', { class: 'text-warn text-[10px] font-semibold', text: `↑ ${fmtKg(b.out)}` })
+      : null,
   ]);
 }
 
