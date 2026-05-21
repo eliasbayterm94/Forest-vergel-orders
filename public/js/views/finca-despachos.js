@@ -6,7 +6,7 @@ import { listView } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
-import { generateShipmentPdf } from '../ui/pdf.js';
+import { generateShipmentPdf, generateShipmentAssignmentsPdf } from '../ui/pdf.js';
 import { emptyStateCard } from '../ui/empty.js';
 
 export async function fincaDespachosView() {
@@ -119,8 +119,14 @@ export async function fincaDespachosView() {
         el('div', { class: 'flex items-center gap-2' }, [
           el('button', {
             class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+            title: 'Remisión para la trilladora · solo data del envío',
             onClick: () => downloadPdf(s),
-          }, ['↓ PDF']),
+          }, ['↓ Remisión']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+            title: 'Documento interno · asignaciones por bache a pedidos',
+            onClick: () => downloadAssignmentsPdf(s),
+          }, ['↓ Asignaciones']),
           el('button', {
             class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm text-crit',
             title: 'Cancelar despacho · revierte lotes y pedidos',
@@ -265,6 +271,11 @@ export async function fincaDespachosView() {
   function downloadPdf(shipment) {
     try {
       generateShipmentPdf(shipment);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  function downloadAssignmentsPdf(shipment) {
+    try {
+      generateShipmentAssignmentsPdf(shipment);
     } catch (e) { toast(e.message, 'error'); }
   }
 

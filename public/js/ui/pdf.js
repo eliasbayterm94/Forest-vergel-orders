@@ -1,15 +1,18 @@
-// Shipment PDF generator — client-side via jsPDF + autoTable (CDN).
-// El payload viene de /api/shipments-list con campos de destino,
-// conductor y por bache (codigo_trilladora, codigo_mezcla, num_sacos).
+// Shipment PDFs — client-side via jsPDF + autoTable (CDN).
 //
-// Estructura del PDF:
-//   1. Header con código del despacho.
-//   2. Datos de remisión: destino + conductor (cédula/nombre/placa).
-//   3. Tabla principal — una línea por bache (o por partial si
-//      partials_merged=false): Bache | Cód. Trilladora | Cód. Mezcla |
-//      Variedad | Proceso | kg seco | Factor | # Sacos.
-//   4. Totales: # lotes, total kg seco, total lonas.
-//   5. Por cada bache: lista de asignaciones (pedido / cliente).
+// Dos documentos separados:
+//
+//   generateShipmentPdf(shipment)
+//     → Remisión que va a la trilladora. Solo data del envío: destino,
+//       conductor, tabla por línea (bache, cód. trilladora, cód.
+//       mezcla, variedad, proceso, kg seco, factor, # sacos), totales
+//       y firmas. NO incluye asignaciones de pedidos para no
+//       confundir a la trilladora sobre dónde va cada bache.
+//
+//   generateShipmentAssignmentsPdf(shipment)
+//     → Documento interno de Forest. Para cada bache lista las
+//       asignaciones a pedidos (cliente, contrato, región, entrega,
+//       kg verde).
 
 import { fmtKg, fmtDate } from './format.js';
 
@@ -217,24 +220,114 @@ export function generateShipmentPdf(shipment) {
   });
   y += 50;
 
-  // ── Asignaciones por bache (pedidos / clientes) ──
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(...INK_700);
-  doc.text('ASIGNACIONES POR BACHE', M, y);
-  y += 8;
+  // ── Firmas + footer ──
+  if (y > 700) { doc.addPage(); y = 40; }
+  y += 30;
+  doc.setDrawColor(...SAND);
+  doc.setLineWidth(0.5);
+  doc.line(M, y, M + 220, y);
+  doc.line(W - M - 220, y, W - M, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...INK_500);
+  doc.text('Despacha (El Vergel)', M, y + 12);
+  doc.text('Recibe (trilladora)', W - M - 220, y + 12);
 
+  doc.setFontSize(7);
+  doc.setTextColor(...INK_500);
+  doc.text(
+    `Remisión · Generado: ${new Date().toLocaleString('es-CO')}  ·  Forest Production Bridge`,
+    W / 2, doc.internal.pageSize.getHeight() - 20, { align: 'center' },
+  );
+
+  doc.save(`remision-${shipment.shipment_code || 'despacho'}.pdf`);
+}
+
+// ── PDF de asignaciones (documento interno de Forest) ──────────
+// Mismo header que la remisión pero con sello "ASIGNACIONES — USO
+// INTERNO" para no confundirse. Por cada bache lista las
+// asignaciones a pedidos.
+export function generateShipmentAssignmentsPdf(shipment) {
+  const jsPDF = ensureLib();
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+
+  const W = doc.internal.pageSize.getWidth();
+  const M = 40;
+
+  // Header
+  doc.setFillColor(...NAVY_DARK);
+  doc.rect(0, 0, W, 70, 'F');
+  doc.setFillColor(...YELLOW);
+  doc.roundedRect(M, 18, 36, 36, 6, 6, 'F');
+  doc.setTextColor(...NAVY_DARK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text('F', M + 18, 43, { align: 'center' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FOREST  ↔  EL VERGEL', M + 50, 32);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(231, 226, 68);
+  doc.text('Asignaciones del despacho · Uso interno', M + 50, 46);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(...YELLOW);
+  doc.text(shipment.shipment_code || '—', W - M, 32, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`Fecha: ${fmtDate(shipment.shipment_date)}`, W - M, 48, { align: 'right' });
+
+  let y = 90;
+
+  // Banda con destino (solo referencia, sin conductor)
+  const destLabel = shipment.destino_kind === 'Otro'
+    ? (shipment.destino_other || 'Otro')
+    : (shipment.destino_kind || '—');
+  doc.setFillColor(...CREAM);
+  doc.roundedRect(M, y, W - M * 2, 28, 4, 4, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...INK_500);
+  doc.text('DESTINO', M + 12, y + 12);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...NAVY);
+  doc.text(destLabel, M + 12, y + 22);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...INK_500);
+  doc.text(
+    `${shipment.totals?.lot_count ?? shipment.lots.length} lote(s)  ·  ${shipment.totals?.order_count ?? '—'} pedido(s)  ·  ${fmtKg(shipment.totals?.kg_green || 0)} verde`,
+    W - M - 12, y + 18, { align: 'right' },
+  );
+  y += 44;
+
+  // Asignaciones por bache
   shipment.lots.forEach((lot) => {
     if (y > 720) { doc.addPage(); y = 40; }
     const label = lot.is_blend
       ? `[MZ] ${lot.blend_code || lot.bache_code || '—'}`
       : (lot.bache_code || lot.lot_code || '—');
 
+    // Strip navy con bache y referencia
+    doc.setFillColor(...NAVY);
+    doc.roundedRect(M, y, W - M * 2, 22, 3, 3, 'F');
     doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...YELLOW);
+    doc.text(label, M + 10, y + 15);
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(...NAVY);
-    doc.text(`${label}  ·  ${lot.reference_name || ''}`, M, y);
-    y += 4;
+    doc.setTextColor(255, 255, 255);
+    doc.text(lot.reference_name || '—', M + 110, y + 15);
+    const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    doc.setFontSize(8);
+    doc.setTextColor(149, 181, 206);
+    doc.text(`${lot.process_type || ''} · ${fmtKg(kgInShipment)}`, W - M - 10, y + 15, { align: 'right' });
+    y += 26;
 
     if (lot.assignments && lot.assignments.length > 0) {
       doc.autoTable({
@@ -253,40 +346,28 @@ export function generateShipmentPdf(shipment) {
             { content: fmtKg(a.kg_green_allocated), styles: { halign: 'right', fontStyle: 'bold' } },
           ];
         }),
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 3, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 4, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
         headStyles: { fillColor: CREAM, textColor: INK_500, fontStyle: 'bold', fontSize: 7 },
         alternateRowStyles: { fillColor: [251, 251, 248] },
-        columnStyles: { 0: { cellWidth: 64, fontStyle: 'bold' }, 6: { cellWidth: 56, halign: 'right' } },
+        columnStyles: { 0: { cellWidth: 64, fontStyle: 'bold' }, 6: { cellWidth: 60, halign: 'right' } },
       });
-      y = doc.lastAutoTable.finalY + 8;
+      y = doc.lastAutoTable.finalY + 10;
     } else {
       doc.setFont('helvetica', 'italic');
-      doc.setFontSize(8);
+      doc.setFontSize(9);
       doc.setTextColor(...INK_500);
       doc.text('— sin asignaciones —', M, y + 12);
       y += 22;
     }
   });
 
-  // ── Firmas + footer ──
-  if (y > 700) { doc.addPage(); y = 40; }
-  y += 30;
-  doc.setDrawColor(...SAND);
-  doc.setLineWidth(0.5);
-  doc.line(M, y, M + 220, y);
-  doc.line(W - M - 220, y, W - M, y);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...INK_500);
-  doc.text('Despacha (El Vergel)', M, y + 12);
-  doc.text('Recibe (Forest)', W - M - 220, y + 12);
-
+  // Footer
   doc.setFontSize(7);
   doc.setTextColor(...INK_500);
   doc.text(
-    `Generado: ${new Date().toLocaleString('es-CO')}  ·  Forest Production Bridge`,
+    `Asignaciones · Uso interno · Generado: ${new Date().toLocaleString('es-CO')}`,
     W / 2, doc.internal.pageSize.getHeight() - 20, { align: 'center' },
   );
 
-  doc.save(`${shipment.shipment_code || 'despacho'}.pdf`);
+  doc.save(`asignaciones-${shipment.shipment_code || 'despacho'}.pdf`);
 }
