@@ -55,6 +55,11 @@ const CANNED = {
   '/api/badges':                     { pending_orders: 0, urgent_orders: 0, ready_lots_unshipped: 0 },
   '/api/email-log-list':             { emails: [] },
   '/api/production-config-get':      { config: { weekly_cherry_capacity_kg: 60000 } },
+  '/api/weekly-plan-get':            { plan_row: null,
+    snapshot: { fermentation_used_kg: 0, mecanico_used_kg: 0, patios_natural_used_kg: 0, patios_hl_used_kg: 0 },
+    capacity: { fermentation_kg: 25000, mecanico_kg: 5000, patios_natural_kg: 20000, patios_hl_kg: 40000 },
+    queue_summary: { orders_count: 0, total_remaining_kg: 0 },
+    queue_orders: [] },
 };
 
 function pathOf(url) {
@@ -105,6 +110,7 @@ const VIEW_CASES = [
   { file: 'finca-despachos.js',    fn: 'fincaDespachosView',   session: SESSIONS.finca },
   { file: 'finca-monitoreo.js',    fn: 'fincaMonitoreoView',   session: SESSIONS.finca },
   { file: 'finca-cola.js',         fn: 'fincaColaView',        session: SESSIONS.finca },
+  { file: 'finca-planeacion.js',   fn: 'fincaPlaneacionView',  session: SESSIONS.finca },
   { file: 'admin-dashboard.js',    fn: 'adminDashboardView',   session: SESSIONS.admin },
   { file: 'admin-config.js',       fn: 'adminConfigView',      session: SESSIONS.admin },
 ];

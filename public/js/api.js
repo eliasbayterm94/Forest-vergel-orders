@@ -90,6 +90,9 @@ export const api = {
 
   capacity: (payload) => request('POST', '/api/capacity-calculate', { body: payload }),
   processLeadTimes: () => request('GET', '/api/process-lead-times-list'),
+
+  weeklyPlanGet:     (week) => request('GET',  '/api/weekly-plan-get', { query: { week } }),
+  weeklyPlanCompute: (payload) => request('POST', '/api/weekly-plan-compute', { body: payload }),
   search: (q, limit) => request('GET', '/api/search', { query: { q, limit } }),
   auditLog: (query) => request('GET', '/api/audit-log-list', { query }),
   badges: () => request('GET', '/api/badges'),
