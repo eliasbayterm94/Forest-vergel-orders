@@ -359,7 +359,7 @@ function simulateFlow({ weekStartDate, planDays, lots }) {
       for (const d of weekDays) occByDay[d].fermentation += kg;
       gantt.push({
         kind: 'real',
-        label: l.lot_code || `Lote ${String(l.id).slice(0, 8)}`,
+        label: l.bache_code || l.lot_code || 'Bache sin código',
         process: l.process_type,
         kg_green: round2(kg),
         stages: [{ stage: 'Fermentación', resource: 'fermentation',
@@ -375,7 +375,7 @@ function simulateFlow({ weekStartDate, planDays, lots }) {
       for (const d of weekDays) occByDay[d][resource] += kg;
       gantt.push({
         kind: 'real',
-        label: l.lot_code || `Lote ${String(l.id).slice(0, 8)}`,
+        label: l.bache_code || l.lot_code || 'Bache sin código',
         process: l.process_type,
         kg_green: round2(kg),
         stages: [{ stage: stageLabel, resource, from: weekDays[0], to: weekDays[6], kg_green: round2(kg) }],

@@ -243,10 +243,10 @@ function alertsBlock(planRow, coverage) {
       el('p', { class: 'eyebrow text-[10px]', text: `Alertas (${alerts.length})` }),
       el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
         coverage
-          ? el('span', { class: 'mr-3' }, [
-              'Cobertura: ',
-              el('strong', { class: 'text-navy', text: fmtKg(coverage.covered_kg) }),
-              el('span', { class: 'text-ink-300', text: ` / ${fmtKg(coverage.demand_kg)} verde` }),
+          ? el('span', { class: 'mr-3', title: 'Los pedidos se contabilizan en kg verde (producto final).' }, [
+              'Cobertura de pedidos: ',
+              el('strong', { class: 'text-navy',
+                text: `${fmtKg(coverage.covered_kg)} / ${fmtKg(coverage.demand_kg)} kg verde` }),
             ])
           : null,
         'Factibilidad: ',
@@ -358,8 +358,8 @@ function heatCell(used, cap) {
     class: 'text-center px-2 py-1.5',
     style: `background:${bg};color:${color};`,
   }, [
-    el('div', { class: 'font-semibold', text: used > 0 ? `${Math.round(pct)}%` : '—' }),
-    used > 0 ? el('div', { class: 'text-[9px] opacity-80', text: fmtKg(used) }) : null,
+    el('div', { class: 'font-semibold text-[12px]', text: used > 0 ? `${fmtKg(used)} kg` : '—' }),
+    used > 0 ? el('div', { class: 'text-[9px] opacity-75', text: `${Math.round(pct)}%` }) : null,
   ]);
 }
 
@@ -434,7 +434,12 @@ function ganttRow(row, days, dayIdx) {
             ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#fbe6c2;color:#8a5100;', text: 'A designar' })
             : null,
         el('span', { class: 'font-display font-semibold text-navy text-[11px]', text: row.label }),
-        el('span', { class: 'text-[10px] font-mono text-ink-500', text: `${fmtKg(row.kg_green)} verde` }),
+        // Planeados: mostrar el input (kg cereza / despulpado / seco).
+        // Reales: ya están en proceso, mostramos kg en planta.
+        row.kind === 'real'
+          ? el('span', { class: 'text-[10px] font-mono text-ink-500', text: `${fmtKg(row.kg_green)} kg en planta` })
+          : el('span', { class: 'text-[10px] font-mono text-ink-500',
+              text: `${fmtKg(row.kg_input)} kg ${row.stage_input}` }),
       ]),
       row.reference_name
         ? el('div', { class: 'text-[10px] text-ink-500 truncate', text: row.reference_name + (row.client_name ? ' · ' + row.client_name : '') })
@@ -496,10 +501,6 @@ function planDayRow(day, idx) {
     ]),
     // Columna ocupación
     el('div', { class: 'shrink-0 w-32 text-[10px] font-mono text-ink-500 space-y-0.5' }, [
-      el('p', {}, [
-        `Ferm `,
-        el('strong', { class: 'text-ink-700', text: fmtKg(day.ferm_used || 0) }),
-      ]),
       el('p', {}, [`${batches.length} bache${batches.length === 1 ? '' : 's'}`]),
     ]),
   ]);
@@ -518,9 +519,7 @@ function batchLine(b) {
     el('span', { class: 'text-ink-300', text: '·' }),
     el('span', { class: 'text-ink-700' }, [
       el('strong', { text: fmtKg(b.kg_input) }),
-      ' ', b.stage_input, ' → ',
-      el('strong', { text: fmtKg(b.kg_green) }),
-      ' verde',
+      ' kg ', b.stage_input,
     ]),
     b.order_code
       ? el('span', { class: 'ctrm-code text-[10px]', title: `${b.order_code}${b.client_name ? ' · ' + b.client_name : ''}`, text: b.order_code })

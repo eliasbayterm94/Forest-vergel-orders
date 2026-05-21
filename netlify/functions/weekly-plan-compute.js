@@ -57,10 +57,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       Number(o.kg_green_accepted || o.kg_green_required || 0) - (allocByOrder.get(o.id) || 0)),
   }));
 
-  // Baches en curso (no Delivered) para snapshot de planta
+  // Baches en curso (no Delivered) para snapshot de planta + Gantt
   const { data: lots, error: lErr } = await sb
     .from('production_lots')
-    .select('id, status, process_type, kg_green_expected, kg_green_actual, drying_locations')
+    .select('id, bache_code, lot_code, status, process_type, kg_green_expected, kg_green_actual, drying_locations')
     .neq('status', 'Delivered');
   if (lErr) return serverErr('Lots lookup failed', lErr.message);
 
