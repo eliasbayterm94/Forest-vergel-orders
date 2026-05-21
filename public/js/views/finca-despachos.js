@@ -308,8 +308,23 @@ export async function fincaDespachosView() {
     // Selection state:
     //   wholeLots:  Set<lot_id>     — for lots without partials
     //   partials:   Set<partial_id> — for partial-mode lots
+    //   lotFields:  Map<lot_id, { codigo_trilladora, codigo_mezcla, num_sacos, partials_merged }>
     const wholeLots = new Set(Array.isArray(preselectLotIds) ? preselectLotIds : []);
     const partialIds = new Set();
+    const lotFields = new Map();
+    const partialFields = new Map(); // partial_id → {codigo_trilladora, codigo_mezcla, num_sacos}
+    function getLotFields(lotId) {
+      if (!lotFields.has(lotId)) {
+        lotFields.set(lotId, { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true });
+      }
+      return lotFields.get(lotId);
+    }
+    function getPartialFields(pid) {
+      if (!partialFields.has(pid)) {
+        partialFields.set(pid, { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '' });
+      }
+      return partialFields.get(pid);
+    }
 
     const dateInput = el('input', {
       type: 'date', value: new Date().toISOString().slice(0, 10),
@@ -323,6 +338,25 @@ export async function fincaDespachosView() {
       rows: '2', placeholder: 'Notas (opcional)',
       class: 'ctrm-textarea',
     });
+
+    // ── Destino y conductor ──
+    const destinoSelect = el('select', { class: 'ctrm-input' }, [
+      el('option', { value: '' }, ['— Sin especificar —']),
+      el('option', { value: 'Vertical' },   ['Vertical']),
+      el('option', { value: 'Tribox' },     ['Tribox']),
+      el('option', { value: 'Trillanova' }, ['Trillanova']),
+      el('option', { value: 'Otro' },       ['Otro']),
+    ]);
+    const destinoOtherInput = el('input', {
+      type: 'text', class: 'ctrm-input', placeholder: 'Especificar destino',
+    });
+    destinoOtherInput.style.display = 'none';
+    destinoSelect.addEventListener('change', () => {
+      destinoOtherInput.style.display = destinoSelect.value === 'Otro' ? '' : 'none';
+    });
+    const driverCedula = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'CC del conductor' });
+    const driverPlacas = el('input', { type: 'text', class: 'ctrm-input mono', placeholder: 'Placa del vehículo' });
+    const driverName   = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'Nombre del conductor' });
 
     const counter = el('div', {
       class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono',
@@ -395,12 +429,17 @@ export async function fincaDespachosView() {
             type: 'checkbox', class: 'h-4 w-4 accent-navy mt-1', checked,
             onChange: (e) => {
               if (e.target.checked) wholeLots.add(l.id); else wholeLots.delete(l.id);
+              renderLots();
               recountSummary();
             },
           });
-          lotsList.append(el('label', { class: 'flex items-start gap-3 p-2 rounded-md border border-sand bg-white cursor-pointer hover:border-navy' }, [
+          const detailsBlock = checked ? perLotInputs(l, getLotFields(l.id)) : null;
+          lotsList.append(el('div', { class: 'flex items-start gap-3 p-2 rounded-md border border-sand bg-white' }, [
             cb,
-            el('div', { class: 'flex-1 min-w-0' }, [lotHeader, lotMeta, assignmentsLine]),
+            el('div', { class: 'flex-1 min-w-0' }, [
+              lotHeader, lotMeta, assignmentsLine,
+              detailsBlock,
+            ]),
           ]));
           return;
         }
@@ -416,6 +455,7 @@ export async function fincaDespachosView() {
             checked, disabled: disabled ? 'true' : null,
             onChange: (e) => {
               if (e.target.checked) partialIds.add(p.id); else partialIds.delete(p.id);
+              renderLots();
               recountSummary();
             },
           });
@@ -453,12 +493,35 @@ export async function fincaDespachosView() {
         }, [partials.filter((p) => !p.shipment_id && !p.rejected_at).every((p) => partialIds.has(p.id))
             ? 'Quitar todos' : 'Seleccionar todos']);
 
+        const anySelected = partials.some((p) => partialIds.has(p.id));
+        const lf = getLotFields(l.id);
+        const mergedToggle = anySelected ? el('div', { class: 'flex items-center gap-2 mt-2 text-[11px]' }, [
+          el('label', { class: 'inline-flex items-center gap-1' }, [
+            el('input', {
+              type: 'checkbox', class: 'h-3.5 w-3.5 accent-navy',
+              checked: lf.partials_merged ? true : undefined,
+              onChange: (e) => { lf.partials_merged = e.target.checked; renderLots(); },
+            }),
+            el('span', { class: 'text-ink-700', text: 'Mezclar parciales en el despacho (una sola línea con códigos compartidos)' }),
+          ]),
+        ]) : null;
+        const perPartialControls = anySelected && !lf.partials_merged
+          ? el('div', { class: 'space-y-1 mt-2' },
+              partials.filter((p) => partialIds.has(p.id)).map((p) =>
+                perPartialInputs(p, getPartialFields(p.id))))
+          : null;
+        const mergedControls = anySelected && lf.partials_merged
+          ? perLotInputs(l, lf, { partialsContext: true })
+          : null;
         lotsList.append(el('div', { class: 'p-2 rounded-md border border-sand bg-white' }, [
           el('div', { class: 'flex items-start justify-between gap-2 mb-1' }, [
             el('div', { class: 'flex-1 min-w-0' }, [lotHeader, lotMeta, assignmentsLine]),
             allBtn,
           ]),
           el('div', { class: 'space-y-1 mt-2' }, partialRows),
+          mergedToggle,
+          mergedControls,
+          perPartialControls,
         ]));
       });
     }
@@ -469,6 +532,19 @@ export async function fincaDespachosView() {
       el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
         labelled('Fecha de despacho', dateInput),
         labelled('Código (opcional)', codeInput),
+      ]),
+      // Destino + conductor
+      el('div', { class: 'p-3 bg-cream rounded-md border border-sand space-y-2' }, [
+        el('p', { class: 'eyebrow text-[10px]', text: 'Destino y conductor' }),
+        el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-2' }, [
+          labelled('Destino', destinoSelect),
+          labelled('Especificar destino', destinoOtherInput),
+        ]),
+        el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, [
+          labelled('Conductor — CC', driverCedula),
+          labelled('Conductor — Nombre', driverName),
+          labelled('Placas', driverPlacas),
+        ]),
       ]),
       labelled('Notas', notesInput),
       el('div', {}, [
@@ -482,8 +558,11 @@ export async function fincaDespachosView() {
           class: 'ctrm-btn ctrm-btn-primary',
           type: 'button',
           onClick: async () => {
-            const items = buildItems(readyLots, wholeLots, partialIds);
+            const items = buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields);
             if (items.length === 0) { toast('Selecciona al menos un lote o parcial', 'warning'); return; }
+            if (destinoSelect.value === 'Otro' && !destinoOtherInput.value.trim()) {
+              toast('Especifica el destino "Otro"', 'warning'); return;
+            }
             const partialCount = items.reduce((s, it) => s + (it.partial_ids ? it.partial_ids.length : 0), 0);
             const wholeCount   = items.filter((it) => !it.partial_ids).length;
             const summary = [
@@ -500,6 +579,11 @@ export async function fincaDespachosView() {
                 shipment_code: codeInput.value.trim() || undefined,
                 shipment_date: dateInput.value,
                 notes: notesInput.value || undefined,
+                destino_kind: destinoSelect.value || undefined,
+                destino_other: destinoSelect.value === 'Otro' ? destinoOtherInput.value.trim() : undefined,
+                driver_cedula: driverCedula.value.trim() || undefined,
+                driver_placas: driverPlacas.value.trim() || undefined,
+                driver_name:   driverName.value.trim()   || undefined,
                 items,
               });
               const compl = (r.completions || []).length;
@@ -517,18 +601,93 @@ export async function fincaDespachosView() {
   }
 }
 
-function buildItems(readyLots, wholeLots, partialIds) {
+// Inputs por bache (código trilladora / código mezcla / # sacos) que
+// aparecen cuando el bache está seleccionado en el despacho.
+function perLotInputs(_lot, fields, opts = {}) {
+  const t = el('input', { type: 'text', class: 'ctrm-input mono text-[11px]',
+    placeholder: 'PP-XXXX', value: fields.codigo_trilladora || '' });
+  const m = el('input', { type: 'text', class: 'ctrm-input mono text-[11px]',
+    placeholder: 'Código mezcla', value: fields.codigo_mezcla || '' });
+  const s = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono text-[11px] text-right',
+    placeholder: '0', value: fields.num_sacos || '' });
+  t.addEventListener('input', () => { fields.codigo_trilladora = t.value; });
+  m.addEventListener('input', () => { fields.codigo_mezcla    = m.value; });
+  s.addEventListener('input', () => { fields.num_sacos        = s.value === '' ? '' : Math.max(0, Math.floor(Number(s.value) || 0)); });
+  return el('div', { class: `grid grid-cols-3 gap-2 mt-2 p-2 rounded-md ${opts.partialsContext ? 'bg-cream' : 'bg-cream'}` }, [
+    el('label', { class: 'block' }, [
+      el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: 'Cód. trilladora' }),
+      t,
+    ]),
+    el('label', { class: 'block' }, [
+      el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: 'Cód. mezcla' }),
+      m,
+    ]),
+    el('label', { class: 'block' }, [
+      el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: '# Sacos' }),
+      s,
+    ]),
+  ]);
+}
+
+function perPartialInputs(partial, fields) {
+  const wrapper = el('div', { class: 'flex items-end gap-2 p-2 rounded-md bg-cream' }, [
+    el('span', { class: 'ctrm-pill dark text-[10px]', text: `Parcial ${partial.parcial_letter}` }),
+  ]);
+  const t = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-28',
+    placeholder: 'PP-XXXX', value: fields.codigo_trilladora || '' });
+  const m = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-32',
+    placeholder: 'Cód. mezcla', value: fields.codigo_mezcla || '' });
+  const s = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono text-[11px] w-20 text-right',
+    placeholder: '0', value: fields.num_sacos || '' });
+  t.addEventListener('input', () => { fields.codigo_trilladora = t.value; });
+  m.addEventListener('input', () => { fields.codigo_mezcla    = m.value; });
+  s.addEventListener('input', () => { fields.num_sacos        = s.value === '' ? '' : Math.max(0, Math.floor(Number(s.value) || 0)); });
+  wrapper.append(
+    el('label', {}, [el('span', { class: 'text-[10px] block text-ink-500', text: 'Trilladora' }), t]),
+    el('label', {}, [el('span', { class: 'text-[10px] block text-ink-500', text: 'Mezcla' }),     m]),
+    el('label', {}, [el('span', { class: 'text-[10px] block text-ink-500', text: '# Sacos' }),    s]),
+  );
+  return wrapper;
+}
+
+function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) {
   const items = [];
+  const norm = (f) => ({
+    codigo_trilladora: (f.codigo_trilladora || '').trim() || null,
+    codigo_mezcla:     (f.codigo_mezcla || '').trim() || null,
+    num_sacos:         f.num_sacos === '' || f.num_sacos == null ? null : Number(f.num_sacos),
+  });
   for (const l of readyLots) {
     const partials = l.partials || [];
+    const lf = lotFields.get(l.id) || { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true };
     if (partials.length === 0) {
       if (wholeLots.has(l.id)) {
-        items.push({ production_lot_id: l.id, partial_ids: null });
+        items.push({
+          production_lot_id: l.id, partial_ids: null,
+          ...norm(lf),
+          partials_merged: true,
+        });
       }
     } else {
       const selected = partials.filter((p) => partialIds.has(p.id)).map((p) => p.id);
-      if (selected.length > 0) {
-        items.push({ production_lot_id: l.id, partial_ids: selected });
+      if (selected.length === 0) continue;
+      if (lf.partials_merged !== false) {
+        // Mezclar: una sola entrada con todos los partials.
+        items.push({
+          production_lot_id: l.id, partial_ids: selected,
+          ...norm(lf),
+          partials_merged: true,
+        });
+      } else {
+        // Separar: una entrada por parcial con sus propios códigos.
+        for (const pid of selected) {
+          const pf = partialFields.get(pid) || { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '' };
+          items.push({
+            production_lot_id: l.id, partial_ids: [pid],
+            ...norm(pf),
+            partials_merged: false,
+          });
+        }
       }
     }
   }

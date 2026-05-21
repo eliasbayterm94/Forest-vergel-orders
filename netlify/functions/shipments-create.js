@@ -14,8 +14,15 @@ const { bogotaToday } = require('./_lib/bogotaTime');
  *   shipment_code  (optional, auto DSP-YYYY-NNNN)
  *   shipment_date  YYYY-MM-DD (default: today Bogota)
  *   notes          string (optional)
+ *   destino_kind   'Vertical' | 'Tribox' | 'Trillanova' | 'Otro' (optional)
+ *   destino_other  string (required when destino_kind='Otro')
+ *   driver_cedula  string (optional)
+ *   driver_placas  string (optional)
+ *   driver_name    string (optional)
  *   items          [
- *     { production_lot_id: uuid, partial_ids: null | [uuid] }
+ *     { production_lot_id: uuid, partial_ids: null | [uuid],
+ *       codigo_trilladora?: string, codigo_mezcla?: string,
+ *       num_sacos?: int, partials_merged?: boolean }
  *   ]
  *
  *   - partial_ids null/empty → ship the whole lot. Only allowed when
@@ -55,6 +62,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const shipment_date = body.shipment_date || bogotaToday();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(shipment_date)) return badReq('shipment_date must be YYYY-MM-DD', 'INVALID_DATE');
   const notes = body.notes == null ? null : String(body.notes);
+
+  // Destino + conductor (todos opcionales)
+  const DESTINOS = new Set(['Vertical', 'Tribox', 'Trillanova', 'Otro']);
+  const destino_kind = body.destino_kind ? String(body.destino_kind).trim() : null;
+  if (destino_kind && !DESTINOS.has(destino_kind)) {
+    return badReq('destino_kind must be Vertical/Tribox/Trillanova/Otro', 'INVALID_DESTINO');
+  }
+  const destino_other = body.destino_other == null ? null : String(body.destino_other).trim();
+  if (destino_kind === 'Otro' && !destino_other) {
+    return badReq('destino_other requerido cuando destino_kind=Otro', 'DESTINO_OTHER_REQUIRED');
+  }
+  const driver_cedula = body.driver_cedula == null ? null : String(body.driver_cedula).trim();
+  const driver_placas = body.driver_placas == null ? null : String(body.driver_placas).trim().toUpperCase();
+  const driver_name   = body.driver_name   == null ? null : String(body.driver_name).trim();
 
   const sb = getSupabase();
   const lotIds = [...new Set(items.map((i) => i.production_lot_id))];
@@ -101,6 +122,14 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     const lot = lotById.get(it.production_lot_id);
     const partials = lot.lot_partials || [];
     const wantPartialIds = (it.partial_ids || []).filter(Boolean);
+    // Campos por bache que se aplican a cada shipment_lots de este item
+    const extras = {
+      codigo_trilladora: it.codigo_trilladora == null ? null : String(it.codigo_trilladora).trim(),
+      codigo_mezcla:     it.codigo_mezcla     == null ? null : String(it.codigo_mezcla).trim(),
+      num_sacos:         it.num_sacos == null ? null
+                          : (Number.isFinite(Number(it.num_sacos)) ? Math.max(0, Math.floor(Number(it.num_sacos))) : null),
+      partials_merged:   it.partials_merged === false ? false : true,
+    };
 
     if (partials.length === 0) {
       // Whole-lot mode required.
@@ -117,7 +146,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
           'LOT_ALREADY_SHIPPED',
         );
       }
-      linkRows.push({ production_lot_id: lot.id, lot_partial_id: null });
+      linkRows.push({ production_lot_id: lot.id, lot_partial_id: null, ...extras });
     } else {
       // Partial-mode required.
       if (wantPartialIds.length === 0) {
@@ -147,7 +176,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
             'PARTIAL_ALREADY_SHIPPED',
           );
         }
-        linkRows.push({ production_lot_id: lot.id, lot_partial_id: p.id });
+        linkRows.push({ production_lot_id: lot.id, lot_partial_id: p.id, ...extras });
       }
     }
   }
@@ -158,6 +187,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const { data: ship, error: sErr } = await sb
     .from('shipments').insert({
       shipment_code, shipment_date, notes,
+      destino_kind, destino_other,
+      driver_cedula, driver_placas, driver_name,
       created_by: session.role,
     }).select().single();
   if (sErr) {

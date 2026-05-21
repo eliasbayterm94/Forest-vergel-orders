@@ -18,11 +18,15 @@ exports.handler = requireAuth(async (event) => {
     .from('shipments')
     .select(`
       id, shipment_code, shipment_date, notes, created_by, created_at,
+      destino_kind, destino_other,
+      driver_cedula, driver_placas, driver_name,
       shipment_lots (
         id, lot_partial_id,
+        codigo_trilladora, codigo_mezcla, num_sacos, partials_merged,
         lot_partials ( id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield ),
         production_lots (
-          id, lot_code, bache_code, process_type, processing_stage,
+          id, lot_code, bache_code, blend_code, is_blend,
+          process_type, processing_stage,
           kg_cherry_input, kg_despulpado_input,
           kg_dried_output, factor_rendimiento,
           kg_green_expected, kg_green_actual,
@@ -58,6 +62,8 @@ exports.handler = requireAuth(async (event) => {
           id: l.id,
           lot_code: l.lot_code,
           bache_code: l.bache_code,
+          blend_code: l.blend_code,
+          is_blend: !!l.is_blend,
           process_type: l.process_type,
           processing_stage: l.processing_stage,
           kg_cherry_input:    l.kg_cherry_input,
@@ -66,6 +72,13 @@ exports.handler = requireAuth(async (event) => {
           factor_rendimiento: l.factor_rendimiento,
           kg_green_expected:  l.kg_green_expected,
           kg_green_actual:    l.kg_green_actual,
+          // Por-bache: tomamos los valores del primer shipment_lots de
+          // este bache. Si hay varios partials separados con valores
+          // distintos, el operador puede verlos por shipment_lot abajo.
+          codigo_trilladora: sl.codigo_trilladora,
+          codigo_mezcla:     sl.codigo_mezcla,
+          num_sacos:         sl.num_sacos,
+          partials_merged:   sl.partials_merged !== false,
           reference_name: l.coffee_references && l.coffee_references.name,
           varieties: (l.production_lot_varieties || [])
             .map((j) => j.coffee_varieties).filter(Boolean),
@@ -97,6 +110,11 @@ exports.handler = requireAuth(async (event) => {
           kg_dried: Number(sl.lot_partials.kg_dried),
           factor_rendimiento: Number(sl.lot_partials.factor_rendimiento),
           kg_green_yield: Number(sl.lot_partials.kg_green_yield),
+          // Si los parciales del bache se mostraron separados, cada uno
+          // puede traer sus propios códigos.
+          codigo_trilladora: sl.codigo_trilladora,
+          codigo_mezcla:     sl.codigo_mezcla,
+          num_sacos:         sl.num_sacos,
         });
       } else {
         g.whole_lot_in_shipment = true;
@@ -115,6 +133,24 @@ exports.handler = requireAuth(async (event) => {
     const totalKgGreen = lots.reduce((s, l) => s + Number(l.kg_green_in_shipment || 0), 0);
     const totalAllocated = lots.reduce((s, l) =>
       s + l.assignments.reduce((ss, a) => ss + Number(a.kg_green_allocated || 0), 0), 0);
+    // Kg seco efectivo en el despacho, prorrateado para parciales.
+    const totalKgDried = lots.reduce((sum, l) => {
+      const dried = Number(l.kg_dried_output || 0);
+      const greenAc = Number(l.kg_green_actual || l.kg_green_expected || 0);
+      if (l.whole_lot_in_shipment) return sum + dried;
+      // Parciales: kg_dried directo de cada partial.
+      const partialDried = (l.partials_in_shipment || []).reduce((s, p) => {
+        if (p.kg_dried) return s + Number(p.kg_dried);
+        // Fallback: prorratear por kg_green.
+        return s + (greenAc > 0 ? dried * (Number(p.kg_green_yield || 0) / greenAc) : 0);
+      }, 0);
+      return sum + partialDried;
+    }, 0);
+    const totalSacos = lots.reduce((s, l) => {
+      if (l.partials_merged !== false) return s + (Number(l.num_sacos) || 0);
+      // Si separados, sumar de partials.
+      return s + (l.partials_in_shipment || []).reduce((ss, p) => ss + (Number(p.num_sacos) || 0), 0);
+    }, 0);
     const orderIds = new Set();
     lots.forEach((l) => l.assignments.forEach((a) => a.order && orderIds.add(a.order.id)));
 
@@ -125,12 +161,19 @@ exports.handler = requireAuth(async (event) => {
       notes: s.notes,
       created_by: s.created_by,
       created_at: s.created_at,
+      destino_kind: s.destino_kind,
+      destino_other: s.destino_other,
+      driver_cedula: s.driver_cedula,
+      driver_placas: s.driver_placas,
+      driver_name:   s.driver_name,
       lots,
       totals: {
         lot_count: lots.length,
         order_count: orderIds.size,
         kg_green: Math.round(totalKgGreen * 100) / 100,
         kg_green_allocated: Math.round(totalAllocated * 100) / 100,
+        kg_dried: Math.round(totalKgDried * 100) / 100,
+        num_sacos: totalSacos,
       },
     };
   });
