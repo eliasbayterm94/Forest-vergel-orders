@@ -93,6 +93,7 @@ export const api = {
 
   weeklyPlanGet:     (week) => request('GET',  '/api/weekly-plan-get', { query: { week } }),
   weeklyPlanCompute: (payload) => request('POST', '/api/weekly-plan-compute', { body: payload }),
+  lotBlendCreate:    (payload) => request('POST', '/api/lot-blend-create', { body: payload }),
   search: (q, limit) => request('GET', '/api/search', { query: { q, limit } }),
   auditLog: (query) => request('GET', '/api/audit-log-list', { query }),
   badges: () => request('GET', '/api/badges'),

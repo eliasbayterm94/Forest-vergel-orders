@@ -11,6 +11,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { emptyStateCard } from '../ui/empty.js';
+import { openModal } from '../ui/modal.js';
 
 export async function fincaPuntoFinalView() {
   const [lotsRes, ordersRes] = await Promise.all([
@@ -141,17 +142,33 @@ export async function fincaPuntoFinalView() {
       onInput: (e) => { dateToValue = e.target.value; redraw(); },
     });
 
-    const cta = el('button', {
-      class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px]',
+    const mezclarBtn = el('button', {
+      class: 'ctrm-btn ctrm-btn-soft uppercase tracking-eyebrow text-[11px]',
       type: 'button',
-      onClick: () => {
-        if (selected.size === 0) { toast('Selecciona al menos un lote', 'warning'); return; }
-        try {
-          sessionStorage.setItem('punto-final-preselect', JSON.stringify([...selected]));
-        } catch { /* fallback: nada */ }
-        navigate('/finca/despachos');
+      onClick: async () => {
+        if (selected.size < 2) {
+          toast('Selecciona al menos 2 baches para mezclar', 'warning'); return;
+        }
+        const sel = enriched.filter((l) => selected.has(l.id));
+        const out = await openBlendModal(sel);
+        if (out && out.ok) { toast('Mezcla creada', 'success'); navigate('/finca/punto-final'); }
       },
-    }, [selected.size > 0 ? `Generar despacho (${selected.size})` : 'Generar despacho']);
+    }, [selected.size >= 2 ? `Mezclar (${selected.size})` : 'Mezclar']);
+
+    const cta = el('div', { class: 'flex items-center gap-2' }, [
+      mezclarBtn,
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px]',
+        type: 'button',
+        onClick: () => {
+          if (selected.size === 0) { toast('Selecciona al menos un lote', 'warning'); return; }
+          try {
+            sessionStorage.setItem('punto-final-preselect', JSON.stringify([...selected]));
+          } catch { /* fallback: nada */ }
+          navigate('/finca/despachos');
+        },
+      }, [selected.size > 0 ? `Generar despacho (${selected.size})` : 'Generar despacho']),
+    ]);
 
     root.append(
       pageTitle('Punto Final', `Lotes en bodega · ${shown.length} de ${enriched.length}`, cta),
@@ -272,11 +289,22 @@ export async function fincaPuntoFinalView() {
 
       tbody.append(el('tr', { class: isSel ? 'bg-cream' : 'hover:bg-cream' }, [
         cellNode('Sel', '', rowCb),
-        cellTxt('Bache', 'font-mono text-navy font-semibold', l.bache_code || l.lot_code),
+        cellNode('Bache', 'font-mono text-navy font-semibold', el('span', {}, [
+          l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' }) : null,
+          document.createTextNode(l.is_blend ? (l.blend_code || l.bache_code || l.lot_code) : (l.bache_code || l.lot_code)),
+        ])),
         cellTxt('Referencia', '', l.reference_name || '—'),
         cellTxt('Proceso', 'text-[11px]', l.process_type),
         cellTxt('Variedades', 'text-[11px]', l._variety_names.length > 0 ? l._variety_names.join(', ') : '—'),
-        cellTxt('kg seco', 'text-right font-mono', l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—'),
+        cellNode('kg seco', 'text-right font-mono',
+          l.kg_dried_output == null ? document.createTextNode('—')
+          : el('div', {}, [
+              el('div', { class: 'font-semibold text-navy', text: fmtKg(l.kg_dried_output) }),
+              l.kg_dried_used_in_blends > 0
+                ? el('div', { class: 'text-[9px] text-ok',
+                    text: `${fmtKg(l.kg_dried_used_in_blends)} en mezcla` })
+                : null,
+            ])),
         cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
         cellTxt('Conversión', 'text-right font-mono', l.conversion_factor != null ? `${l.conversion_factor}×` : '—'),
         cellNode('Parciales', 'text-center', expandBtn),
@@ -405,6 +433,116 @@ function cellNode(label, classes, node) {
   td.setAttribute('data-label', label);
   if (node) td.append(node);
   return td;
+}
+
+// ── Modal de mezcla ────────────────────────────────────────────────
+// Recibe los baches seleccionados, permite ajustar kg seco a aportar
+// por cada uno y crea la mezcla. Reglas: Natural solo con Natural;
+// Honey/Lavado entre sí. Las variedades del blend = unión.
+async function openBlendModal(parents) {
+  // Validar compatibilidad de procesos antes de abrir el modal.
+  const processes = [...new Set(parents.map((p) => p.process_type))];
+  const hasNatural = processes.includes('Natural');
+  const hasHL = processes.includes('Honey') || processes.includes('Lavado');
+  if (hasNatural && hasHL) {
+    toast('Natural no se puede mezclar con Honey/Lavado', 'warning'); return null;
+  }
+  if (hasNatural && processes.length > 1) {
+    toast('Solo se permite Natural con Natural', 'warning'); return null;
+  }
+
+  // Estado: kg a usar por cada padre (default = kg_dried_available).
+  const components = parents.map((p) => ({
+    source_lot_id: p.id,
+    bache_code: p.bache_code || p.blend_code || p.lot_code,
+    process_type: p.process_type,
+    kg_available: Number(p.kg_dried_available != null
+      ? p.kg_dried_available : (p.kg_dried_output || 0)),
+    kg_dried_used: Number(p.kg_dried_available != null
+      ? p.kg_dried_available : (p.kg_dried_output || 0)),
+  }));
+
+  const notesInput = el('input', { type: 'text', class: 'ctrm-input w-full',
+    placeholder: 'Notas opcionales' });
+
+  let total = components.reduce((s, c) => s + c.kg_dried_used, 0);
+  const totalSpan = el('strong', { class: 'text-navy', text: fmtKg(total) });
+  const updateTotal = () => {
+    total = components.reduce((s, c) => s + Number(c.kg_dried_used || 0), 0);
+    totalSpan.textContent = fmtKg(total);
+  };
+
+  return openModal((close) => {
+    return el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700',
+        text: 'Indica los kg de seco a aportar de cada bache. Default: todo el disponible.' }),
+
+      el('div', { class: 'border border-sand rounded-md overflow-hidden' }, [
+        el('table', { class: 'w-full text-[12px]' }, [
+          el('thead', {}, [el('tr', { class: 'bg-cream text-ink-500' }, [
+            el('th', { class: 'text-left px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow', text: 'Bache' }),
+            el('th', { class: 'text-left px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow', text: 'Proceso' }),
+            el('th', { class: 'text-right px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow', text: 'Disponible' }),
+            el('th', { class: 'text-right px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow', text: 'A aportar (kg)' }),
+          ])]),
+          el('tbody', {}, components.map((c) => {
+            const inp = el('input', {
+              type: 'number', step: '0.01', min: '0', max: String(c.kg_available),
+              value: String(c.kg_dried_used),
+              class: 'ctrm-input text-right w-28 mono',
+            });
+            inp.addEventListener('input', () => {
+              const v = Number(inp.value);
+              c.kg_dried_used = isFinite(v) ? v : 0;
+              updateTotal();
+            });
+            return el('tr', { class: 'border-t border-sand' }, [
+              el('td', { class: 'px-3 py-1.5 font-mono text-navy', text: c.bache_code }),
+              el('td', { class: 'px-3 py-1.5', text: c.process_type }),
+              el('td', { class: 'px-3 py-1.5 text-right font-mono text-ink-700', text: `${fmtKg(c.kg_available)} kg` }),
+              el('td', { class: 'px-3 py-1.5 text-right' }, [inp]),
+            ]);
+          })),
+        ]),
+      ]),
+
+      el('div', { class: 'flex items-baseline justify-between text-[12px] font-mono pt-2' }, [
+        el('span', { class: 'text-ink-500', text: 'Total kg seco de la mezcla:' }),
+        totalSpan,
+      ]),
+
+      el('div', {}, [
+        el('label', { class: 'block text-[11px] text-ink-500 mb-1', text: 'Notas' }),
+        notesInput,
+      ]),
+
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-ghost',
+          onClick: () => close(null) }, ['Cancelar']),
+        el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-primary',
+          onClick: async () => {
+            // Filtrar componentes con kg > 0
+            const items = components
+              .filter((c) => c.kg_dried_used > 0)
+              .map((c) => ({ source_lot_id: c.source_lot_id, kg_dried_used: c.kg_dried_used }));
+            if (items.length < 2) { toast('Necesitas al menos 2 componentes con kg > 0', 'warning'); return; }
+            // Validar excesos contra disponible
+            for (const c of components) {
+              if (c.kg_dried_used > c.kg_available + 0.01) {
+                toast(`${c.bache_code}: excede el disponible (${fmtKg(c.kg_available)} kg)`, 'error');
+                return;
+              }
+            }
+            try {
+              await api.lotBlendCreate({ components: items, notes: notesInput.value || null });
+              close({ ok: true });
+            } catch (e) {
+              toast(e.message || 'Error al crear mezcla', 'error');
+            }
+          } }, ['Crear mezcla']),
+      ]),
+    ]);
+  }, { title: `Mezclar ${parents.length} baches`, wide: true });
 }
 
 function daysBetween(fromYmd, toYmd) {

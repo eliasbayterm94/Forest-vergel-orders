@@ -17,7 +17,8 @@ exports.handler = requireAuth(async (event) => {
   const q = event.queryStringParameters || {};
 
   let query = sb.from('production_lots').select(`
-    id, lot_code, bache_code, reference_id, process_type, processing_stage,
+    id, lot_code, bache_code, blend_code, is_blend,
+    reference_id, process_type, processing_stage,
     kg_cherry_input, kg_despulpado_input,
     kg_green_expected, kg_green_actual,
     kg_dried_output, factor_rendimiento,
@@ -46,7 +47,8 @@ exports.handler = requireAuth(async (event) => {
     lot_order_assignments (
       id, demand_order_id, kg_green_allocated,
       demand_orders ( id, order_code, status, max_delivery_date )
-    )
+    ),
+    lot_blend_components!source_lot_id ( kg_dried_used )
   `);
 
   if (q.id)            query = query.eq('id', q.id);
@@ -60,11 +62,26 @@ exports.handler = requireAuth(async (event) => {
   const { data, error } = await query;
   if (error) return serverErr('Failed to load production lots', error.message);
 
-  const lots = (data || []).map((l) => ({
+  const lots = (data || []).map((l) => {
+    // kg seco consumido por mezclas en las que este bache participó
+    // como padre. (Para el blend resultante is_blend=true y no entra
+    // aquí — solo cuentan los aportes a OTROS blends.)
+    const kgDriedUsedInBlends = (l.lot_blend_components || [])
+      .reduce((s, r) => s + Number(r.kg_dried_used || 0), 0);
+    // kg seco ya despachado vía parciales con shipment_id.
+    const kgDriedShippedInPartials = (l.lot_partials || [])
+      .filter((p) => p.shipment_lots && p.shipment_lots.length > 0)
+      .reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+    const kgDriedAvailable = Math.max(0,
+      Number(l.kg_dried_output || 0) - kgDriedUsedInBlends - kgDriedShippedInPartials);
+
+    return {
     ...l,
     reference_name: l.coffee_references && l.coffee_references.name,
     infusion_name:  l.infusions && l.infusions.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
+    kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
+    kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
     partials: (l.lot_partials || [])
       .map((p) => {
         const link = (p.shipment_lots || [])[0];
@@ -109,7 +126,9 @@ exports.handler = requireAuth(async (event) => {
     lot_partials: undefined,
     lot_order_assignments: undefined,
     lot_resting_cycles: undefined,
-  }));
+    lot_blend_components: undefined,
+    };
+  });
 
   return ok({ lots });
 });
