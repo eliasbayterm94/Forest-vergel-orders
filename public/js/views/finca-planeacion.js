@@ -128,10 +128,11 @@ export async function fincaPlaneacionView() {
             el('p', { class: 'eyebrow text-[10px]', text: 'Estado actual de la planta' }),
           ]),
           el('div', { class: 'p-3 space-y-2' }, [
-            capacityBar('Fermentación', snap.fermentation_used_kg || 0, cap.fermentation_kg || 25000, '#7e9ec1'),
-            capacityBar('Mecánico',     snap.mecanico_used_kg     || 0, cap.mecanico_kg     ||  5000, '#ddae3e'),
-            capacityBar('Patios Natural', snap.patios_natural_used_kg || 0, cap.patios_natural_kg || 20000, '#a8b89c'),
-            capacityBar('Patios H/L',     snap.patios_hl_used_kg     || 0, cap.patios_hl_kg     || 40000, '#5d8b66'),
+            capacityBar('Fermentación',  snap.fermentation_used_kg     || 0, cap.fermentation_kg     ||  25000, '#7e9ec1'),
+            capacityBar('Mecánico N',    snap.mecanico_natural_used_kg || snap.mecanico_used_kg || 0, cap.mecanico_natural_kg ||  12000, '#ddae3e'),
+            capacityBar('Mecánico H/L',  snap.mecanico_hl_used_kg      || 0, cap.mecanico_hl_kg      ||  10000, '#e0c266'),
+            capacityBar('Patios Natural', snap.patios_natural_used_kg  || 0, cap.patios_natural_kg   ||  60000, '#a8b89c'),
+            capacityBar('Patios H/L',     snap.patios_hl_used_kg       || 0, cap.patios_hl_kg        || 100000, '#5d8b66'),
           ]),
           el('div', { class: 'px-3 py-2 border-t border-sand bg-cream text-[11px] font-mono text-ink-700' }, [
             el('strong', { text: String(state.queue_summary?.orders_count || 0) }),
@@ -294,10 +295,12 @@ function alertLine(a) {
   const iconCls = a.kind === 'partial_coverage' ? 'text-warn'
                 : a.kind === 'capacity_exceeded' ? 'text-crit'
                 : a.kind === 'excess' ? 'text-ok'
+                : a.kind === 'suggestion' ? 'text-navy'
                 : 'text-ink-500';
   const icon = a.kind === 'capacity_exceeded' ? '⚠'
               : a.kind === 'partial_coverage' ? '⚠'
               : a.kind === 'excess' ? '✓'
+              : a.kind === 'suggestion' ? '💡'
               : '·';
   return el('li', { class: 'flex items-baseline gap-2 text-[12px]' }, [
     el('span', { class: `font-semibold ${iconCls}`, text: icon }),
@@ -309,10 +312,11 @@ function alertLine(a) {
 // Filas: fermentación, mecánico, patios N, patios H/L.
 // Columnas: 7 días. Cada celda: kg usados / capacidad + color semáforo.
 const RESOURCES = [
-  { key: 'fermentation',   label: 'Fermentación', cap_key: 'fermentation_kg' },
-  { key: 'mecanico',       label: 'Mecánico',     cap_key: 'mecanico_kg' },
-  { key: 'patios_natural', label: 'Patios N',     cap_key: 'patios_natural_kg' },
-  { key: 'patios_hl',      label: 'Patios H/L',   cap_key: 'patios_hl_kg' },
+  { key: 'fermentation',     label: 'Fermentación',     cap_key: 'fermentation_kg' },
+  { key: 'mecanico_natural', label: 'Mecánico N',       cap_key: 'mecanico_natural_kg' },
+  { key: 'mecanico_hl',      label: 'Mecánico H/L',     cap_key: 'mecanico_hl_kg' },
+  { key: 'patios_natural',   label: 'Patios N',         cap_key: 'patios_natural_kg' },
+  { key: 'patios_hl',        label: 'Patios H/L',       cap_key: 'patios_hl_kg' },
 ];
 
 function occupancyHeatmap(planRow, capacity) {
