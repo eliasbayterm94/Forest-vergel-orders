@@ -143,7 +143,7 @@ export async function fincaPlaneacionView() {
       ]),
 
       // ── Alertas ────────────────────────────────────────────────
-      state.plan_row ? alertsBlock(state.plan_row) : null,
+      state.plan_row ? alertsBlock(state.plan_row, coverageFromPlan(state)) : null,
 
       // ── Plan diario ─────────────────────────────────────────────
       state.plan_row ? planTable(state.plan_row) : emptyPlanHint(),
@@ -229,13 +229,20 @@ function capacityBar(label, used, capacity, color) {
   ]);
 }
 
-function alertsBlock(planRow) {
+function alertsBlock(planRow, coverage) {
   const alerts = Array.isArray(planRow.alerts_json) ? planRow.alerts_json : [];
   const feasibility = planRow.feasibility_pct;
   return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
     el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-center justify-between gap-2 flex-wrap' }, [
       el('p', { class: 'eyebrow text-[10px]', text: `Alertas (${alerts.length})` }),
       el('span', { class: 'text-[11px] font-mono text-ink-700' }, [
+        coverage
+          ? el('span', { class: 'mr-3' }, [
+              'Cobertura: ',
+              el('strong', { class: 'text-navy', text: fmtKg(coverage.covered_kg) }),
+              el('span', { class: 'text-ink-300', text: ` / ${fmtKg(coverage.demand_kg)} verde` }),
+            ])
+          : null,
         'Factibilidad: ',
         el('strong', { class: feasibility >= 90 ? 'text-ok' : feasibility >= 70 ? 'text-warn' : 'text-crit',
           text: `${feasibility != null ? feasibility : '—'} %` }),
@@ -245,6 +252,19 @@ function alertsBlock(planRow) {
       ? el('p', { class: 'p-3 text-[12px] text-ink-300 italic', text: 'Plan sin alertas — todo cuadra con la capacidad actual.' })
       : el('ul', { class: 'p-3 space-y-1.5' }, alerts.map((a) => alertLine(a))),
   ]);
+}
+
+// Coverage = kg verde asignado a pedidos en el plan / kg verde demandado total.
+function coverageFromPlan(state) {
+  const plan = (state.plan_row && state.plan_row.plan_json) || [];
+  let covered = 0;
+  for (const d of plan) {
+    for (const b of d.batches || []) {
+      if (b.kind === 'order') covered += Number(b.kg_green || 0);
+    }
+  }
+  const demand = Number(state.queue_summary?.total_remaining_kg || 0);
+  return { covered_kg: Math.round(covered * 100) / 100, demand_kg: demand };
 }
 
 function alertLine(a) {
@@ -297,7 +317,11 @@ function planDayRow(day, idx) {
     ]),
     // Columna ocupación
     el('div', { class: 'shrink-0 w-32 text-[10px] font-mono text-ink-500 space-y-0.5' }, [
-      el('p', {}, [`Ferm `, el('strong', { class: 'text-ink-700', text: fmtKg(day.ferm_used || 0) })]),
+      el('p', {}, [
+        `Ferm `,
+        el('strong', { class: 'text-ink-700', text: fmtKg(day.ferm_used || 0) }),
+      ]),
+      el('p', {}, [`${batches.length} bache${batches.length === 1 ? '' : 's'}`]),
     ]),
   ]);
 }
