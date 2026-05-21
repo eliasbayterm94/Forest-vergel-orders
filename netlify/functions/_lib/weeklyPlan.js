@@ -44,6 +44,14 @@ const DRYING_DAYS = {
   patios:      { Natural: 10, Honey: 6, Lavado: 6 },
 };
 
+// Fermentación por proceso (límite superior conservador, ver ops 2026-05).
+const FERM_DAYS = { Natural: 2, Honey: 3, Lavado: 3 };
+
+// Horizonte de simulación: lo suficiente para que un bache iniciado
+// el día 6 de la semana termine su etapa más larga (patios Natural
+// 10d + ferm 2d). 21 días cubre la semana + 2 más.
+const SIMULATION_HORIZON_DAYS = 21;
+
 function round2(n) { return Math.round(n * 100) / 100; }
 
 function isoDays(weekStartDate) {
@@ -53,6 +61,19 @@ function isoDays(weekStartDate) {
     const day = new Date(d.getTime() + i * 86400000);
     out.push(day.toISOString().slice(0, 10));
   }
+  return out;
+}
+
+function addDaysISO(iso, n) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function dateRangeInclusive(fromISO, toISO) {
+  const out = [];
+  let cur = fromISO;
+  while (cur <= toISO) { out.push(cur); cur = addDaysISO(cur, 1); }
   return out;
 }
 
@@ -228,20 +249,15 @@ function computePlan({ weekStartDate, dayInputs, orders, lots }) {
     }
   }
 
-  // 2. Capacidad de fermentación excedida por día (snapshot inicial
-  // + lo que entra ese día). Modelo bruto: la planta no libera ferm
-  // entre días dentro del horizonte; si excede, alertamos.
-  const fermInitial = snapshot.fermentation_used_kg;
-  for (const d of plan) {
-    const total = fermInitial + d.ferm_used;
-    if (total > CAPACITY.fermentation_kg + 0.01) {
-      alerts.push({
-        kind: 'capacity_exceeded',
-        day: d.date,
-        resource: 'fermentation',
-        message: `Capacidad de fermentación excedida el ${d.date}: ${round2(total)} / ${CAPACITY.fermentation_kg} kg.`,
-      });
-    }
+  // 2. Cuellos de botella — simulador de flujo (real + planeado)
+  const flow = simulateFlow({ weekStartDate, planDays: plan, lots });
+  for (const b of flow.bottlenecks) {
+    alerts.push({
+      kind: 'capacity_exceeded',
+      day: b.day,
+      resource: b.resource,
+      message: `${b.label}: ${b.kg} / ${b.limit} kg el ${b.day} (excede ${b.over_kg} kg).`,
+    });
   }
 
   // 3. Excedente sin pedido asociado
@@ -270,7 +286,155 @@ function computePlan({ weekStartDate, dayInputs, orders, lots }) {
     snapshot,
     totals,
     coverage: { covered_kg: round2(coveredKg), demand_kg: round2(totalDemandKg) },
+    flow,
   };
 }
 
-module.exports = { computePlan, plantSnapshot, isoDays, CAPACITY, DRYING_DAYS };
+// ── Simulador de flujo ─────────────────────────────────────────────
+//
+// Modela la trayectoria de cada bache (real + planeado) por las
+// etapas: Fermentación → Secado (Mecánico ó Patios). El reposo y la
+// trilla no se modelan como cuello de botella (capacidad alta).
+//
+// · Para baches REALES en planta (InFermentation / Drying) asumimos
+//   ocupación constante durante la semana — no sabemos su día de
+//   inicio exacto. Modelo conservador (peor caso de capacidad).
+// · Para baches PLANEADOS arrancan el día que les asigna el plan y
+//   recorren ferm → secado con tiempos por proceso/secadero.
+//
+// Output:
+//   { gantt: [...], daily_occupancy: {date: {...}}, bottlenecks: [...] }
+
+function timelineFor(batch, startDate) {
+  const stages = [];
+  let cursor = startDate;
+  const stage_input = batch.stage_input;
+  const proc = batch.process_type;
+  const kg = batch.kg_green;
+
+  // Fermentación (solo para input cereza; despulpado/seco no fermentan).
+  const fermDays = stage_input === 'cereza' ? (FERM_DAYS[proc] || 0) : 0;
+  if (fermDays > 0) {
+    const end = addDaysISO(cursor, fermDays - 1);
+    stages.push({ stage: 'Fermentación', resource: 'fermentation', from: cursor, to: end, kg_green: kg });
+    cursor = addDaysISO(end, 1);
+  }
+
+  // Secado (no aplica a stage 'seco' — ya está seco).
+  let dryingDays = 0;
+  let resource = null;
+  let stageLabel = null;
+  if (stage_input !== 'seco') {
+    const dryer = batch.target_dryer === 'Mecánico' ? 'mecanico' : 'patios';
+    dryingDays = (DRYING_DAYS[dryer] && DRYING_DAYS[dryer][proc]) || 0;
+    if (dryer === 'mecanico') { resource = 'mecanico'; stageLabel = 'Mecánico'; }
+    else if (proc === 'Natural') { resource = 'patios_natural'; stageLabel = 'Patios N'; }
+    else { resource = 'patios_hl'; stageLabel = 'Patios H/L'; }
+  }
+  if (dryingDays > 0 && resource) {
+    const end = addDaysISO(cursor, dryingDays - 1);
+    stages.push({ stage: stageLabel, resource, from: cursor, to: end, kg_green: kg });
+  }
+
+  return stages;
+}
+
+function simulateFlow({ weekStartDate, planDays, lots }) {
+  const weekDays = isoDays(weekStartDate);
+  const horizon = [];
+  for (let i = 0; i < SIMULATION_HORIZON_DAYS; i++) {
+    horizon.push(addDaysISO(weekStartDate, i));
+  }
+  const occByDay = {};
+  for (const d of horizon) {
+    occByDay[d] = { fermentation: 0, mecanico: 0, patios_natural: 0, patios_hl: 0 };
+  }
+  const gantt = [];
+
+  // 1) Baches reales (no Delivered) — asumir ocupación constante esta semana
+  for (const l of lots || []) {
+    const kg = Number(l.kg_green_expected || l.kg_green_actual || 0);
+    if (kg <= 0) continue;
+    if (l.status === 'InFermentation') {
+      for (const d of weekDays) occByDay[d].fermentation += kg;
+      gantt.push({
+        kind: 'real',
+        label: l.lot_code || `Lote ${String(l.id).slice(0, 8)}`,
+        process: l.process_type,
+        kg_green: round2(kg),
+        stages: [{ stage: 'Fermentación', resource: 'fermentation',
+          from: weekDays[0], to: weekDays[6], kg_green: round2(kg) }],
+      });
+    } else if (l.status === 'Drying') {
+      const locs = Array.isArray(l.drying_locations) ? l.drying_locations : [];
+      const useMecanico = locs.includes('Silos') && !locs.includes('Patio');
+      let resource, stageLabel;
+      if (useMecanico) { resource = 'mecanico'; stageLabel = 'Mecánico'; }
+      else if (l.process_type === 'Natural') { resource = 'patios_natural'; stageLabel = 'Patios N'; }
+      else { resource = 'patios_hl'; stageLabel = 'Patios H/L'; }
+      for (const d of weekDays) occByDay[d][resource] += kg;
+      gantt.push({
+        kind: 'real',
+        label: l.lot_code || `Lote ${String(l.id).slice(0, 8)}`,
+        process: l.process_type,
+        kg_green: round2(kg),
+        stages: [{ stage: stageLabel, resource, from: weekDays[0], to: weekDays[6], kg_green: round2(kg) }],
+      });
+    }
+    // Resting / Trilla / Ready: no compiten por ferm ni secado
+  }
+
+  // 2) Baches planeados — simular trayectoria desde su día de entrada
+  for (const dayEntry of planDays || []) {
+    for (const batch of dayEntry.batches || []) {
+      const stages = timelineFor(batch, dayEntry.date);
+      gantt.push({
+        kind: batch.kind, // 'order' o 'excess'
+        label: batch.order_code || 'A designar',
+        client_name: batch.client_name,
+        reference_name: batch.reference_name,
+        process: batch.process_type,
+        kg_green: batch.kg_green,
+        kg_input: batch.kg_input,
+        stage_input: batch.stage_input,
+        start_date: dayEntry.date,
+        stages,
+      });
+      for (const s of stages) {
+        for (const d of dateRangeInclusive(s.from, s.to)) {
+          if (occByDay[d]) occByDay[d][s.resource] += batch.kg_green;
+        }
+      }
+    }
+  }
+
+  // 3) Cuellos de botella en la semana objetivo
+  const bottlenecks = [];
+  for (const d of weekDays) {
+    const occ = occByDay[d];
+    const checks = [
+      { resource: 'fermentation',    label: 'Fermentación', limit: CAPACITY.fermentation_kg },
+      { resource: 'mecanico',        label: 'Mecánico',     limit: CAPACITY.mecanico_kg },
+      { resource: 'patios_natural',  label: 'Patios Natural', limit: CAPACITY.patios_natural_kg },
+      { resource: 'patios_hl',       label: 'Patios H/L',   limit: CAPACITY.patios_hl_kg },
+    ];
+    for (const c of checks) {
+      const used = occ[c.resource] || 0;
+      if (used > c.limit + 0.01) {
+        bottlenecks.push({
+          day: d, resource: c.resource, label: c.label,
+          kg: round2(used), limit: c.limit, over_kg: round2(used - c.limit),
+        });
+      }
+    }
+  }
+
+  // Redondear ocupación
+  for (const d of Object.keys(occByDay)) {
+    for (const k of Object.keys(occByDay[d])) occByDay[d][k] = round2(occByDay[d][k]);
+  }
+
+  return { gantt, daily_occupancy: occByDay, bottlenecks };
+}
+
+module.exports = { computePlan, plantSnapshot, isoDays, simulateFlow, CAPACITY, DRYING_DAYS, FERM_DAYS };

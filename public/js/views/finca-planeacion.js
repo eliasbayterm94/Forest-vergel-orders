@@ -145,6 +145,12 @@ export async function fincaPlaneacionView() {
       // ── Alertas ────────────────────────────────────────────────
       state.plan_row ? alertsBlock(state.plan_row, coverageFromPlan(state)) : null,
 
+      // ── Heatmap de ocupación ───────────────────────────────────
+      state.plan_row ? occupancyHeatmap(state.plan_row, state.capacity || {}) : null,
+
+      // ── Mini-Gantt de baches ───────────────────────────────────
+      state.plan_row ? ganttTable(state.plan_row) : null,
+
       // ── Plan diario ─────────────────────────────────────────────
       state.plan_row ? planTable(state.plan_row) : emptyPlanHint(),
     );
@@ -255,10 +261,24 @@ function alertsBlock(planRow, coverage) {
 }
 
 // Coverage = kg verde asignado a pedidos en el plan / kg verde demandado total.
+// plan_json puede ser un array (formato legacy) o un objeto { days, flow, coverage }.
+function planDays(planRow) {
+  const p = planRow && planRow.plan_json;
+  if (!p) return [];
+  if (Array.isArray(p)) return p;
+  return Array.isArray(p.days) ? p.days : [];
+}
+function planFlow(planRow) {
+  const p = planRow && planRow.plan_json;
+  if (!p || Array.isArray(p)) return null;
+  return p.flow || null;
+}
 function coverageFromPlan(state) {
-  const plan = (state.plan_row && state.plan_row.plan_json) || [];
+  // Si está en plan_json.coverage, usar; sino calcular desde batches.
+  const stored = state.plan_row && state.plan_row.plan_json && state.plan_row.plan_json.coverage;
+  if (stored) return stored;
   let covered = 0;
-  for (const d of plan) {
+  for (const d of planDays(state.plan_row)) {
     for (const b of d.batches || []) {
       if (b.kind === 'order') covered += Number(b.kg_green || 0);
     }
@@ -282,8 +302,167 @@ function alertLine(a) {
   ]);
 }
 
+// ── Heatmap de ocupación por recurso × día ─────────────────────────
+// Filas: fermentación, mecánico, patios N, patios H/L.
+// Columnas: 7 días. Cada celda: kg usados / capacidad + color semáforo.
+const RESOURCES = [
+  { key: 'fermentation',   label: 'Fermentación', cap_key: 'fermentation_kg' },
+  { key: 'mecanico',       label: 'Mecánico',     cap_key: 'mecanico_kg' },
+  { key: 'patios_natural', label: 'Patios N',     cap_key: 'patios_natural_kg' },
+  { key: 'patios_hl',      label: 'Patios H/L',   cap_key: 'patios_hl_kg' },
+];
+
+function occupancyHeatmap(planRow, capacity) {
+  const flow = planFlow(planRow);
+  if (!flow || !flow.daily_occupancy) return null;
+  const days = planDays(planRow).map((d) => d.date);
+  const occ = flow.daily_occupancy;
+
+  return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+    el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
+      el('p', { class: 'eyebrow text-[10px]', text: 'Cuellos de botella — % ocupación por día' }),
+    ]),
+    el('div', { class: 'overflow-x-auto' }, [
+      el('table', { class: 'w-full text-[11px] font-mono' }, [
+        el('thead', {}, [el('tr', { class: 'border-b border-sand' }, [
+          el('th', { class: 'text-left px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Recurso' }),
+          ...days.map((d, i) => el('th', {
+            class: 'text-center px-2 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500',
+          }, [
+            el('div', {}, [DAY_LABELS[i]]),
+            el('div', { class: 'text-ink-300 text-[9px]', text: fmtDate(d) }),
+          ])),
+          el('th', { class: 'text-right px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Capacidad' }),
+        ])]),
+        el('tbody', {}, RESOURCES.map((r) => {
+          const cap = capacity[r.cap_key] || 0;
+          return el('tr', { class: 'border-b border-sand' }, [
+            el('td', { class: 'px-3 py-1.5 text-navy font-display font-semibold text-[11px]', text: r.label }),
+            ...days.map((d) => heatCell(Number((occ[d] || {})[r.key] || 0), cap)),
+            el('td', { class: 'px-3 py-1.5 text-right text-ink-500', text: `${fmtKg(cap)} kg` }),
+          ]);
+        })),
+      ]),
+    ]),
+  ]);
+}
+
+function heatCell(used, cap) {
+  const pct = cap > 0 ? (used / cap) * 100 : 0;
+  let bg = 'transparent', color = '#5a6371';
+  if (pct >= 100) { bg = '#c45a4f'; color = 'white'; }
+  else if (pct >= 80) { bg = '#ddae3e'; color = '#3d2a00'; }
+  else if (pct >= 50) { bg = '#f1e5c4'; color = '#3a4255'; }
+  else if (used > 0) { bg = '#e8efe3'; color = '#3a4255'; }
+  return el('td', {
+    class: 'text-center px-2 py-1.5',
+    style: `background:${bg};color:${color};`,
+  }, [
+    el('div', { class: 'font-semibold', text: used > 0 ? `${Math.round(pct)}%` : '—' }),
+    used > 0 ? el('div', { class: 'text-[9px] opacity-80', text: fmtKg(used) }) : null,
+  ]);
+}
+
+// ── Mini-Gantt: filas baches, columnas días, celdas etapas ─────────
+function ganttTable(planRow) {
+  const flow = planFlow(planRow);
+  if (!flow || !Array.isArray(flow.gantt) || flow.gantt.length === 0) return null;
+  const days = planDays(planRow).map((d) => d.date);
+  const dayIdx = Object.fromEntries(days.map((d, i) => [d, i]));
+
+  // Ordenar: reales primero, luego planeados por start_date.
+  const rows = [...flow.gantt].sort((a, b) => {
+    if (a.kind === 'real' && b.kind !== 'real') return -1;
+    if (b.kind === 'real' && a.kind !== 'real') return 1;
+    return (a.start_date || '').localeCompare(b.start_date || '');
+  });
+
+  return el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+    el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-center justify-between' }, [
+      el('p', { class: 'eyebrow text-[10px]', text: `Cronograma de baches (${rows.length})` }),
+      el('p', { class: 'text-[10px] font-mono text-ink-500' }, [
+        legendDot('#7e9ec1'), ' Ferm  ',
+        legendDot('#ddae3e'), ' Mec  ',
+        legendDot('#a8b89c'), ' Pat N  ',
+        legendDot('#5d8b66'), ' Pat H/L',
+      ]),
+    ]),
+    el('div', { class: 'overflow-x-auto' }, [
+      el('table', { class: 'w-full text-[11px]' }, [
+        el('thead', {}, [el('tr', { class: 'border-b border-sand' }, [
+          el('th', { class: 'text-left px-3 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500', text: 'Bache' }),
+          ...days.map((d, i) => el('th', {
+            class: 'text-center px-1 py-2 font-display text-[10px] uppercase tracking-eyebrow text-ink-500',
+            text: DAY_LABELS[i],
+          })),
+        ])]),
+        el('tbody', {}, rows.map((row) => ganttRow(row, days, dayIdx))),
+      ]),
+    ]),
+  ]);
+}
+
+function legendDot(color) {
+  return el('span', { style: `display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};vertical-align:middle;` });
+}
+
+function ganttRow(row, days, dayIdx) {
+  // Marcar cada día con la etapa más relevante de ese día (si hay).
+  const cells = days.map(() => null);
+  for (const s of row.stages || []) {
+    const fromI = dayIdx[s.from];
+    const toI = dayIdx[s.to];
+    // Si la etapa cae fuera de la ventana, marcar bordes.
+    const start = fromI != null ? fromI : (s.from < days[0] ? 0 : -1);
+    const end   = toI != null ? toI : (s.to > days[6] ? 6 : -1);
+    if (start < 0 || end < 0) continue;
+    for (let i = start; i <= end; i++) {
+      cells[i] = { stage: s.stage, resource: s.resource };
+    }
+  }
+  const procColor = row.process === 'Natural' ? '#3a6f4a'
+                  : row.process === 'Honey'   ? '#ddae3e'
+                  : row.process === 'Lavado'  ? '#7e9ec1'
+                  : '#9aa3ae';
+  return el('tr', { class: 'border-b border-sand hover:bg-cream/40' }, [
+    el('td', { class: 'px-3 py-1.5 whitespace-nowrap' }, [
+      el('div', { class: 'flex items-center gap-2' }, [
+        el('span', { style: `display:inline-block;width:8px;height:8px;border-radius:2px;background:${procColor};` }),
+        row.kind === 'real'
+          ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#e8efe3;color:#2e4a2e;', text: 'En curso' })
+          : row.kind === 'excess'
+            ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#fbe6c2;color:#8a5100;', text: 'A designar' })
+            : null,
+        el('span', { class: 'font-display font-semibold text-navy text-[11px]', text: row.label }),
+        el('span', { class: 'text-[10px] font-mono text-ink-500', text: `${fmtKg(row.kg_green)} verde` }),
+      ]),
+      row.reference_name
+        ? el('div', { class: 'text-[10px] text-ink-500 truncate', text: row.reference_name + (row.client_name ? ' · ' + row.client_name : '') })
+        : null,
+    ]),
+    ...cells.map((c) => ganttCell(c)),
+  ]);
+}
+
+function ganttCell(c) {
+  if (!c) return el('td', { class: 'px-1 py-1.5' });
+  const colors = {
+    fermentation:   { bg: '#7e9ec1', fg: 'white' },
+    mecanico:       { bg: '#ddae3e', fg: '#3d2a00' },
+    patios_natural: { bg: '#a8b89c', fg: '#1f2d23' },
+    patios_hl:      { bg: '#5d8b66', fg: 'white' },
+  }[c.resource] || { bg: '#cbd5db', fg: '#3a4255' };
+  return el('td', { class: 'px-1 py-1.5' }, [
+    el('div', {
+      class: 'text-center text-[9px] font-display font-semibold uppercase tracking-eyebrow rounded-sm py-1',
+      style: `background:${colors.bg};color:${colors.fg};`,
+      text: c.stage,
+    }),
+  ]);
+}
+
 function planTable(planRow) {
-  const days = Array.isArray(planRow.plan_json) ? planRow.plan_json : [];
+  const days = planDays(planRow);
   return el('div', { class: 'ctrm-card overflow-hidden' }, [
     el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
       el('p', { class: 'eyebrow text-[10px]', text: 'Plan diario sugerido' }),

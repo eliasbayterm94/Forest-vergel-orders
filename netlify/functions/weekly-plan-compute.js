@@ -77,10 +77,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   // ── Upsert weekly_plans ──
+  // Persistimos plan + flow (Gantt/heatmap) en plan_json para que la
+  // vista pueda renderizarlos al recargar sin recalcular.
   const row = {
     week_start_date: weekStartDate,
     day_inputs: dayInputs,
-    plan_json: computed.plan,
+    plan_json: { days: computed.plan, flow: computed.flow, coverage: computed.coverage, totals: computed.totals },
     alerts_json: computed.alerts,
     feasibility_pct: computed.feasibility_pct,
     generated_at: new Date().toISOString(),
