@@ -18,6 +18,7 @@ exports.handler = requireAuth(async (event) => {
 
   let query = sb.from('production_lots').select(`
     id, lot_code, bache_code, blend_code, is_blend,
+    parent_lot_id, sub_bache_number,
     reference_id, process_type, processing_stage,
     kg_cherry_input, kg_despulpado_input,
     kg_green_expected, kg_green_actual,

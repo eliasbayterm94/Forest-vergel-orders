@@ -318,6 +318,9 @@ export async function fincaLotsView() {
     return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+          l.parent_lot_id
+            ? el('span', { class: 'ctrm-pill text-[9px] mr-0.5', style: 'background:#e0e7f5;color:#1b2044;', text: 'SUB' })
+            : null,
           el('span', {
             class: 'ctrm-code cursor-pointer hover:underline',
             title: 'Ver detalle del bache',
@@ -360,6 +363,14 @@ export async function fincaLotsView() {
               class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
               onClick: () => advanceStatus(l, t.target),
             }, [t.label])),
+          // Dividir sub-bache (disponible en InFermentation, Drying, Resting, Ready)
+          ['InFermentation', 'Drying', 'Resting', 'Ready'].includes(l.status)
+            ? el('button', {
+                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+                title: 'Dividir en sub-bache (P1, P2...)',
+                onClick: () => openSplitModal(l),
+              }, ['Dividir'])
+            : null,
           // Ready lots get a "Despachar" shortcut that jumps to the Despachos view.
           (l.status === 'Ready') ? el('button', {
             class: 'ctrm-btn ctrm-btn-yellow ctrm-btn-sm',
@@ -933,6 +944,64 @@ export async function fincaLotsView() {
       : await api.lotsList({ active_only: 'true' });
     lots = r.lots;
     render();
+  }
+
+  // ---------- Dividir sub-bache ----------
+  async function openSplitModal(lot) {
+    const kgBase = Number(lot.kg_input_initial || 0);
+    if (kgBase <= 0) { toast('El bache no tiene kg registrado', 'warning'); return; }
+
+    const result = await openModal(({ close }) => {
+      const kgInput = el('input', {
+        type: 'number', step: '0.01', min: '0.01', max: String(kgBase - 0.01),
+        class: 'ctrm-input mono text-right w-full',
+        placeholder: `Máx ${fmtKg(kgBase - 0.01)}`,
+      });
+      const notesInput = el('input', { type: 'text', class: 'ctrm-input w-full',
+        placeholder: 'Notas (opcional)' });
+
+      return el('div', { class: 'space-y-3' }, [
+        el('div', { class: 'rounded-lg bg-cream border border-sand p-3' }, [
+          el('p', { class: 'text-[12px] text-ink-700' }, [
+            `El bache `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+            ` tiene `, el('strong', { text: fmtKg(kgBase) }), ` kg.`,
+          ]),
+          el('p', { class: 'text-[11px] text-ink-500 mt-1',
+            text: 'Indica cuántos kg separar en un nuevo sub-bache. ' +
+                  'El hijo se nombrará automáticamente (P1, P2...) y continuará en el mismo estado.' }),
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'kg a separar' }), kgInput,
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Notas' }), notesInput,
+        ]),
+        el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button',
+            onClick: () => close(null) }, ['Cancelar']),
+          el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button',
+            onClick: async () => {
+              const kg = Number(kgInput.value);
+              if (!Number.isFinite(kg) || kg <= 0) { toast('Indica kg > 0', 'warning'); return; }
+              if (kg >= kgBase) { toast('Debe ser menor al total del padre', 'warning'); return; }
+              try {
+                const r = await api.lotSplit({
+                  production_lot_id: lot.id,
+                  kg_to_split: kg,
+                  notes: notesInput.value || undefined,
+                });
+                close({ ok: true, child: r.child });
+              } catch (e) { toast(e.message || 'Error al dividir', 'error'); }
+            },
+          }, ['Dividir']),
+        ]),
+      ]);
+    }, { title: `Dividir ${lot.bache_code || lot.lot_code}` });
+
+    if (result && result.ok) {
+      toast(`Sub-bache ${result.child?.bache_code || ''} creado`, 'success');
+      reloadLots().catch((err) => toast(`No se pudo refrescar: ${err.message}`, 'error'));
+    }
   }
 
   // ---------- Edit bache ----------

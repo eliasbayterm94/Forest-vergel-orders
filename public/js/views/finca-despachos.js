@@ -326,7 +326,7 @@ export async function fincaDespachosView() {
     const partialFields = new Map(); // partial_id → {codigo_trilladora, codigo_mezcla, num_sacos}
     function getLotFields(lotId) {
       if (!lotFields.has(lotId)) {
-        lotFields.set(lotId, { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true });
+        lotFields.set(lotId, { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true, kg_dried_to_ship: '' });
       }
       return lotFields.get(lotId);
     }
@@ -614,7 +614,7 @@ export async function fincaDespachosView() {
 
 // Inputs por bache (código trilladora / código mezcla / # sacos) que
 // aparecen cuando el bache está seleccionado en el despacho.
-function perLotInputs(_lot, fields, opts = {}) {
+function perLotInputs(lot, fields, opts = {}) {
   const t = el('input', { type: 'text', class: 'ctrm-input mono text-[11px]',
     placeholder: 'PP-XXXX', value: fields.codigo_trilladora || '' });
   const m = el('input', { type: 'text', class: 'ctrm-input mono text-[11px]',
@@ -624,7 +624,22 @@ function perLotInputs(_lot, fields, opts = {}) {
   t.addEventListener('input', () => { fields.codigo_trilladora = t.value; });
   m.addEventListener('input', () => { fields.codigo_mezcla    = m.value; });
   s.addEventListener('input', () => { fields.num_sacos        = s.value === '' ? '' : Math.max(0, Math.floor(Number(s.value) || 0)); });
-  return el('div', { class: `grid grid-cols-3 gap-2 mt-2 p-2 rounded-md ${opts.partialsContext ? 'bg-cream' : 'bg-cream'}` }, [
+
+  // Campo de kg seco a despachar (solo para whole-lot sin partials).
+  const kgAvail = Number(lot.kg_dried_available != null ? lot.kg_dried_available : (lot.kg_dried_output || 0));
+  const showKgField = !opts.partialsContext && (lot.partials || []).length === 0;
+  let kgField = null;
+  if (showKgField) {
+    kgField = el('input', { type: 'number', min: '0.01', step: '0.01',
+      max: String(kgAvail),
+      class: 'ctrm-input mono text-[11px] text-right',
+      placeholder: `Todo: ${fmtKg(kgAvail)}`,
+      value: fields.kg_dried_to_ship || '' });
+    kgField.addEventListener('input', () => { fields.kg_dried_to_ship = kgField.value; });
+  }
+
+  const cols = showKgField ? 'grid-cols-4' : 'grid-cols-3';
+  return el('div', { class: `grid ${cols} gap-2 mt-2 p-2 rounded-md bg-cream` }, [
     el('label', { class: 'block' }, [
       el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: 'Cód. trilladora' }),
       t,
@@ -637,6 +652,10 @@ function perLotInputs(_lot, fields, opts = {}) {
       el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: '# Sacos' }),
       s,
     ]),
+    showKgField ? el('label', { class: 'block' }, [
+      el('span', { class: 'text-[10px] text-ink-500 uppercase tracking-eyebrow', text: 'kg seco a despachar' }),
+      kgField,
+    ]) : null,
   ]);
 }
 
@@ -663,11 +682,18 @@ function perPartialInputs(partial, fields) {
 
 function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) {
   const items = [];
-  const norm = (f) => ({
-    codigo_trilladora: (f.codigo_trilladora || '').trim() || null,
-    codigo_mezcla:     (f.codigo_mezcla || '').trim() || null,
-    num_sacos:         f.num_sacos === '' || f.num_sacos == null ? null : Number(f.num_sacos),
-  });
+  const norm = (f) => {
+    const base = {
+      codigo_trilladora: (f.codigo_trilladora || '').trim() || null,
+      codigo_mezcla:     (f.codigo_mezcla || '').trim() || null,
+      num_sacos:         f.num_sacos === '' || f.num_sacos == null ? null : Number(f.num_sacos),
+    };
+    // kg parcial a despachar (si se indica, despacho parcial)
+    if (f.kg_dried_to_ship != null && f.kg_dried_to_ship !== '') {
+      base.kg_dried_to_ship = Number(f.kg_dried_to_ship);
+    }
+    return base;
+  };
   for (const l of readyLots) {
     const partials = l.partials || [];
     const lf = lotFields.get(l.id) || { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true };

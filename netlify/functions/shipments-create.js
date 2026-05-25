@@ -85,6 +85,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     .from('production_lots')
     .select(`
       id, lot_code, bache_code, status,
+      kg_dried_output,
       kg_green_actual, kg_green_expected,
       lot_partials ( id, parcial_letter, kg_green_yield, rejected_at )
     `)
@@ -103,17 +104,33 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   // Pull existing shipment_lots rows for these lots (to detect
-  // already-shipped wholes / partials).
+  // already-shipped wholes / partials and acumular kg ya despachados).
   const { data: existingLinks, error: exErr } = await sb
     .from('shipment_lots')
-    .select('production_lot_id, lot_partial_id')
+    .select('production_lot_id, lot_partial_id, kg_dried_shipped')
     .in('production_lot_id', lotIds);
   if (exErr) return serverErr('Existing-link lookup failed', exErr.message);
 
-  const wholeAlreadyShipped = new Set((existingLinks || [])
-    .filter((x) => x.lot_partial_id == null).map((x) => x.production_lot_id));
   const partialAlreadyShipped = new Set((existingLinks || [])
     .filter((x) => x.lot_partial_id != null).map((x) => x.lot_partial_id));
+
+  // Acumular kg seco ya despachado por lote (para despachos parciales).
+  const kgAlreadyShippedByLot = new Map();
+  for (const x of existingLinks || []) {
+    if (x.lot_partial_id != null) continue;
+    const prev = kgAlreadyShippedByLot.get(x.production_lot_id) || 0;
+    kgAlreadyShippedByLot.set(x.production_lot_id, prev + Number(x.kg_dried_shipped || 0));
+  }
+  // Kg consumido en mezclas
+  const { data: blendUse } = await sb
+    .from('lot_blend_components')
+    .select('source_lot_id, kg_dried_used')
+    .in('source_lot_id', lotIds);
+  const kgInBlendsByLot = new Map();
+  for (const r of blendUse || []) {
+    const prev = kgInBlendsByLot.get(r.source_lot_id) || 0;
+    kgInBlendsByLot.set(r.source_lot_id, prev + Number(r.kg_dried_used || 0));
+  }
 
   // Validate every item against its lot's partials.
   const lotById = new Map(lots.map((l) => [l.id, l]));
@@ -132,7 +149,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     };
 
     if (partials.length === 0) {
-      // Whole-lot mode required.
+      // Whole-lot mode or partial-dispatch by kg.
       if (wantPartialIds.length > 0) {
         return badReq(
           `Lote ${lot.bache_code || lot.lot_code} no tiene parciales registrados; ` +
@@ -140,13 +157,41 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
           'PARTIAL_IDS_NOT_ALLOWED',
         );
       }
-      if (wholeAlreadyShipped.has(lot.id)) {
+      // Calcular kg disponible para despacho
+      const lotDried     = Number(lot.kg_dried_output || 0);
+      const alreadySent  = kgAlreadyShippedByLot.get(lot.id) || 0;
+      const inBlends     = kgInBlendsByLot.get(lot.id) || 0;
+      const kgAvailable  = lotDried - alreadySent - inBlends;
+
+      if (kgAvailable <= 0.01) {
         return conflict(
-          `Lote ${lot.bache_code || lot.lot_code} ya esta en otro despacho`,
+          `Lote ${lot.bache_code || lot.lot_code} ya fue completamente despachado`,
           'LOT_ALREADY_SHIPPED',
         );
       }
-      linkRows.push({ production_lot_id: lot.id, lot_partial_id: null, ...extras });
+
+      // Si el item trae kg_dried_to_ship, es despacho parcial.
+      let kgToShip = kgAvailable;
+      if (it.kg_dried_to_ship != null) {
+        const requested = Number(it.kg_dried_to_ship);
+        if (!Number.isFinite(requested) || requested <= 0) {
+          return badReq('kg_dried_to_ship must be > 0', 'INVALID_KG_SHIP');
+        }
+        if (requested > kgAvailable + 0.01) {
+          return conflict(
+            `Lote ${lot.bache_code || lot.lot_code}: solicitado ${requested} kg, disponible ${Math.round(kgAvailable * 100) / 100} kg`,
+            'EXCEEDS_AVAILABLE',
+          );
+        }
+        kgToShip = requested;
+      }
+
+      linkRows.push({
+        production_lot_id: lot.id,
+        lot_partial_id: null,
+        kg_dried_shipped: Math.round(kgToShip * 100) / 100,
+        ...extras,
+      });
     } else {
       // Partial-mode required.
       if (wantPartialIds.length === 0) {
@@ -216,7 +261,15 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
     let shouldDeliver = false;
     if (partials.length === 0) {
-      shouldDeliver = true;  // Whole-lot mode: this shipment delivers it.
+      // Despacho completo o parcial. Solo marcar Delivered si ya no queda kg.
+      const lotDried    = Number(lot.kg_dried_output || 0);
+      const prevSent    = kgAlreadyShippedByLot.get(lotId) || 0;
+      const inBlends    = kgInBlendsByLot.get(lotId) || 0;
+      const newlySent   = linkRows
+        .filter((r) => r.production_lot_id === lotId && r.lot_partial_id == null)
+        .reduce((s, r) => s + Number(r.kg_dried_shipped || 0), 0);
+      const remaining   = lotDried - prevSent - inBlends - newlySent;
+      shouldDeliver = remaining <= 0.01;
     } else {
       // Lot fully accounted for if every partial is shipped (in this
       // shipment or previously) or rejected.
