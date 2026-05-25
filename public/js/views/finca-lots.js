@@ -480,7 +480,7 @@ export async function fincaLotsView() {
     const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
     const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
     const usedLetters = new Set(partials.map((p) => p.parcial_letter));
-    const fullySplit = usedLetters.size >= 6;
+    const fullySplit = false;
 
     const rows = partials.map((p) => {
       const isShipped = !!p.shipment_id;
@@ -655,13 +655,21 @@ export async function fincaLotsView() {
   }
 
   async function addPartial(lot) {
-    const used = new Set((lot.partials || []).map((p) => p.parcial_letter));
-    const available = ['A','B','C','D','E','F'].filter((x) => !used.has(x));
-    if (available.length === 0) return;
+    // Calcular siguiente P disponible
+    const usedNums = (lot.partials || [])
+      .map((p) => {
+        const m = (p.parcial_letter || '').match(/^P(\d+)$/);
+        return m ? Number(m[1]) : null;
+      })
+      .filter((n) => n != null);
+    const nextP = usedNums.length > 0 ? Math.max(...usedNums) + 1 : 1;
 
     return openModal(({ close }) => {
-      const letterSel = el('select', { class: 'ctrm-select' },
-        available.map((L) => el('option', { value: L }, [`Parcial ${L}`])));
+      const pInput = el('input', {
+        type: 'number', step: '1', min: '1', max: '99',
+        value: String(nextP),
+        class: 'ctrm-input mono text-center w-20',
+      });
       const driedInput = el('input', {
         type: 'number', step: '0.01', min: '0', placeholder: 'Ej: 250',
         class: 'ctrm-input mono',
@@ -690,7 +698,13 @@ export async function fincaLotsView() {
           `Bache `, el('strong', { text: lot.bache_code || lot.lot_code }),
           ' · ', el('span', { text: lot.reference_name || '' }),
         ]),
-        labelled('Letra', letterSel),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Número de parcial (P___)' }),
+          el('div', { class: 'flex items-center gap-1' }, [
+            el('span', { class: 'font-mono font-bold text-navy text-[14px]', text: 'P' }),
+            pInput,
+          ]),
+        ]),
         el('div', {}, [
           el('label', { class: 'ctrm-label', text: 'Peso seco (kg)' }),
           driedInput,
@@ -707,6 +721,10 @@ export async function fincaLotsView() {
             class: 'ctrm-btn ctrm-btn-primary',
             type: 'button',
             onClick: async () => {
+              const pNum = Number(pInput.value);
+              if (!Number.isFinite(pNum) || pNum < 1 || pNum > 99 || pNum !== Math.floor(pNum)) {
+                toast('Número P inválido (1-99)', 'warning'); return;
+              }
               const d = Number(driedInput.value);
               const f = Number(factorInput.value);
               if (!(d > 0)) { toast('Peso seco inválido', 'warning'); return; }
@@ -714,12 +732,12 @@ export async function fincaLotsView() {
               try {
                 await api.lotPartialCreate({
                   production_lot_id: lot.id,
-                  parcial_letter: letterSel.value,
+                  parcial_letter: `P${pNum}`,
                   kg_dried: d,
                   factor_rendimiento: f,
                   notes: notesInput.value || null,
                 });
-                toast(`Parcial ${letterSel.value} registrado`, 'success');
+                toast(`Parcial P${pNum} registrado`, 'success');
                 close({ ok: true });
                 await reloadLots();
               } catch (e) { toast(e.message, 'error'); }
@@ -952,6 +970,11 @@ export async function fincaLotsView() {
     if (kgBase <= 0) { toast('El bache no tiene kg registrado', 'warning'); return; }
 
     const result = await openModal(({ close }) => {
+      const pInput = el('input', {
+        type: 'number', step: '1', min: '1', max: '99',
+        class: 'ctrm-input mono text-center w-20',
+        placeholder: '1',
+      });
       const kgInput = el('input', {
         type: 'number', step: '0.01', min: '0.01', max: String(kgBase - 0.01),
         class: 'ctrm-input mono text-right w-full',
@@ -967,11 +990,19 @@ export async function fincaLotsView() {
             ` tiene `, el('strong', { text: fmtKg(kgBase) }), ` kg.`,
           ]),
           el('p', { class: 'text-[11px] text-ink-500 mt-1',
-            text: 'Indica cuántos kg separar en un nuevo sub-bache. ' +
-                  'El hijo se nombrará automáticamente (P1, P2...) y continuará en el mismo estado.' }),
+            text: 'Elige el número P y los kg a separar. El sub-bache continuará en el mismo estado.' }),
         ]),
-        el('div', {}, [
-          el('label', { class: 'ctrm-label', text: 'kg a separar' }), kgInput,
+        el('div', { class: 'grid grid-cols-2 gap-3' }, [
+          el('div', {}, [
+            el('label', { class: 'ctrm-label', text: 'Número (P___)' }),
+            el('div', { class: 'flex items-center gap-1' }, [
+              el('span', { class: 'font-mono font-bold text-navy text-[14px]', text: 'P' }),
+              pInput,
+            ]),
+          ]),
+          el('div', {}, [
+            el('label', { class: 'ctrm-label', text: 'kg a separar' }), kgInput,
+          ]),
         ]),
         el('div', {}, [
           el('label', { class: 'ctrm-label', text: 'Notas' }), notesInput,
@@ -981,12 +1012,17 @@ export async function fincaLotsView() {
             onClick: () => close(null) }, ['Cancelar']),
           el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button',
             onClick: async () => {
+              const pNum = Number(pInput.value);
+              if (!Number.isFinite(pNum) || pNum < 1 || pNum > 99 || pNum !== Math.floor(pNum)) {
+                toast('Indica un número P entre 1 y 99', 'warning'); return;
+              }
               const kg = Number(kgInput.value);
               if (!Number.isFinite(kg) || kg <= 0) { toast('Indica kg > 0', 'warning'); return; }
               if (kg >= kgBase) { toast('Debe ser menor al total del padre', 'warning'); return; }
               try {
                 const r = await api.lotSplit({
                   production_lot_id: lot.id,
+                  sub_number: pNum,
                   kg_to_split: kg,
                   notes: notesInput.value || undefined,
                 });

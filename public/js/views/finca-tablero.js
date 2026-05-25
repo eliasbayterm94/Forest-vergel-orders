@@ -272,6 +272,11 @@ export async function fincaTableroView() {
     if (kgBase <= 0) { toast('El bache no tiene kg registrado', 'warning'); return; }
 
     const result = await openModal(({ close }) => {
+      const pInput = el('input', {
+        type: 'number', step: '1', min: '1', max: '99',
+        class: 'ctrm-input mono text-center w-20',
+        placeholder: '1',
+      });
       const kgInput = el('input', {
         type: 'number', step: '0.01', min: '0.01', max: String(kgBase - 0.01),
         class: 'ctrm-input mono text-right w-full',
@@ -284,14 +289,27 @@ export async function fincaTableroView() {
             ` — `, el('strong', { text: fmtKg(kgBase) }), ` kg`,
           ]),
         ]),
-        el('div', {}, [el('label', { class: 'ctrm-label', text: 'kg a separar' }), kgInput]),
+        el('div', { class: 'grid grid-cols-2 gap-3' }, [
+          el('div', {}, [
+            el('label', { class: 'ctrm-label', text: 'Número (P___)' }),
+            el('div', { class: 'flex items-center gap-1' }, [
+              el('span', { class: 'font-mono font-bold text-navy text-[14px]', text: 'P' }),
+              pInput,
+            ]),
+          ]),
+          el('div', {}, [el('label', { class: 'ctrm-label', text: 'kg a separar' }), kgInput]),
+        ]),
         el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
           el('button', { class: 'ctrm-btn ctrm-btn-ghost', onClick: () => close(null) }, ['Cancelar']),
           el('button', { class: 'ctrm-btn ctrm-btn-primary', onClick: async () => {
+            const pNum = Number(pInput.value);
+            if (!Number.isFinite(pNum) || pNum < 1 || pNum > 99 || pNum !== Math.floor(pNum)) {
+              toast('Indica un P entre 1 y 99', 'warning'); return;
+            }
             const kg = Number(kgInput.value);
             if (!Number.isFinite(kg) || kg <= 0 || kg >= kgBase) { toast('kg inválido', 'warning'); return; }
             try {
-              const r = await api.lotSplit({ production_lot_id: lot.id, kg_to_split: kg });
+              const r = await api.lotSplit({ production_lot_id: lot.id, sub_number: pNum, kg_to_split: kg });
               close({ ok: true, child: r.child });
             } catch (e) { toast(e.message, 'error'); }
           } }, ['Dividir']),
@@ -319,8 +337,12 @@ export async function fincaTableroView() {
   renderLegend();
   renderGrid();
 
-  root.append(kpiStrip, filtersRow, legendRow, grid);
-  return chrome(pageTitle('Tablero de Control', 'Vista operativa · lotes en proceso por etapa'), root);
+  root.prepend(legendRow);
+  root.prepend(filtersRow);
+  root.prepend(kpiStrip);
+  root.prepend(pageTitle('Tablero de Control', 'Vista operativa · lotes en proceso por etapa'));
+  root.append(grid);
+  return chrome(root);
 }
 
 // ── helpers ────────────────────────────────────────────────────

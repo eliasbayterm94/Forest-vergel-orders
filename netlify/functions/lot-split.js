@@ -13,6 +13,7 @@ const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson }
  * Body:
  *   production_lot_id   uuid del lote padre
  *   kg_to_split         kg a separar (de la masa principal del bache)
+ *   sub_number          número del sub-bache (1→P1, 2→P2, etc.) — elegido por el operario
  *   notes?              notas opcionales
  *
  * El sub-bache hereda del padre: reference_id, process_type,
@@ -34,6 +35,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const kgToSplit = Number(body.kg_to_split);
   if (!Number.isFinite(kgToSplit) || kgToSplit <= 0) {
     return badReq('kg_to_split must be > 0', 'INVALID_KG');
+  }
+  const subNumber = Number(body.sub_number);
+  if (!Number.isFinite(subNumber) || subNumber < 1 || subNumber > 99 || subNumber !== Math.floor(subNumber)) {
+    return badReq('sub_number debe ser un entero entre 1 y 99', 'INVALID_SUB_NUMBER');
   }
 
   const sb = getSupabase();
@@ -61,18 +66,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const ratio = kgToSplit / baseKg;
   const remainRatio = 1 - ratio;
 
-  // Próximo número P
-  const { data: existingChildren } = await sb
+  // Verificar que el P number no esté ya en uso para este padre
+  const { data: existingChild } = await sb
     .from('production_lots')
-    .select('sub_bache_number')
+    .select('id')
     .eq('parent_lot_id', parent.id)
-    .order('sub_bache_number', { ascending: false })
-    .limit(1);
-  const nextP = (existingChildren && existingChildren[0] ? existingChildren[0].sub_bache_number : 0) + 1;
+    .eq('sub_bache_number', subNumber)
+    .maybeSingle();
+  if (existingChild) {
+    return conflict(`P${subNumber} ya existe para este bache`, 'SUB_NUMBER_TAKEN');
+  }
 
   // bache_code del hijo
   const parentCode = parent.bache_code || parent.blend_code || parent.lot_code || 'LOT';
-  const childBacheCode = `${parentCode}-P${nextP}`;
+  const childBacheCode = `${parentCode}-P${subNumber}`;
 
   // Campos proporcionales
   const scale = (val) => val != null ? Math.round(Number(val) * ratio * 100) / 100 : null;
@@ -80,7 +87,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const childLot = {
     parent_lot_id: parent.id,
-    sub_bache_number: nextP,
+    sub_bache_number: subNumber,
     bache_code: childBacheCode,
     reference_id: parent.reference_id,
     process_type: parent.process_type,
