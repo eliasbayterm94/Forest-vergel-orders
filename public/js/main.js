@@ -18,6 +18,7 @@ import { fincaDespachosView }       from './views/finca-despachos.js';
 import { fincaMonitoreoView }       from './views/finca-monitoreo.js';
 import { fincaPlaneacionView }      from './views/finca-planeacion.js';
 import { fincaColaView }            from './views/finca-cola.js';
+import { fincaTableroView }         from './views/finca-tablero.js';
 import { adminDashboardView }       from './views/admin-dashboard.js';
 import { adminConfigView }          from './views/admin-config.js';
 
@@ -38,6 +39,7 @@ defineRoute('/finca/cola',         { roles: FINCA_OR_ADMIN,  view: fincaColaView
 defineRoute('/finca/lots',         { roles: FINCA_OR_ADMIN,  view: fincaLotsView });
 defineRoute('/finca/lots-bulk',    { roles: FINCA_OR_ADMIN,  view: fincaLotsBulkFormView });
 defineRoute('/finca/bache',        { roles: FINCA_OR_ADMIN,  view: fincaBacheDetailView });
+defineRoute('/finca/tablero',       { roles: FINCA_OR_ADMIN,  view: fincaTableroView });
 defineRoute('/finca/punto-final',  { roles: FINCA_OR_ADMIN,  view: fincaPuntoFinalView });
 defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
 defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitoreoView });
