@@ -61,12 +61,12 @@ export async function fincaTableroView() {
 
   // Solo lotes en proceso (no Ready ni Delivered para el tablero principal,
   // pero Ready se incluye en el conteo y filtro).
-  const IN_PROCESS = new Set(['InFermentation', 'Drying', 'Resting', 'Ready']);
+  const IN_PROCESS = new Set(['InFermentation', 'Drying', 'Resting']);
   let lots = allLots.filter((l) => IN_PROCESS.has(l.status));
   let activeFilter = 'all';
 
   const root = el('div', { class: 'space-y-4' });
-  const kpiStrip = el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3' });
+  const kpiStrip = el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-3' });
   const filtersRow = el('div', { class: 'flex flex-wrap gap-2 items-center' });
   const legendRow = el('div', { class: 'flex flex-wrap gap-4 text-[11px] text-ink-500 items-center' });
   const grid = el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3' });
@@ -82,7 +82,6 @@ export async function fincaTableroView() {
       { label: 'Fermentación', count: countByStatus('InFermentation'), color: '#c62828' },
       { label: 'Secado', count: countByStatus('Drying'), color: '#e65100' },
       { label: 'Descanso', count: countByStatus('Resting'), color: '#2e7d32' },
-      { label: 'Listo', count: countByStatus('Ready'), color: '#1565c0' },
     ];
     stages.forEach((s) => {
       kpiStrip.append(el('div', {
@@ -102,7 +101,6 @@ export async function fincaTableroView() {
       { key: 'InFermentation', label: 'Fermentación', count: countByStatus('InFermentation') },
       { key: 'Drying', label: 'Secado', count: countByStatus('Drying') },
       { key: 'Resting', label: 'Descanso', count: countByStatus('Resting') },
-      { key: 'Ready', label: 'Listo', count: countByStatus('Ready') },
     ];
     filters.forEach((f) => {
       const isActive = activeFilter === f.key;

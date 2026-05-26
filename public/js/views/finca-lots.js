@@ -17,7 +17,7 @@ import {
   editBacheModal,
 } from './_bache-actions.js';
 
-const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting', 'Ready'];
+const LOT_STATUSES = ['InFermentation', 'Drying', 'Resting'];
 const LOT_STATUS_LABELS = {
   InFermentation: 'En fermentación',
   Drying: 'Secado',
@@ -62,7 +62,7 @@ export async function fincaLotsView() {
   const infResP  = api.infusions().catch(() => ({ infusions: [] }));
 
   const [refsRes, varsRes, lotsRes, infRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP]);
-  let lots = lotsRes.lots;
+  let lots = lotsRes.lots.filter((l) => l.status !== 'Ready');
   const refs = refsRes.references;
   const allVarieties = varsRes.varieties;
   let allInfusions = (infRes && infRes.infusions) || [];
@@ -960,7 +960,7 @@ export async function fincaLotsView() {
     const r = includeDelivered
       ? await api.lotsList({})
       : await api.lotsList({ active_only: 'true' });
-    lots = r.lots;
+    lots = includeDelivered ? r.lots : r.lots.filter((l) => l.status !== 'Ready');
     render();
   }
 
