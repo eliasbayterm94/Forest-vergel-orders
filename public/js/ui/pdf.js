@@ -409,11 +409,13 @@ export function generateInventoryPdf(items) {
   doc.text(`Generado: ${new Date().toLocaleString('es-CO')}`, W - M, 36, { align: 'right' });
 
   // Totales
-  let totalSeco = 0, totalVerde = 0;
+  let totalSeco = 0, totalVerde = 0, totalAsig = 0, totalDisp = 0;
   const byProc = { Natural: 0, Honey: 0, Lavado: 0 };
   for (const l of items) {
     totalSeco  += Number(l.kg_dried_output || 0);
     totalVerde += Number(l.kg_verde || 0);
+    totalAsig  += Number(l.kg_green_assigned || 0);
+    totalDisp  += Number(l.kg_green_available || 0);
     if (byProc[l.process_type] != null) byProc[l.process_type] += Number(l.kg_dried_output || 0);
   }
 
@@ -453,6 +455,8 @@ export function generateInventoryPdf(items) {
       (l._variety_names && l._variety_names.length ? l._variety_names.join(', ') : '—'),
       { content: fmtKg(l.kg_dried_output || 0), styles: { halign: 'right' } },
       { content: fmtKg(l.kg_verde || 0), styles: { halign: 'right' } },
+      { content: fmtKg(l.kg_green_assigned || 0), styles: { halign: 'right' } },
+      { content: fmtKg(l.kg_green_available || 0), styles: { halign: 'right', fontStyle: 'bold' } },
       { content: l.factor_rendimiento != null ? String(l.factor_rendimiento) : '—', styles: { halign: 'right' } },
       { content: l.final_humidity != null ? `${l.final_humidity}%` : '—', styles: { halign: 'right' } },
       { content: l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`, styles: { halign: 'right' } },
@@ -464,21 +468,23 @@ export function generateInventoryPdf(items) {
     { content: `TOTAL · ${items.length} lote(s)`, colSpan: 4, styles: { fontStyle: 'bold', fillColor: CREAM } },
     { content: fmtKg(totalSeco), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
     { content: fmtKg(totalVerde), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: fmtKg(totalAsig), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: fmtKg(totalDisp), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
     { content: '', colSpan: 4, styles: { fillColor: CREAM } },
   ]);
 
   doc.autoTable({
     startY: y,
     margin: { left: M, right: M },
-    head: [['Bache', 'Referencia', 'Proceso', 'Variedades', 'kg seco', 'kg verde', 'Factor', 'Humedad', 'Días', 'Listo desde']],
+    head: [['Bache', 'Referencia', 'Proceso', 'Variedades', 'kg seco', 'kg verde', 'Asignado v.', 'Disponible v.', 'Factor', 'Humedad', 'Días', 'Listo desde']],
     body,
     styles: { font: 'helvetica', fontSize: 8, cellPadding: 4, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
     headStyles: { fillColor: NAVY, textColor: YELLOW, fontStyle: 'bold', fontSize: 7 },
     alternateRowStyles: { fillColor: [251, 251, 248] },
     columnStyles: {
-      0: { cellWidth: 70, fontStyle: 'bold' },
-      4: { halign: 'right' }, 5: { halign: 'right' },
-      6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' },
+      0: { cellWidth: 64, fontStyle: 'bold' },
+      4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' },
+      7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' },
     },
   });
 

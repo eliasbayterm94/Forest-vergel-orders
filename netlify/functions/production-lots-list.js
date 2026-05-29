@@ -50,7 +50,8 @@ exports.handler = requireAuth(async (event) => {
       id, demand_order_id, kg_green_allocated,
       demand_orders ( id, order_code, status, max_delivery_date )
     ),
-    lot_blend_components!source_lot_id ( kg_dried_used )
+    lot_blend_components!source_lot_id ( kg_dried_used ),
+    lot_purchases ( id, client_name, kg_green_allocated, notes, created_at )
   `);
 
   if (q.id)            query = query.eq('id', q.id);
@@ -77,6 +78,20 @@ exports.handler = requireAuth(async (event) => {
     const kgDriedAvailable = Math.max(0,
       Number(l.kg_dried_output || 0) - kgDriedUsedInBlends - kgDriedShippedInPartials);
 
+    // ── Verde: total, comprometido (pedidos + compras) y disponible
+    // neto real (descontando además lo que ya salió físicamente:
+    // mezclas + parciales despachados, convertido a verde por ratio).
+    const totalGreen = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
+    const totalDried = Number(l.kg_dried_output ?? 0);
+    const greenPerDried = totalDried > 0 ? totalGreen / totalDried : 0;
+    const greenGone = (kgDriedUsedInBlends + kgDriedShippedInPartials) * greenPerDried;
+    const assignedOrdersGreen = (l.lot_order_assignments || [])
+      .reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
+    const assignedPurchasesGreen = (l.lot_purchases || [])
+      .reduce((s, p) => s + Number(p.kg_green_allocated || 0), 0);
+    const greenAssigned = assignedOrdersGreen + assignedPurchasesGreen;
+    const greenAvailable = Math.max(0, totalGreen - greenGone - greenAssigned);
+
     return {
     ...l,
     reference_name: l.coffee_references && l.coffee_references.name,
@@ -84,6 +99,17 @@ exports.handler = requireAuth(async (event) => {
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
     kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
+    kg_green_assigned_orders:    Math.round(assignedOrdersGreen * 100) / 100,
+    kg_green_assigned_purchases: Math.round(assignedPurchasesGreen * 100) / 100,
+    kg_green_assigned:           Math.round(greenAssigned * 100) / 100,
+    kg_green_available:          Math.round(greenAvailable * 100) / 100,
+    purchases: (l.lot_purchases || []).map((p) => ({
+      id: p.id,
+      client_name: p.client_name,
+      kg_green_allocated: Number(p.kg_green_allocated),
+      notes: p.notes,
+      created_at: p.created_at,
+    })),
     partials: (l.lot_partials || [])
       .map((p) => {
         const link = (p.shipment_lots || [])[0];
@@ -129,6 +155,7 @@ exports.handler = requireAuth(async (event) => {
     lot_order_assignments: undefined,
     lot_resting_cycles: undefined,
     lot_blend_components: undefined,
+    lot_purchases: undefined,
     };
   });
 
