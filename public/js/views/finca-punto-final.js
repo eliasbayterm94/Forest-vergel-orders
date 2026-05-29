@@ -12,6 +12,7 @@ import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { openModal } from '../ui/modal.js';
+import { generateInventoryPdf } from '../ui/pdf.js';
 
 export async function fincaPuntoFinalView() {
   const [lotsRes, ordersRes] = await Promise.all([
@@ -60,6 +61,9 @@ export async function fincaPuntoFinalView() {
   let dateToValue = '';
   const selected = new Set();
   const expanded = new Set();   // lot_ids con sus parciales desplegados
+  // En móvil la tabla se apila como tarjetas (responsive-stack). Este
+  // toggle permite verla como tabla real con scroll horizontal.
+  let mobileTableMode = false;
 
   const filters = [
     { key: 'variety', label: 'Variedad', multi: true,
@@ -216,6 +220,22 @@ export async function fincaPuntoFinalView() {
           type: 'button', class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
           onClick: () => { dateFromValue = ''; dateToValue = ''; redraw(); },
         }, ['Limpiar fechas']) : null,
+        // Toggle tarjetas/tabla — solo visible en móvil (sm:hidden).
+        el('button', {
+          type: 'button', class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs sm:hidden',
+          title: 'Alternar entre tarjetas y tabla',
+          onClick: () => { mobileTableMode = !mobileTableMode; redraw(); },
+        }, [mobileTableMode ? 'Ver tarjetas' : 'Ver tabla']),
+        // Descargar inventario como PDF (sobre el set filtrado actual).
+        el('button', {
+          type: 'button', class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs ml-auto',
+          title: 'Descargar el inventario visible como PDF',
+          onClick: () => {
+            if (shown.length === 0) { toast('No hay lotes para exportar', 'warning'); return; }
+            try { generateInventoryPdf(shown); }
+            catch (e) { toast(e.message || 'Error al generar PDF', 'error'); }
+          },
+        }, ['↓ Inventario PDF']),
       ]),
 
       // Tabla
@@ -349,7 +369,7 @@ export async function fincaPuntoFinalView() {
         ])])
       : null;
 
-    const table = el('table', { class: 'w-full text-[12px] responsive-stack' }, [
+    const table = el('table', { class: `w-full text-[12px]${mobileTableMode ? '' : ' responsive-stack'}` }, [
       el('thead', {}, [el('tr', {}, [
         el('th', { class: 'w-8' }, [headerCb]),
         el('th', {}, ['Bache']),

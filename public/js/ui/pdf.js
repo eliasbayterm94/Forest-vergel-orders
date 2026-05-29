@@ -371,3 +371,124 @@ export function generateShipmentAssignmentsPdf(shipment) {
 
   doc.save(`asignaciones-${shipment.shipment_code || 'despacho'}.pdf`);
 }
+
+// ── PDF de inventario de bodega (Punto Final) ──────────────────
+// Lista los lotes Listos actualmente en bodega con sus kg seco/verde,
+// factor, humedad y días en bodega. Acepta los items ya enriquecidos
+// de la vista Punto Final (campos: bache_code, blend_code, is_blend,
+// reference_name, process_type, _variety_names, kg_dried_output,
+// kg_verde, factor_rendimiento, final_humidity, days_in_warehouse,
+// ready_date).
+export function generateInventoryPdf(items) {
+  const jsPDF = ensureLib();
+  const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'landscape' });
+
+  const W = doc.internal.pageSize.getWidth();
+  const M = 36;
+
+  // Header band
+  doc.setFillColor(...NAVY_DARK);
+  doc.rect(0, 0, W, 60, 'F');
+  doc.setFillColor(...YELLOW);
+  doc.roundedRect(M, 14, 32, 32, 5, 5, 'F');
+  doc.setTextColor(...NAVY_DARK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('F', M + 16, 37, { align: 'center' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FOREST  ↔  EL VERGEL', M + 46, 28);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(231, 226, 68);
+  doc.text('Inventario de bodega · Punto Final', M + 46, 42);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`Generado: ${new Date().toLocaleString('es-CO')}`, W - M, 36, { align: 'right' });
+
+  // Totales
+  let totalSeco = 0, totalVerde = 0;
+  const byProc = { Natural: 0, Honey: 0, Lavado: 0 };
+  for (const l of items) {
+    totalSeco  += Number(l.kg_dried_output || 0);
+    totalVerde += Number(l.kg_verde || 0);
+    if (byProc[l.process_type] != null) byProc[l.process_type] += Number(l.kg_dried_output || 0);
+  }
+
+  let y = 76;
+  doc.setFillColor(...CREAM);
+  doc.roundedRect(M, y, W - M * 2, 40, 5, 5, 'F');
+  const stats = [
+    ['LOTES', String(items.length)],
+    ['TOTAL KG SECO', fmtKg(totalSeco)],
+    ['TOTAL KG VERDE', fmtKg(totalVerde)],
+    ['NATURAL (seco)', fmtKg(byProc.Natural)],
+    ['HONEY (seco)', fmtKg(byProc.Honey)],
+    ['LAVADO (seco)', fmtKg(byProc.Lavado)],
+  ];
+  const cw = (W - M * 2) / stats.length;
+  stats.forEach(([label, val], i) => {
+    const cx = M + cw * i + cw / 2;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(...INK_500);
+    doc.text(label, cx, y + 15, { align: 'center' });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(...NAVY);
+    doc.text(val, cx, y + 31, { align: 'center' });
+  });
+  y += 52;
+
+  const body = items.map((l) => {
+    const code = l.is_blend
+      ? `[MZ] ${l.blend_code || l.bache_code || l.lot_code || '—'}`
+      : (l.bache_code || l.lot_code || '—');
+    return [
+      code,
+      l.reference_name || '—',
+      l.process_type || '—',
+      (l._variety_names && l._variety_names.length ? l._variety_names.join(', ') : '—'),
+      { content: fmtKg(l.kg_dried_output || 0), styles: { halign: 'right' } },
+      { content: fmtKg(l.kg_verde || 0), styles: { halign: 'right' } },
+      { content: l.factor_rendimiento != null ? String(l.factor_rendimiento) : '—', styles: { halign: 'right' } },
+      { content: l.final_humidity != null ? `${l.final_humidity}%` : '—', styles: { halign: 'right' } },
+      { content: l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`, styles: { halign: 'right' } },
+      l.ready_date ? fmtDate(l.ready_date) : '—',
+    ];
+  });
+  // Fila total
+  body.push([
+    { content: `TOTAL · ${items.length} lote(s)`, colSpan: 4, styles: { fontStyle: 'bold', fillColor: CREAM } },
+    { content: fmtKg(totalSeco), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: fmtKg(totalVerde), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: '', colSpan: 4, styles: { fillColor: CREAM } },
+  ]);
+
+  doc.autoTable({
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Bache', 'Referencia', 'Proceso', 'Variedades', 'kg seco', 'kg verde', 'Factor', 'Humedad', 'Días', 'Listo desde']],
+    body,
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 4, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
+    headStyles: { fillColor: NAVY, textColor: YELLOW, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: [251, 251, 248] },
+    columnStyles: {
+      0: { cellWidth: 70, fontStyle: 'bold' },
+      4: { halign: 'right' }, 5: { halign: 'right' },
+      6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' },
+    },
+  });
+
+  doc.setFontSize(7);
+  doc.setTextColor(...INK_500);
+  doc.text(
+    'Inventario de bodega · Forest Production Bridge',
+    W / 2, doc.internal.pageSize.getHeight() - 16, { align: 'center' },
+  );
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  doc.save(`inventario-bodega-${stamp}.pdf`);
+}
