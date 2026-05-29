@@ -245,7 +245,7 @@ export async function fincaPuntoFinalView() {
     const allShownSelected = items.length > 0 && items.every((l) => selected.has(l.id));
     if (allShownSelected) headerCb.checked = true;
 
-    const COLSPAN = 14;
+    const COLSPAN = 15;
     const tbody = el('tbody', {});
     for (const l of items) {
       const isSel = selected.has(l.id);
@@ -307,6 +307,7 @@ export async function fincaPuntoFinalView() {
             ])),
         cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
         cellTxt('Conversión', 'text-right font-mono', l.conversion_factor != null ? `${l.conversion_factor}×` : '—'),
+        cellTxt('Humedad', 'text-right font-mono', l.final_humidity != null ? `${l.final_humidity}%` : '—'),
         cellNode('Parciales', 'text-center', expandBtn),
         cellTxt('Días bodega', `text-right font-mono ${dwCls}`, l.days_in_warehouse == null ? '—' : `${l.days_in_warehouse}d`),
         cellTxt('Días proceso', 'text-right font-mono', l.days_since_start == null ? '—' : `${l.days_since_start}d`),
@@ -358,6 +359,7 @@ export async function fincaPuntoFinalView() {
         el('th', { class: 'text-right' }, ['kg seco']),
         el('th', { class: 'text-right' }, ['kg verde']),
         el('th', { class: 'text-right' }, ['Conversión']),
+        el('th', { class: 'text-right' }, ['Humedad']),
         el('th', { class: 'text-center' }, ['Parciales']),
         el('th', { class: 'text-right' }, ['Días bodega']),
         el('th', { class: 'text-right' }, ['Días proceso']),
