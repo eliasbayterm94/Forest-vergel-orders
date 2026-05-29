@@ -170,56 +170,66 @@ export async function fincaTableroView() {
       Resting: 'descanso',
       Ready: 'listo',
     };
+    const totalDays = l.start_date ? daysSince(l.start_date) : null;
+    const locations = (l.status === 'Drying' && (l.drying_locations || []).length > 0)
+      ? l.drying_locations.join(', ') : null;
+    const etapaTxt = statusLabel(l.status) + (locations ? ` · ${locations}` : '');
+    const humidity = (l.status === 'Resting' && l.resting_humidity != null) ? l.resting_humidity : null;
+
+    const metaLine = (label, value) => el('div', { class: 'flex items-baseline gap-1.5' }, [
+      el('span', { class: 'text-[9px] uppercase tracking-wide text-ink-300 w-24 shrink-0', text: label }),
+      el('span', { class: 'text-[12px] font-mono text-ink-700 font-semibold', text: value }),
+    ]);
 
     return el('div', {
-      class: 'bg-white border border-sand rounded-xl p-4 relative hover:shadow-sm transition-shadow',
+      class: 'bg-white border border-sand rounded-xl p-4 hover:shadow-sm transition-shadow',
       style: `border-left: 4px solid ${borderColor}`,
     }, [
-      // Top: código + pills
-      el('div', { class: 'flex flex-wrap items-center gap-1.5 mb-2 pr-16' }, [
-        l.parent_lot_id
-          ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#e0e7f5;color:#1b2044;', text: 'SUB' })
-          : null,
-        l.is_blend
-          ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' })
-          : null,
-        el('span', {
-          class: 'font-mono font-bold text-[14px] text-navy cursor-pointer hover:underline',
-          onClick: () => navigate(`/finca/bache?id=${l.id}`),
-          text: l.bache_code || l.blend_code || l.lot_code,
-        }),
-        el('span', { class: 'font-display font-semibold text-[13px] text-navy', text: l.reference_name || '' }),
-        el('span', { class: `ctrm-pill ${statusPillKind(l.status)}`, text: statusLabel(l.status) }),
-        el('span', { class: 'ctrm-pill', style: 'background:#dde7ee;color:#1a3a5c;', text: l.process_type || '—' }),
-        ...(l.status === 'Drying'
-          ? (l.drying_locations || []).map((loc) =>
-              el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#dde7ee;color:#1a3a5c;', text: loc }))
-          : []),
-        l.status === 'Resting' && l.resting_humidity != null
-          ? el('span', { class: 'ctrm-pill text-[9px]',
-              style: `background:${l.resting_humidity > 12 ? '#fff3e0' : '#e8f5e9'};color:${l.resting_humidity > 12 ? '#e65100' : '#2e7d32'}`,
-              text: `Humedad ${l.resting_humidity}%` })
-          : null,
-      ]),
-
-      // Contador de días (esquina superior derecha)
-      el('div', { class: 'absolute top-3 right-4 text-center' }, [
-        el('div', { class: 'font-mono font-extrabold text-[28px] leading-none', style: numberColor, text: String(days) }),
-        el('div', { class: 'text-[9px] uppercase tracking-wide text-ink-500 mt-0.5',
-          text: `${days === 1 ? 'día' : 'días'} en ${stageLabels[l.status] || l.status}` }),
-      ]),
-
-      // Meta
-      el('div', { class: 'flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink-500 font-mono mb-2' }, [
-        start ? el('span', {}, [el('span', { class: 'text-ink-300', text: 'Inicio: ' }), el('strong', { text: fmtDate(start) })]) : null,
-        el('span', {}, [el('span', { class: 'text-ink-300', text: 'kg: ' }), el('strong', { text: fmtKg(l.kg_input_initial || 0) })]),
-        l.fermentation_hours && l.status === 'InFermentation'
-          ? el('span', {}, [el('span', { class: 'text-ink-300', text: 'Ferm: ' }), el('strong', { text: `${l.fermentation_hours}h` })])
-          : null,
-        (l.resting_cycles_count || 0) > 1
-          ? el('span', {}, [el('span', { class: 'text-ink-300', text: 'Ciclos: ' }), el('strong', { text: String(l.resting_cycles_count) })])
-          : null,
-        ...(l.varieties || []).map((v) => el('span', { class: 'ctrm-pill dark text-[9px]', text: v.name })),
+      // Fila superior: info (izquierda) + contador de días (derecha)
+      el('div', { class: 'flex items-start justify-between gap-3 mb-3' }, [
+        // ── Izquierda: info ──
+        el('div', { class: 'flex-1 min-w-0' }, [
+          // Código + referencia
+          el('div', { class: 'flex items-center gap-2 flex-wrap mb-1.5' }, [
+            l.parent_lot_id
+              ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#e0e7f5;color:#1b2044;', text: 'SUB' })
+              : null,
+            l.is_blend
+              ? el('span', { class: 'ctrm-pill text-[9px]', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' })
+              : null,
+            el('span', {
+              class: 'font-mono font-bold text-[15px] text-navy cursor-pointer hover:underline',
+              onClick: () => navigate(`/finca/bache?id=${l.id}`),
+              text: l.bache_code || l.blend_code || l.lot_code,
+            }),
+            l.reference_name
+              ? el('span', { class: 'font-display font-semibold text-[12px] text-ink-500', text: l.reference_name })
+              : null,
+          ]),
+          // Pills: proceso + variedades
+          el('div', { class: 'flex items-center gap-1.5 flex-wrap mb-2' }, [
+            el('span', { class: 'ctrm-pill', style: 'background:#dde7ee;color:#1a3a5c;', text: l.process_type || '—' }),
+            ...(l.varieties || []).map((v) =>
+              el('span', { class: 'ctrm-pill dark text-[9px]', text: v.name })),
+          ]),
+          // Meta: kg, etapa+locación, humedad, días totales
+          el('div', { class: 'space-y-0.5' }, [
+            metaLine('Kg iniciales', `${fmtKg(l.kg_input_initial || 0)} kg`),
+            metaLine('Etapa', etapaTxt),
+            humidity != null ? metaLine('Humedad', `${humidity}%`) : null,
+            l.fermentation_hours && l.status === 'InFermentation'
+              ? metaLine('Fermentación', `${l.fermentation_hours} h`) : null,
+            totalDays != null
+              ? metaLine('Días totales', `${totalDays} ${totalDays === 1 ? 'día' : 'días'} · desde ${fmtDate(l.start_date)}`)
+              : null,
+          ]),
+        ]),
+        // ── Derecha: contador de días en la etapa ──
+        el('div', { class: 'text-center shrink-0 w-20' }, [
+          el('div', { class: 'font-mono font-extrabold text-[30px] leading-none', style: numberColor, text: String(days) }),
+          el('div', { class: 'text-[9px] uppercase tracking-wide text-ink-500 mt-1 leading-tight',
+            text: `${days === 1 ? 'día' : 'días'} en ${stageLabels[l.status] || l.status}` }),
+        ]),
       ]),
 
       // Barra de progreso
