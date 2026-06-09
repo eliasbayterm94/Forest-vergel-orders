@@ -23,6 +23,61 @@ const TIME_LIMITS = {
   Resting: { warn: 25, crit: 30 },
 };
 
+// ── Stepper del proceso ────────────────────────────────────────
+// Muestra los 4 pasos del beneficio con el actual resaltado.
+// Color por etapa solo en el punto activo (no choca con la urgencia
+// del borde izquierdo de la card).
+const STAGE_ORDER  = ['InFermentation', 'Drying', 'Resting', 'Ready'];
+const STAGE_SHORT  = {
+  InFermentation: 'Ferment.',
+  Drying:         'Secado',
+  Resting:        'Descanso',
+  Ready:          'Listo',
+};
+const STAGE_COLOR  = {
+  InFermentation: '#c62828',
+  Drying:         '#e65100',
+  Resting:        '#2e7d32',
+  Ready:          '#1565c0',
+};
+
+function processStepper(currentStatus) {
+  const cur = STAGE_ORDER.indexOf(currentStatus);
+  const nodes = [];
+  STAGE_ORDER.forEach((stage, i) => {
+    const isDone    = i < cur;
+    const isCurrent = i === cur;
+
+    let dotStyle, dotText, labelClass;
+    if (isCurrent) {
+      dotStyle = `background:${STAGE_COLOR[stage]};color:#fff;border:2px solid ${STAGE_COLOR[stage]};`;
+      dotText  = '●';
+      labelClass = 'text-[10px] font-bold uppercase tracking-wide text-navy';
+    } else if (isDone) {
+      dotStyle = 'background:#2e7d32;color:#fff;border:2px solid #2e7d32;';
+      dotText  = '✓';
+      labelClass = 'text-[10px] text-ink-500';
+    } else {
+      dotStyle = 'background:#fff;color:#bdbdb6;border:1.5px solid #e8e8e2;';
+      dotText  = '';
+      labelClass = 'text-[10px] text-ink-300';
+    }
+
+    const dot = el('div', {
+      class: 'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0',
+      style: dotStyle,
+      text: dotText,
+    });
+    const label = el('span', { class: labelClass, text: STAGE_SHORT[stage] });
+    nodes.push(el('div', { class: 'flex items-center gap-1 shrink-0' }, [dot, label]));
+    if (i < STAGE_ORDER.length - 1) {
+      const connColor = (i < cur) ? '#2e7d32' : '#e8e8e2';
+      nodes.push(el('div', { class: 'flex-1 h-0.5 mx-1 min-w-[8px]', style: `background:${connColor};` }));
+    }
+  });
+  return el('div', { class: 'flex items-center mb-3 px-1' }, nodes);
+}
+
 function getLimits(status, processType) {
   const entry = TIME_LIMITS[status];
   if (!entry) return { warn: 999, crit: 999 };
@@ -185,6 +240,8 @@ export async function fincaTableroView() {
       class: 'bg-white border border-sand rounded-xl p-4 hover:shadow-sm transition-shadow',
       style: `border-left: 4px solid ${borderColor}`,
     }, [
+      // Stepper del proceso (Fermentación → Secado → Descanso → Listo)
+      processStepper(l.status),
       // Fila superior: info (izquierda) + contador de días (derecha)
       el('div', { class: 'flex items-start justify-between gap-3 mb-3' }, [
         // ── Izquierda: info ──
