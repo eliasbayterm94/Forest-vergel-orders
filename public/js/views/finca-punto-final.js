@@ -54,7 +54,59 @@ export async function fincaPuntoFinalView() {
       _regions:       [...new Set(assignments.flatMap((a) => a.regions || []))],
       _variety_names: (l.varieties || []).map((v) => v.name),
     };
-  }).sort((a, b) => (b.days_in_warehouse || 0) - (a.days_in_warehouse || 0));
+  });
+
+  // ── Orden por columna (toggle asc/desc al clickear el header) ──
+  let sortKey = 'days_in_warehouse';
+  let sortDir = 'desc';
+  const SORT_COLS = {
+    bache:        { label: 'Bache',         getter: (l) => (l.bache_code || l.blend_code || l.lot_code || '').toLowerCase() },
+    reference:    { label: 'Referencia',    getter: (l) => (l.reference_name || '').toLowerCase() },
+    process:      { label: 'Proceso',       getter: (l) => l.process_type || '' },
+    varieties:    { label: 'Variedades',    getter: (l) => (l._variety_names || []).join(',').toLowerCase() },
+    kg_seco:      { label: 'kg seco',       getter: (l) => Number(l.kg_dried_output || 0) },
+    kg_verde:     { label: 'kg verde',      getter: (l) => Number(l.kg_verde || 0) },
+    asignado:     { label: 'Asignado v.',   getter: (l) => Number(l.kg_green_assigned || 0) },
+    disponible:   { label: 'Disponible v.', getter: (l) => Number(l.kg_green_available || 0) },
+    conversion:   { label: 'Conversión',    getter: (l) => Number(l.conversion_factor || 0) },
+    humedad:      { label: 'Humedad',       getter: (l) => l.final_humidity == null ? -1 : Number(l.final_humidity) },
+    parciales:    { label: 'Parciales',     getter: (l) => (l.partials || []).length },
+    days_in_warehouse: { label: 'Días bodega',  getter: (l) => l.days_in_warehouse == null ? -1 : Number(l.days_in_warehouse) },
+    days_proceso: { label: 'Días proceso',  getter: (l) => l.days_since_start == null ? -1 : Number(l.days_since_start) },
+    ready_date:   { label: 'Listo desde',   getter: (l) => l.ready_date || '' },
+    asignaciones: { label: 'Pedido / Cliente', getter: (l) => (l.enriched_assignments?.length || 0) + (l.purchases?.length || 0) },
+    region:       { label: 'Región',        getter: (l) => (l._regions || [])[0] || '' },
+  };
+
+  function applySort(arr) {
+    const col = SORT_COLS[sortKey];
+    if (!col) return arr;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return arr.slice().sort((a, b) => {
+      const va = col.getter(a); const vb = col.getter(b);
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+  }
+
+  function setSort(key) {
+    if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    else { sortKey = key; sortDir = 'asc'; }
+    redraw();
+  }
+
+  function sortHeader(label, key, extraClass = '') {
+    const isActive = sortKey === key;
+    const arrow = isActive ? (sortDir === 'asc' ? '▲' : '▼') : '';
+    return el('th', {
+      class: `cursor-pointer select-none hover:text-navy ${extraClass}`,
+      title: 'Ordenar por ' + label,
+      onClick: () => setSort(key),
+    }, [
+      el('span', {}, [label]),
+      isActive ? el('span', { class: 'ml-1 text-navy text-[10px]', text: arrow }) : null,
+    ]);
+  }
 
   // ── Filtros ──
   let sheetValues = {};
@@ -112,7 +164,7 @@ export async function fincaPuntoFinalView() {
 
   function redraw() {
     clear(root);
-    const shown = enriched.filter(passes);
+    const shown = applySort(enriched.filter(passes));
     const totalKg     = shown.reduce((s, l) => s + Number(l.kg_verde || 0), 0);
     const totalSeco   = shown.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
     const uniqueOrders = new Set();
@@ -408,22 +460,22 @@ export async function fincaPuntoFinalView() {
     const table = el('table', { class: `w-full text-[12px]${mobileTableMode ? '' : ' responsive-stack'}` }, [
       el('thead', {}, [el('tr', {}, [
         el('th', { class: 'w-8' }, [headerCb]),
-        el('th', {}, ['Bache']),
-        el('th', {}, ['Referencia']),
-        el('th', {}, ['Proceso']),
-        el('th', {}, ['Variedades']),
-        el('th', { class: 'text-right' }, ['kg seco']),
-        el('th', { class: 'text-right' }, ['kg verde']),
-        el('th', { class: 'text-right' }, ['Asignado v.']),
-        el('th', { class: 'text-right' }, ['Disponible v.']),
-        el('th', { class: 'text-right' }, ['Conversión']),
-        el('th', { class: 'text-right' }, ['Humedad']),
-        el('th', { class: 'text-center' }, ['Parciales']),
-        el('th', { class: 'text-right' }, ['Días bodega']),
-        el('th', { class: 'text-right' }, ['Días proceso']),
-        el('th', {}, ['Listo desde']),
-        el('th', {}, ['Pedido / Cliente']),
-        el('th', {}, ['Región']),
+        sortHeader('Bache',         'bache'),
+        sortHeader('Referencia',    'reference'),
+        sortHeader('Proceso',       'process'),
+        sortHeader('Variedades',    'varieties'),
+        sortHeader('kg seco',       'kg_seco',     'text-right'),
+        sortHeader('kg verde',      'kg_verde',    'text-right'),
+        sortHeader('Asignado v.',   'asignado',    'text-right'),
+        sortHeader('Disponible v.', 'disponible',  'text-right'),
+        sortHeader('Conversión',    'conversion',  'text-right'),
+        sortHeader('Humedad',       'humedad',     'text-right'),
+        sortHeader('Parciales',     'parciales',   'text-center'),
+        sortHeader('Días bodega',   'days_in_warehouse', 'text-right'),
+        sortHeader('Días proceso',  'days_proceso','text-right'),
+        sortHeader('Listo desde',   'ready_date'),
+        sortHeader('Pedido / Cliente', 'asignaciones'),
+        sortHeader('Región',        'region'),
       ])]),
       tbody,
       tfoot,
