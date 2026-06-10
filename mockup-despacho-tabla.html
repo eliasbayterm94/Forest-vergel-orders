@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mockup — Generar Despacho como tabla</title>
+<style>
+  :root {
+    --navy: #1b203d; --navy-dark: #0c0c0b; --yellow: #e7e244;
+    --ink-700: #2a2a28; --ink-500: #5a5a55; --ink-300: #9a9a95;
+    --sand: #e8e8e2; --cream: #f5f4ee; --ok: #2e7d32;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, sans-serif; }
+  body { background: #f3f1ea; padding: 24px; }
+  .modal {
+    background: #fff; border-radius: 12px; max-width: 1280px; margin: 0 auto;
+    box-shadow: 0 8px 32px rgba(0,0,0,.08); overflow: hidden;
+  }
+  .header {
+    background: var(--cream); padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--sand);
+  }
+  .header h1 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-500); }
+  .body { padding: 16px 20px; }
+  /* Bloque de remisión */
+  .remision {
+    background: var(--cream); border: 1px solid var(--sand); border-radius: 8px;
+    padding: 12px; margin-bottom: 16px;
+  }
+  .remision-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--ink-500); font-weight: 600; margin-bottom: 8px;
+  }
+  .field-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .field-grid label {
+    font-size: 10px; color: var(--ink-500); text-transform: uppercase;
+    letter-spacing: .5px; font-weight: 600; display: block; margin-bottom: 2px;
+  }
+  input, select {
+    width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid var(--sand);
+    border-radius: 6px; background: #fff; font-family: inherit;
+  }
+  input.mono { font-family: 'JetBrains Mono', monospace; }
+  input:focus, select:focus { outline: 2px solid var(--navy); outline-offset: -1px; }
+  /* Picker para agregar */
+  .picker-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  }
+  .btn {
+    padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--sand); background: #fff; cursor: pointer;
+  }
+  .btn-primary { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .btn-soft { background: var(--cream); }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--ink-500); }
+  /* Tabla principal */
+  .table-wrap {
+    border: 1px solid var(--sand); border-radius: 8px; overflow: hidden;
+    margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    background: var(--navy); color: var(--yellow); padding: 8px 10px;
+    text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  }
+  th.right { text-align: right; }
+  th.center { text-align: center; }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--sand); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: #faf9f4; }
+  td.bache { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--navy); }
+  td.right { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  td.center { text-align: center; }
+  td input { font-size: 12px; padding: 4px 6px; }
+  td input.kg { text-align: right; }
+  .pill {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+    font-weight: 600; background: #dde7ee; color: #1a3a5c;
+  }
+  .pill.partial { background: #fff3e0; color: #e65100; }
+  .pill.sub { background: #e0e7f5; color: #1b2044; }
+  .pill.mz { background: #e8efe3; color: #2e4a2e; }
+  .remove-btn {
+    color: #c62828; background: transparent; border: none; cursor: pointer;
+    font-size: 16px; padding: 2px 6px;
+  }
+  /* Fila de total */
+  tfoot td {
+    background: var(--cream); font-weight: 700; padding: 10px;
+    border-top: 2px solid var(--navy); color: var(--navy);
+  }
+  tfoot td.right { font-family: 'JetBrains Mono', monospace; }
+  /* Acciones inferiores */
+  .actions {
+    display: flex; justify-content: space-between; align-items: center;
+    padding-top: 12px; border-top: 1px solid var(--sand);
+  }
+  .note { font-size: 11px; color: var(--ink-500); font-style: italic; }
+  .partial-toggle {
+    font-size: 10px; color: var(--ink-500); cursor: pointer; user-select: none;
+  }
+  .partial-toggle input { width: 12px; height: 12px; margin-right: 4px; vertical-align: middle; }
+  .row-meta {
+    font-size: 10px; color: var(--ink-300); font-family: 'JetBrains Mono', monospace;
+    margin-top: 2px;
+  }
+  details { display: inline; }
+  summary { font-size: 11px; color: var(--navy); cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="modal">
+
+  <div class="header">
+    <div>
+      <h1>NUEVO DESPACHO</h1>
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-top:2px;">Tabla editable · 5 baches seleccionados</div>
+    </div>
+    <button class="btn btn-ghost">✕</button>
+  </div>
+
+  <div class="body">
+
+    <!-- ── Datos de remisión (sin cambios) ──────────────────── -->
+    <div class="remision">
+      <div class="remision-title">Datos de remisión</div>
+      <div class="field-grid" style="margin-bottom:8px;">
+        <div>
+          <label>Fecha</label>
+          <input type="date" value="2026-06-10">
+        </div>
+        <div>
+          <label>Código (opcional)</label>
+          <input type="text" class="mono" placeholder="Auto: DSP-2026-NNNN">
+        </div>
+        <div>
+          <label>Destino</label>
+          <select>
+            <option>Vertical</option>
+            <option>Tribox</option>
+            <option selected>Trillanova</option>
+            <option>Otro</option>
+          </select>
+        </div>
+        <div>
+          <label>Notas (opcional)</label>
+          <input type="text" placeholder="">
+        </div>
+      </div>
+      <div class="field-grid">
+        <div>
+          <label>Conductor — CC</label>
+          <input type="text" value="1.234.567.890">
+        </div>
+        <div>
+          <label>Conductor — Nombre</label>
+          <input type="text" value="Juan Pérez">
+        </div>
+        <div>
+          <label>Placas</label>
+          <input type="text" class="mono" value="ABC-123">
+        </div>
+        <div></div>
+      </div>
+    </div>
+
+    <!-- ── Agregar más baches ─────────────────────────────── -->
+    <div class="picker-row">
+      <strong style="font-size:12px;color:var(--navy);">Baches a despachar</strong>
+      <span style="font-size:11px;color:var(--ink-500);">· 5 baches preseleccionados desde Punto Final</span>
+      <button class="btn btn-soft" style="margin-left:auto;">+ Agregar bache</button>
+    </div>
+
+    <!-- ── TABLA editable ──────────────────────────────────── -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Bache</th>
+            <th>Ref / Proceso</th>
+            <th class="right">kg seco disp.</th>
+            <th>Cód. Trilladora</th>
+            <th>Cód. Mezcla</th>
+            <th class="right"># Sacos</th>
+            <th class="right">kg seco a desp.</th>
+            <th class="center"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Fila 1: bache simple sin parciales -->
+          <tr>
+            <td>1</td>
+            <td class="bache">26-152</td>
+            <td>
+              Las Margaritas <span class="pill">Lavado</span>
+              <div class="row-meta">Borbon Rosado · Listo desde 04 Abr</div>
+            </td>
+            <td class="right">105.00 kg</td>
+            <td><input type="text" class="mono" placeholder="PP-1234" value="PP-2845"></td>
+            <td><input type="text" class="mono" placeholder="opcional" value="M-001"></td>
+            <td><input type="number" class="kg" placeholder="0" value="10"></td>
+            <td><input type="number" class="kg mono" value="105.00"></td>
+            <td class="center"><button class="remove-btn" title="Quitar">×</button></td>
+          </tr>
+
+          <!-- Fila 2: bache con parciales MEZCLADOS (default) -->
+          <tr>
+            <td>2</td>
+            <td class="bache">26-156</td>
+            <td>
+              El Vergel Signature <span class="pill">Natural</span>
+              <div class="row-meta">
+                Papayo ·
+                <label class="partial-toggle">
+                  <input type="checkbox" checked> Mezclar parciales (P1+P2)
+                </label>
+              </div>
+            </td>
+            <td class="right">235.00 kg</td>
+            <td><input type="text" class="mono" placeholder="PP-1234"></td>
+            <td><input type="text" class="mono" placeholder="opcional"></td>
+            <td><input type="number" class="kg" placeholder="0"></td>
+            <td><input type="number" class="kg mono" value="235.00"></td>
+            <td class="center"><button class="remove-btn" title="Quitar">×</button></td>
+          </tr>
+
+          <!-- Fila 3 (despacho parcial: kg menor al disponible) -->
+          <tr>
+            <td>3</td>
+            <td class="bache">26-180</td>
+            <td>
+              La Pradera <span class="pill">Natural</span>
+              <div class="row-meta">Java · ⚠ Despacho parcial — resto queda en bodega</div>
+            </td>
+            <td class="right">355.00 kg</td>
+            <td><input type="text" class="mono" value="PP-2846"></td>
+            <td><input type="text" class="mono"></td>
+            <td><input type="number" class="kg" value="20"></td>
+            <td><input type="number" class="kg mono" value="200.00" style="border-color:#e65100;"></td>
+            <td class="center"><button class="remove-btn">×</button></td>
+          </tr>
+
+          <!-- Fila 4: bache mezcla (MZ) -->
+          <tr>
+            <td>4</td>
+            <td class="bache"><span class="pill mz">MZ</span> MZ-2026-0003</td>
+            <td>
+              El Vergel + Las Margaritas <span class="pill">Lavado</span>
+              <div class="row-meta">Borbon Rosado, Geisha · Mezcla creada en Punto Final</div>
+            </td>
+            <td class="right">125.00 kg</td>
+            <td><input type="text" class="mono"></td>
+            <td><input type="text" class="mono"></td>
+            <td><input type="number" class="kg"></td>
+            <td><input type="number" class="kg mono" value="125.00"></td>
+            <td class="center"><button class="remove-btn">×</button></td>
+          </tr>
+
+          <!-- Fila 5: bache con parciales SEPARADOS — dos sub-rows -->
+          <tr style="border-top:2px solid var(--sand);">
+            <td>5</td>
+            <td class="bache">26-238</td>
+            <td>
+              Las Margaritas <span class="pill">Honey</span>
+              <div class="row-meta">
+                Papayo ·
+                <label class="partial-toggle">
+                  <input type="checkbox"> Mezclar parciales (separados ↓)
+                </label>
+              </div>
+            </td>
+            <td class="right">380.00 kg</td>
+            <td colspan="5" style="padding:0;">
+              <table style="margin:0;">
+                <tr style="background:#fafafa;">
+                  <td style="width:120px;padding-left:16px;font-size:11px;color:var(--ink-500);">↳ Parcial P1 · 190 kg</td>
+                  <td><input type="text" class="mono" value="PP-2847"></td>
+                  <td><input type="text" class="mono"></td>
+                  <td style="width:80px;"><input type="number" class="kg" value="10"></td>
+                  <td style="width:100px;text-align:right;padding-right:10px;" class="mono">190.00</td>
+                  <td class="center" style="width:36px;"><button class="remove-btn">×</button></td>
+                </tr>
+                <tr style="background:#fafafa;">
+                  <td style="padding-left:16px;font-size:11px;color:var(--ink-500);">↳ Parcial P2 · 190 kg</td>
+                  <td><input type="text" class="mono" value="PP-2848"></td>
+                  <td><input type="text" class="mono"></td>
+                  <td><input type="number" class="kg" value="10"></td>
+                  <td style="text-align:right;padding-right:10px;" class="mono">190.00</td>
+                  <td class="center"><button class="remove-btn">×</button></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" style="text-align:right;">TOTAL · 5 baches</td>
+            <td class="right">1.200 kg</td>
+            <td colspan="2"></td>
+            <td class="right">53</td>
+            <td class="right">1.045 kg</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- ── Acciones inferiores ──────────────────────────────── -->
+    <div class="actions">
+      <div class="note">El despacho parcial deja el restante (180 kg de 26-180) disponible en bodega.</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost">Cancelar</button>
+        <button class="btn btn-primary">Generar despacho</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Nota de diseño ─────────────────────────────────────── -->
+<div style="max-width:1280px;margin:20px auto;padding:16px;background:#fff;border-radius:8px;border:1px solid var(--sand);font-size:12px;color:var(--ink-500);line-height:1.5;">
+  <strong style="color:var(--navy);">Notas de diseño</strong><br><br>
+  · La tabla muestra TODOS los baches preseleccionados (desde Punto Final) en un solo vistazo. Llenas los campos línea por línea sin tener que clickear/expandir cada uno.<br><br>
+  · Una fila por bache. Para baches con parciales puedes elegir "Mezclar parciales" (default = una sola línea con suma) o desactivar para que cada parcial se vuelva su propia sub-fila con sus propios códigos/sacos.<br><br>
+  · Columna <strong>kg seco a despachar</strong> editable: default = todo lo disponible (despacho completo). Si pones un valor menor, el campo se marca naranja indicando despacho parcial y el restante queda en bodega.<br><br>
+  · Total al pie: total kg seco, total sacos.<br><br>
+  · "+ Agregar bache" permite añadir más baches sin salir del modal (abre un picker compacto).<br><br>
+  · "×" en cada fila quita ese bache del despacho (no del sistema).
+</div>
+
+</body>
+</html>
