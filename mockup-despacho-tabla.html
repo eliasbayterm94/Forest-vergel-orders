@@ -80,6 +80,28 @@
   .pill.partial { background: #fff3e0; color: #e65100; }
   .pill.sub { background: #e0e7f5; color: #1b2044; }
   .pill.mz { background: #e8efe3; color: #2e4a2e; }
+  /* Segmented Todo/Parcial */
+  .seg {
+    display: inline-flex; border: 1px solid var(--sand); border-radius: 6px;
+    overflow: hidden; font-size: 10px; font-weight: 600;
+  }
+  .seg button {
+    background: #fff; border: none; padding: 4px 10px; cursor: pointer;
+    color: var(--ink-500); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .seg button.active { background: var(--navy); color: #fff; }
+  .kg-cell { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+  .kg-todo-label {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
+    color: var(--ok);
+  }
+  .kg-input-wrap input { width: 80px; }
+  .kg-remaining {
+    display: block; font-size: 10px; color: #e65100;
+    font-family: 'JetBrains Mono', monospace; margin-top: 2px;
+    text-align: right;
+  }
   .remove-btn {
     color: #c62828; background: transparent; border: none; cursor: pointer;
     font-size: 16px; padding: 2px 6px;
@@ -201,7 +223,12 @@
             <td><input type="text" class="mono" placeholder="PP-1234" value="PP-2845"></td>
             <td><input type="text" class="mono" placeholder="opcional" value="M-001"></td>
             <td><input type="number" class="kg" placeholder="0" value="10"></td>
-            <td><input type="number" class="kg mono" value="105.00"></td>
+            <td>
+              <div class="kg-cell">
+                <div class="seg"><button class="active">Todo</button><button>Parcial</button></div>
+                <span class="kg-todo-label">105.00 kg</span>
+              </div>
+            </td>
             <td class="center"><button class="remove-btn" title="Quitar">×</button></td>
           </tr>
 
@@ -222,7 +249,12 @@
             <td><input type="text" class="mono" placeholder="PP-1234"></td>
             <td><input type="text" class="mono" placeholder="opcional"></td>
             <td><input type="number" class="kg" placeholder="0"></td>
-            <td><input type="number" class="kg mono" value="235.00"></td>
+            <td>
+              <div class="kg-cell">
+                <div class="seg"><button class="active">Todo</button><button>Parcial</button></div>
+                <span class="kg-todo-label">235.00 kg</span>
+              </div>
+            </td>
             <td class="center"><button class="remove-btn" title="Quitar">×</button></td>
           </tr>
 
@@ -238,7 +270,15 @@
             <td><input type="text" class="mono" value="PP-2846"></td>
             <td><input type="text" class="mono"></td>
             <td><input type="number" class="kg" value="20"></td>
-            <td><input type="number" class="kg mono" value="200.00" style="border-color:#e65100;"></td>
+            <td>
+              <div class="kg-cell">
+                <div class="seg"><button>Todo</button><button class="active">Parcial</button></div>
+                <div class="kg-input-wrap">
+                  <input type="number" class="kg mono" value="200.00" style="border-color:#e65100;">
+                  <span class="kg-remaining">155 kg quedan en bodega</span>
+                </div>
+              </div>
+            </td>
             <td class="center"><button class="remove-btn">×</button></td>
           </tr>
 
@@ -254,7 +294,12 @@
             <td><input type="text" class="mono"></td>
             <td><input type="text" class="mono"></td>
             <td><input type="number" class="kg"></td>
-            <td><input type="number" class="kg mono" value="125.00"></td>
+            <td>
+              <div class="kg-cell">
+                <div class="seg"><button class="active">Todo</button><button>Parcial</button></div>
+                <span class="kg-todo-label">125.00 kg</span>
+              </div>
+            </td>
             <td class="center"><button class="remove-btn">×</button></td>
           </tr>
 
@@ -324,7 +369,9 @@
   <strong style="color:var(--navy);">Notas de diseño</strong><br><br>
   · La tabla muestra TODOS los baches preseleccionados (desde Punto Final) en un solo vistazo. Llenas los campos línea por línea sin tener que clickear/expandir cada uno.<br><br>
   · Una fila por bache. Para baches con parciales puedes elegir "Mezclar parciales" (default = una sola línea con suma) o desactivar para que cada parcial se vuelva su propia sub-fila con sus propios códigos/sacos.<br><br>
-  · Columna <strong>kg seco a despachar</strong> editable: default = todo lo disponible (despacho completo). Si pones un valor menor, el campo se marca naranja indicando despacho parcial y el restante queda en bodega.<br><br>
+  · Columna <strong>kg seco a despachar</strong> con control segmentado <strong>Todo / Parcial</strong>:<br>
+  &nbsp;&nbsp;— "Todo" (default): no escribes nada, despacha el total disponible (etiqueta verde con el kg).<br>
+  &nbsp;&nbsp;— "Parcial": aparece el input para escribir los kg + aviso de cuánto queda en bodega.<br><br>
   · Total al pie: total kg seco, total sacos.<br><br>
   · "+ Agregar bache" permite añadir más baches sin salir del modal (abre un picker compacto).<br><br>
   · "×" en cada fila quita ese bache del despacho (no del sistema).
