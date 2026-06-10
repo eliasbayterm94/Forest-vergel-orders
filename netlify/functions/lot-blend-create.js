@@ -86,14 +86,21 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   for (const r of prevBlendUse || []) {
     usedByBlend.set(r.source_lot_id, (usedByBlend.get(r.source_lot_id) || 0) + Number(r.kg_dried_used || 0));
   }
-  const { data: partials } = await sb
-    .from('lot_partials')
-    .select('production_lot_id, kg_dried, shipment_id')
+  // Kg seco ya despachado por shipment_lots (whole-lot por kg o
+  // por partial). Antes este bloque consultaba lot_partials.shipment_id
+  // que no existe como columna — ahora vamos por shipment_lots.
+  const { data: shipLinks } = await sb
+    .from('shipment_lots')
+    .select('production_lot_id, kg_dried_shipped, lot_partials(kg_dried)')
     .in('production_lot_id', parentIds);
   const usedByPartials = new Map();
-  for (const r of partials || []) {
-    if (!r.shipment_id) continue; // solo cuentan los despachados
-    usedByPartials.set(r.production_lot_id, (usedByPartials.get(r.production_lot_id) || 0) + Number(r.kg_dried || 0));
+  for (const r of shipLinks || []) {
+    let kgUsed = 0;
+    if (r.kg_dried_shipped != null) kgUsed = Number(r.kg_dried_shipped);
+    else if (r.lot_partials && r.lot_partials.kg_dried != null) kgUsed = Number(r.lot_partials.kg_dried);
+    if (kgUsed > 0) {
+      usedByPartials.set(r.production_lot_id, (usedByPartials.get(r.production_lot_id) || 0) + kgUsed);
+    }
   }
 
   const requestedByLot = new Map();

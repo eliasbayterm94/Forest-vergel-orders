@@ -27,7 +27,7 @@ export async function fincaPuntoFinalView() {
   // Enriquecer cada lote: kg verde efectivo, dias en bodega (ready_date)
   // y dias desde proceso (start_date). Tambien collectar pedidos
   // asignados con su cliente / region / contrato.
-  const enriched = lots.map((l) => {
+  const enrichedAll = lots.map((l) => {
     const kgVerde = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
     const daysInWarehouse = l.ready_date ? daysBetween(l.ready_date, today) : null;
     const daysSinceStart  = l.start_date ? daysBetween(l.start_date, today) : null;
@@ -55,6 +55,13 @@ export async function fincaPuntoFinalView() {
       _variety_names: (l.varieties || []).map((v) => v.name),
     };
   });
+
+  // Filtrar lotes ya totalmente consumidos (kg seco disponible = 0
+  // por estar enteros en mezclas y/o despachados). Se cuentan aparte
+  // para mostrar un aviso.
+  const enriched = enrichedAll.filter((l) =>
+    l.kg_dried_available == null || Number(l.kg_dried_available) > 0.01);
+  const hiddenConsumed = enrichedAll.length - enriched.length;
 
   // ── Orden por columna (toggle asc/desc al clickear el header) ──
   let sortKey = 'days_in_warehouse';
@@ -290,6 +297,12 @@ export async function fincaPuntoFinalView() {
           },
         }, ['↓ Inventario PDF']),
       ]),
+
+      // Aviso si hay lotes consumidos ocultos
+      hiddenConsumed > 0
+        ? el('div', { class: 'mb-2 text-[11px] text-ink-500 italic',
+            text: `${hiddenConsumed} lote(s) ya consumidos en mezclas o despachos no se listan (sin kg seco disponible).` })
+        : null,
 
       // Tabla
       shown.length === 0
