@@ -401,9 +401,20 @@ export async function fincaPuntoFinalView() {
 
       tbody.append(el('tr', { class: isSel ? 'bg-cream' : 'hover:bg-cream' }, [
         cellNode('Sel', '', rowCb),
-        cellNode('Bache', 'font-mono text-navy font-semibold', el('span', {}, [
-          l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' }) : null,
-          document.createTextNode(l.is_blend ? (l.blend_code || l.bache_code || l.lot_code) : (l.bache_code || l.lot_code)),
+        cellNode('Bache', 'font-mono text-navy font-semibold', el('div', {}, [
+          el('span', {}, [
+            l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' }) : null,
+            document.createTextNode(l.is_blend ? (l.blend_code || l.bache_code || l.lot_code) : (l.bache_code || l.lot_code)),
+          ]),
+          l.is_blend && (l.blend_components || []).length > 0
+            ? el('div', { class: 'text-[10px] text-ink-500 font-mono mt-0.5',
+                title: (l.blend_components || []).map((c) =>
+                  `${c.bache_code || c.blend_code || c.lot_code}: ${fmtKg(c.kg_dried_used)} kg`).join(' · '),
+                text: '← ' + (l.blend_components || [])
+                  .map((c) => c.bache_code || c.blend_code || c.lot_code)
+                  .join(' + '),
+              })
+            : null,
         ])),
         cellTxt('Referencia', '', l.reference_name || '—'),
         cellTxt('Proceso', 'text-[11px]', l.process_type),

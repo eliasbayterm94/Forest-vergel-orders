@@ -65,6 +65,33 @@ exports.handler = requireAuth(async (event) => {
   const { data, error } = await query;
   if (error) return serverErr('Failed to load production lots', error.message);
 
+  // Para los lotes que son mezcla (is_blend=true), traemos sus
+  // componentes (los baches padre que se combinaron) en una segunda
+  // query. Evita un self-join complejo en PostgREST.
+  const blendLotIds = (data || []).filter((l) => l.is_blend).map((l) => l.id);
+  const componentsByBlend = new Map();
+  if (blendLotIds.length > 0) {
+    const { data: comps, error: compErr } = await sb
+      .from('lot_blend_components')
+      .select('blend_lot_id, kg_dried_used, source:production_lots!source_lot_id(id, bache_code, blend_code, lot_code, process_type)')
+      .in('blend_lot_id', blendLotIds);
+    if (!compErr) {
+      for (const c of comps || []) {
+        const arr = componentsByBlend.get(c.blend_lot_id) || [];
+        const s = c.source || {};
+        arr.push({
+          source_lot_id: s.id || null,
+          bache_code:    s.bache_code || null,
+          blend_code:    s.blend_code || null,
+          lot_code:      s.lot_code   || null,
+          process_type:  s.process_type || null,
+          kg_dried_used: Number(c.kg_dried_used || 0),
+        });
+        componentsByBlend.set(c.blend_lot_id, arr);
+      }
+    }
+  }
+
   const lots = (data || []).map((l) => {
     // kg seco consumido por mezclas en las que este bache participó
     // como padre. (Para el blend resultante is_blend=true y no entra
@@ -99,6 +126,7 @@ exports.handler = requireAuth(async (event) => {
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
     kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
+    blend_components: l.is_blend ? (componentsByBlend.get(l.id) || []) : [],
     kg_green_assigned_orders:    Math.round(assignedOrdersGreen * 100) / 100,
     kg_green_assigned_purchases: Math.round(assignedPurchasesGreen * 100) / 100,
     kg_green_assigned:           Math.round(greenAssigned * 100) / 100,
