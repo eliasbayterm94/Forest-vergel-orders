@@ -2,10 +2,14 @@
 // CTRM-style header with eyebrow title.
 import { el } from './el.js';
 
-export function openModal(buildBody, { title = '', wide = false } = {}) {
+export function openModal(buildBody, { title = '', wide = false, size = null } = {}) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
-    dialog.className = `bg-white text-slate-800 ${wide ? 'w-[92vw] max-w-2xl' : 'w-[92vw] max-w-md'}`;
+    // size='xl' para modales tipo tabla (despacho); wide para forms medianos.
+    const sizeClass = size === 'xl' ? 'max-w-7xl'
+                    : wide          ? 'max-w-2xl'
+                    :                 'max-w-md';
+    dialog.className = `bg-white text-slate-800 w-[96vw] ${sizeClass}`;
 
     let resolved = false;
     const close = (val) => {

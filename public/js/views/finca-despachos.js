@@ -311,7 +311,7 @@ export async function fincaDespachosView() {
       return;
     }
     return openModal(({ close }) => createModalBody(close, preselectLotIds), {
-      title: 'Nuevo despacho', wide: true,
+      title: 'Nuevo despacho', size: 'xl',
     });
   }
 
@@ -464,7 +464,7 @@ export async function fincaDespachosView() {
       if (isTodo) {
         return el('div', { class: 'flex items-center justify-end gap-2' }, [
           seg,
-          el('span', { class: 'text-ok font-mono font-bold text-[12px]', text: `${fmtKg(avail)} kg` }),
+          el('span', { class: 'text-ok font-mono font-bold text-[12px]', text: `${fmtKg(avail)}` }),
         ]);
       }
       const remainingLabel = el('span', { class: 'text-[9px] text-warn font-mono mt-0.5' });
@@ -540,7 +540,7 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-2 text-ink-300 text-[11px] font-mono', text: String(idx) }),
         el('td', { class: 'px-2 py-2' }, [codeNode]),
         el('td', { class: 'px-2 py-2' }, [refProcCell]),
-        el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(avail)} kg` }),
+        el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(avail)}` }),
         el('td', { class: 'px-2 py-2' }, [codTIn]),
         el('td', { class: 'px-2 py-2' }, [codMIn]),
         el('td', { class: 'px-2 py-2 text-right' }, [sacosIn]),
@@ -582,7 +582,7 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-2 text-ink-300 text-[11px] font-mono', text: String(idx) }),
         el('td', { class: 'px-2 py-2' }, [codeNode]),
         el('td', { class: 'px-2 py-2' }, [refProcCell]),
-        el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(totalKg)} kg` }),
+        el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(totalKg)}` }),
         el('td', { colspan: '4', class: 'px-2 py-2 text-[10px] text-ink-500 italic',
           text: 'Códigos y sacos por parcial ↓' }),
         el('td', { class: 'px-2 py-2 text-center' }, [removeBtn]),
@@ -610,11 +610,11 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-1.5 pl-6 text-[11px] text-ink-500 font-mono',
           text: `↳ P${p.parcial_letter || ''}` }),
         el('td', { class: 'px-2 py-1.5' }, []),
-        el('td', { class: 'px-2 py-1.5 text-right font-mono text-[11px]', text: `${fmtKg(kg)} kg` }),
+        el('td', { class: 'px-2 py-1.5 text-right font-mono text-[11px]', text: `${fmtKg(kg)}` }),
         el('td', { class: 'px-2 py-1.5' }, [codTIn]),
         el('td', { class: 'px-2 py-1.5' }, [codMIn]),
         el('td', { class: 'px-2 py-1.5 text-right' }, [sIn]),
-        el('td', { class: 'px-2 py-1.5 text-right font-mono text-[11px] text-ok font-bold', text: `${fmtKg(kg)} kg` }),
+        el('td', { class: 'px-2 py-1.5 text-right font-mono text-[11px] text-ok font-bold', text: `${fmtKg(kg)}` }),
         el('td', { class: 'px-2 py-1.5 text-center' }, [removeBtn]),
       ]);
     }
@@ -683,7 +683,7 @@ export async function fincaDespachosView() {
           el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: '' }),
           el('td', { colspan: '2' }, []),
           el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: String(totalSacos) }),
-          el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: `${fmtKg(totalDried)} kg` }),
+          el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: `${fmtKg(totalDried)}` }),
           el('td', {}, []),
         ])]),
       ]);
