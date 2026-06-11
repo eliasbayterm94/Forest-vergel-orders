@@ -50,7 +50,7 @@ export function generateShipmentPdf(shipment) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(255, 255, 255);
-  doc.text('FOREST  ↔  EL VERGEL', M + 50, 32);
+  doc.text('FOREST · EL VERGEL', M + 50, 32);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(231, 226, 68);
@@ -67,7 +67,7 @@ export function generateShipmentPdf(shipment) {
   // ── Datos de remisión: destino + conductor ──────────────────
   let y = 90;
   doc.setFillColor(...CREAM);
-  doc.roundedRect(M, y, W - M * 2, 72, 6, 6, 'F');
+  doc.roundedRect(M, y, W - M * 2, 84, 6, 6, 'F');
 
   const destLabel = shipment.destino_kind === 'Otro'
     ? (shipment.destino_other || 'Otro')
@@ -80,25 +80,25 @@ export function generateShipmentPdf(shipment) {
   ];
   const colW = (W - M * 2) / 4;
   remisionRows.forEach(([label, value], i) => {
-    const cx = M + colW * i + 12;
+    const cx = M + colW * i + colW / 2;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(...INK_500);
-    doc.text(label.toUpperCase(), cx, y + 16);
+    doc.text(label.toUpperCase(), cx, y + 18, { align: 'center' });
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.setTextColor(...NAVY);
-    const txt = doc.splitTextToSize(String(value), colW - 16);
-    doc.text(txt, cx, y + 32);
+    const txt = doc.splitTextToSize(String(value), colW - 12);
+    doc.text(txt, cx, y + 34, { align: 'center' });
   });
   if (shipment.notes) {
     doc.setFont('helvetica', 'italic');
     doc.setFontSize(8);
     doc.setTextColor(...INK_500);
     const split = doc.splitTextToSize('Notas: ' + shipment.notes, W - M * 2 - 16);
-    doc.text(split, M + 8, y + 58);
+    doc.text(split, M + 8, y + 72);
   }
-  y += 88;
+  y += 100;
 
   // ── Tabla principal por bache (o por partial si separate) ──
   // Construye las filas: si partials_merged=true (default), una línea
@@ -266,7 +266,7 @@ export function generateShipmentAssignmentsPdf(shipment) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(255, 255, 255);
-  doc.text('FOREST  ↔  EL VERGEL', M + 50, 32);
+  doc.text('FOREST · EL VERGEL', M + 50, 32);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(231, 226, 68);
@@ -398,7 +398,7 @@ export function generateInventoryPdf(items) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(255, 255, 255);
-  doc.text('FOREST  ↔  EL VERGEL', M + 46, 28);
+  doc.text('FOREST · EL VERGEL', M + 46, 28);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(231, 226, 68);

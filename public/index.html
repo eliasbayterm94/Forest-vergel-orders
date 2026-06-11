@@ -206,6 +206,13 @@
       }
       .ctrm-input.mono{ font-family:var(--mono); font-size:13px; }
       .ctrm-textarea{ resize:vertical; min-height:68px; }
+      /* Ocultar flechitas de spinner en number inputs para que
+         no se coman el ancho de la celda (ej. # Sacos en despacho). */
+      .ctrm-input[type="number"]::-webkit-inner-spin-button,
+      .ctrm-input[type="number"]::-webkit-outer-spin-button{
+        -webkit-appearance:none; margin:0;
+      }
+      .ctrm-input[type="number"]{ -moz-appearance:textfield; }
 
       /* Inline validation */
       .ctrm-input-invalid{
