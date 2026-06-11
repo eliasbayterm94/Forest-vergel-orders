@@ -94,6 +94,7 @@ export const api = {
   weeklyPlanGet:     (week) => request('GET',  '/api/weekly-plan-get', { query: { week } }),
   weeklyPlanCompute: (payload) => request('POST', '/api/weekly-plan-compute', { body: payload }),
   lotBlendCreate:    (payload) => request('POST', '/api/lot-blend-create', { body: payload }),
+  lotBlendDelete:    (payload) => request('POST', '/api/lot-blend-delete', { body: payload }),
   lotSplit:          (payload) => request('POST', '/api/lot-split',        { body: payload }),
   lotPurchaseCreate: (payload) => request('POST', '/api/lot-purchases-create', { body: payload }),
   lotPurchaseDelete: (payload) => request('POST', '/api/lot-purchases-delete', { body: payload }),

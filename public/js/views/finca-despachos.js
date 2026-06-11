@@ -721,10 +721,12 @@ export async function fincaDespachosView() {
       counter,
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
-        el('button', {
-          class: 'ctrm-btn ctrm-btn-primary',
-          type: 'button',
-          onClick: async () => {
+        (() => {
+          const submitBtn = el('button', {
+            class: 'ctrm-btn ctrm-btn-primary', type: 'button',
+          }, ['Generar despacho']);
+          submitBtn.addEventListener('click', async () => {
+            if (submitBtn.disabled) return;
             const items = buildItems(readyLots, selectedLots, partialIds, lotFields, partialFields);
             if (items.length === 0) { toast('Selecciona al menos un bache', 'warning'); return; }
             if (destinoSelect.value === 'Otro' && !destinoOtherInput.value.trim()) {
@@ -741,6 +743,8 @@ export async function fincaDespachosView() {
               { title: 'Confirmar despacho' },
             );
             if (!ok) return;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generando…';
             try {
               const r = await api.shipmentsCreate({
                 shipment_code: codeInput.value.trim() || undefined,
@@ -760,9 +764,14 @@ export async function fincaDespachosView() {
               );
               close({ ok: true });
               await reload();
-            } catch (e) { toast(e.message, 'error'); }
-          },
-        }, ['Generar despacho']),
+            } catch (e) {
+              toast(e.message, 'error');
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Generar despacho';
+            }
+          });
+          return submitBtn;
+        })(),
       ]),
     ]);
   }

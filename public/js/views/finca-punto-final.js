@@ -11,7 +11,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { emptyStateCard } from '../ui/empty.js';
-import { openModal } from '../ui/modal.js';
+import { openModal, confirmModal } from '../ui/modal.js';
 import { generateInventoryPdf } from '../ui/pdf.js';
 
 export async function fincaPuntoFinalView() {
@@ -415,6 +415,26 @@ export async function fincaPuntoFinalView() {
                   .join(' + '),
               })
             : null,
+          l.is_blend
+            ? el('button', {
+                type: 'button',
+                class: 'text-[10px] text-crit hover:underline mt-1',
+                title: 'Eliminar esta mezcla y liberar los kg de los baches padre',
+                onClick: async (e) => {
+                  e.stopPropagation();
+                  const ok = await confirmModal(
+                    `¿Eliminar la mezcla ${l.blend_code || l.bache_code}? Los kg seco de los baches padre quedarán disponibles de nuevo.`,
+                    { title: 'Eliminar mezcla', confirmText: 'Eliminar', danger: true },
+                  );
+                  if (!ok) return;
+                  try {
+                    await api.lotBlendDelete({ blend_lot_id: l.id });
+                    toast('Mezcla eliminada', 'success');
+                    navigate('/finca/punto-final');
+                  } catch (err) { toast(err.message, 'error'); }
+                },
+              }, ['× Eliminar mezcla'])
+            : null,
         ])),
         cellTxt('Referencia', '', l.reference_name || '—'),
         cellTxt('Proceso', 'text-[11px]', l.process_type),
@@ -750,27 +770,34 @@ async function openBlendModal(parents) {
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-ghost',
           onClick: () => close(null) }, ['Cancelar']),
-        el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-primary',
-          onClick: async () => {
+        (() => {
+          const submitBtn = el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-primary' }, ['Crear mezcla']);
+          submitBtn.addEventListener('click', async () => {
+            if (submitBtn.disabled) return;
             // Filtrar componentes con kg > 0
             const items = components
               .filter((c) => c.kg_dried_used > 0)
               .map((c) => ({ source_lot_id: c.source_lot_id, kg_dried_used: c.kg_dried_used }));
             if (items.length < 2) { toast('Necesitas al menos 2 componentes con kg > 0', 'warning'); return; }
-            // Validar excesos contra disponible
             for (const c of components) {
               if (c.kg_dried_used > c.kg_available + 0.01) {
                 toast(`${c.bache_code}: excede el disponible (${fmtKg(c.kg_available)} kg)`, 'error');
                 return;
               }
             }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creando…';
             try {
               await api.lotBlendCreate({ components: items, notes: notesInput.value || null });
               close({ ok: true });
             } catch (e) {
               toast(e.message || 'Error al crear mezcla', 'error');
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Crear mezcla';
             }
-          } }, ['Crear mezcla']),
+          });
+          return submitBtn;
+        })(),
       ]),
     ]);
   }, { title: `Mezclar ${parents.length} baches`, wide: true });
