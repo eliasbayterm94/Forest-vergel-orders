@@ -517,12 +517,15 @@ export async function fincaDespachosView() {
       const codMIn = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-24',
         placeholder: '—', value: lf.codigo_mezcla || '' });
       codMIn.addEventListener('input', () => { lf.codigo_mezcla = codMIn.value; });
-      const sacosIn = el('input', { type: 'number', min: '0', step: '1',
-        class: 'ctrm-input mono text-[11px] text-right w-14', value: lf.num_sacos || '' });
+      const sacosIn = el('input', {
+        type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
+        class: 'ctrm-input mono text-[11px] text-right w-16', value: lf.num_sacos || '',
+      });
       sacosIn.addEventListener('input', () => {
-        sacosIn.value === ''
-          ? (lf.num_sacos = '')
-          : (lf.num_sacos = Math.max(0, Math.floor(Number(sacosIn.value) || 0)));
+        // Solo dígitos: descarta cualquier otro caracter
+        const cleaned = (sacosIn.value || '').replace(/[^0-9]/g, '');
+        if (cleaned !== sacosIn.value) sacosIn.value = cleaned;
+        lf.num_sacos = cleaned === '' ? '' : Number(cleaned);
       });
       const removeBtn = el('button', { type: 'button',
         class: 'text-crit text-[16px] font-bold hover:bg-crit-bg rounded px-1',
@@ -594,12 +597,14 @@ export async function fincaDespachosView() {
       codTIn.addEventListener('input', () => { pf.codigo_trilladora = codTIn.value; });
       const codMIn = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-24', value: pf.codigo_mezcla || '' });
       codMIn.addEventListener('input', () => { pf.codigo_mezcla = codMIn.value; });
-      const sIn = el('input', { type: 'number', min: '0', step: '1',
-        class: 'ctrm-input mono text-[11px] text-right w-14', value: pf.num_sacos || '' });
+      const sIn = el('input', {
+        type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
+        class: 'ctrm-input mono text-[11px] text-right w-16', value: pf.num_sacos || '',
+      });
       sIn.addEventListener('input', () => {
-        sIn.value === ''
-          ? (pf.num_sacos = '')
-          : (pf.num_sacos = Math.max(0, Math.floor(Number(sIn.value) || 0)));
+        const cleaned = (sIn.value || '').replace(/[^0-9]/g, '');
+        if (cleaned !== sIn.value) sIn.value = cleaned;
+        pf.num_sacos = cleaned === '' ? '' : Number(cleaned);
       });
       const removeBtn = el('button', { type: 'button', class: 'text-crit text-[14px]',
         title: 'Quitar parcial',
