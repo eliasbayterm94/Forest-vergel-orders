@@ -112,7 +112,10 @@ function progressPct(days, limits) {
 
 // ── Vista principal ────────────────────────────────────────────
 export async function fincaTableroView() {
-  const { lots: allLots } = await api.lotsList({ active_only: 'true' });
+  // Cargamos TODOS los lotes (incluido Delivered) para el historial
+  // de acciones del Tablero. El grid de cards filtra solo
+  // InFermentation/Drying/Resting; el historial usa todo.
+  const { lots: allLots } = await api.lotsList({});
 
   // Solo lotes en proceso (no Ready ni Delivered para el tablero principal,
   // pero Ready se incluye en el conteo y filtro).
@@ -389,7 +392,7 @@ export async function fincaTableroView() {
   }
 
   async function reload() {
-    const { lots: fresh } = await api.lotsList({ active_only: 'true' });
+    const { lots: fresh } = await api.lotsList({});
     lots = fresh.filter((l) => IN_PROCESS.has(l.status));
     renderKpi();
     renderFilters();
@@ -402,12 +405,216 @@ export async function fincaTableroView() {
   renderLegend();
   renderGrid();
 
+  // ── Historial de acciones ─────────────────────────────────────
+  const historyEl = el('section', { class: 'mt-6' });
+  let historyRange = '7';  // '1' | '7' | '30' | 'all'
+  function renderHistory() {
+    clear(historyEl);
+    const events = buildActionLog(allLots);
+    const cutoff = (() => {
+      if (historyRange === 'all') return null;
+      const d = new Date();
+      d.setDate(d.getDate() - Number(historyRange) + 1);
+      return d.toISOString().slice(0, 10);
+    })();
+    const filtered = cutoff ? events.filter((e) => e.date >= cutoff) : events;
+    const rangeSel = el('select', {
+      class: 'ctrm-input text-[12px]',
+      onChange: (e) => { historyRange = e.target.value; renderHistory(); },
+    }, [
+      el('option', { value: '1',   selected: historyRange === '1'   ? 'true' : null }, ['Hoy']),
+      el('option', { value: '7',   selected: historyRange === '7'   ? 'true' : null }, ['Últimos 7 días']),
+      el('option', { value: '30',  selected: historyRange === '30'  ? 'true' : null }, ['Últimos 30 días']),
+      el('option', { value: 'all', selected: historyRange === 'all' ? 'true' : null }, ['Todo el historial']),
+    ]);
+    const header = el('div', { class: 'flex items-center justify-between gap-3 mb-3 flex-wrap' }, [
+      el('div', {}, [
+        el('h3', { class: 'font-display text-[15px] text-navy font-semibold', text: 'Historial de acciones' }),
+        el('p', { class: 'text-[11px] text-ink-500', text: `${filtered.length} acción(es)` }),
+      ]),
+      el('div', { class: 'flex items-center gap-2' }, [
+        el('label', { class: 'text-[11px] text-ink-500', text: 'Rango:' }),
+        rangeSel,
+      ]),
+    ]);
+    historyEl.append(header);
+    if (filtered.length === 0) {
+      historyEl.append(el('div', { class: 'text-center text-[12px] text-ink-300 py-6 border border-sand rounded-lg',
+        text: 'No hay acciones registradas en el rango seleccionado.' }));
+      return;
+    }
+    historyEl.append(renderActionTable(filtered));
+  }
+  renderHistory();
+
   root.prepend(legendRow);
   root.prepend(filtersRow);
   root.prepend(kpiStrip);
   root.prepend(pageTitle('Tablero de Control', 'Vista operativa · lotes en proceso por etapa'));
   root.append(grid);
+  root.append(historyEl);
   return chrome(root);
+}
+
+// ── Action log builder ───────────────────────────────────────────
+// Reconstruye los eventos por lote a partir de los timestamps
+// (start_date, drying_start_date, ready_date, delivered_date),
+// los ciclos de descanso y las relaciones de mezcla/split.
+// Devuelve los eventos ordenados por fecha DESC.
+function buildActionLog(allLots) {
+  const events = [];
+  const lotById = new Map(allLots.map((l) => [l.id, l]));
+  const codeOf = (l) => l.bache_code || l.blend_code || l.lot_code || '?';
+
+  for (const l of allLots) {
+    const code = codeOf(l);
+
+    if (l.start_date) {
+      events.push({
+        date: l.start_date, lot_id: l.id, bache: code,
+        action: 'Bache creado',
+        from: '—', to: 'Fermentación',
+        humidity: null, kg: l.kg_input_initial,
+        detail: stageLabel(l.processing_stage),
+      });
+    }
+
+    if (l.drying_start_date) {
+      events.push({
+        date: l.drying_start_date, lot_id: l.id, bache: code,
+        action: '→ Secado',
+        from: 'Fermentación', to: 'Secado',
+        humidity: null, kg: null,
+        detail: (l.drying_locations || []).join(', ') || '—',
+      });
+    }
+
+    const cycles = (l.resting_cycles || []).slice().sort((a, b) => a.cycle_number - b.cycle_number);
+    for (const c of cycles) {
+      events.push({
+        date: c.start_date, lot_id: l.id, bache: code,
+        action: `→ Descanso (ciclo ${c.cycle_number})`,
+        from: 'Secado', to: 'Descanso',
+        humidity: c.start_humidity, kg: null, detail: '',
+      });
+      if (c.end_date) {
+        const back = c.end_reason === 'back_to_drying';
+        events.push({
+          date: c.end_date, lot_id: l.id, bache: code,
+          action: back ? '← Volver a Secado' : '→ Listo',
+          from: 'Descanso', to: back ? 'Secado' : 'Listo',
+          humidity: c.end_humidity,
+          kg: !back ? l.kg_dried_output : null,
+          detail: !back && l.factor_rendimiento ? `Factor ${l.factor_rendimiento}` : '',
+        });
+      }
+    }
+
+    const lastCycle = cycles[cycles.length - 1];
+    const readyFromRest = lastCycle && lastCycle.end_reason === 'to_ready' && lastCycle.end_date === l.ready_date;
+    if (l.ready_date && !readyFromRest) {
+      events.push({
+        date: l.ready_date, lot_id: l.id, bache: code,
+        action: '→ Listo',
+        from: 'Secado', to: 'Listo',
+        humidity: l.final_humidity,
+        kg: l.kg_dried_output,
+        detail: l.factor_rendimiento ? `Factor ${l.factor_rendimiento}` : '',
+      });
+    }
+
+    if (l.delivered_date) {
+      events.push({
+        date: l.delivered_date, lot_id: l.id, bache: code,
+        action: '→ Despachado',
+        from: 'Listo', to: 'Despachado',
+        humidity: null, kg: null, detail: '',
+      });
+    }
+
+    // Sub-bache (split)
+    if (l.parent_lot_id) {
+      const parent = lotById.get(l.parent_lot_id);
+      const parentCode = parent ? codeOf(parent) : '?';
+      const created = l.created_at ? l.created_at.slice(0, 10) : l.start_date;
+      events.push({
+        date: created, lot_id: l.id, bache: code,
+        action: 'Sub-bache creado',
+        from: parentCode, to: code,
+        humidity: null, kg: l.kg_input_initial,
+        detail: `Dividido de ${parentCode}`,
+      });
+    }
+
+    // Mezcla creada
+    if (l.is_blend) {
+      const sources = (l.blend_components || [])
+        .map((c) => c.bache_code || c.blend_code || c.lot_code).join(' + ');
+      const created = l.created_at ? l.created_at.slice(0, 10) : l.start_date;
+      events.push({
+        date: created, lot_id: l.id, bache: code,
+        action: 'Mezcla creada',
+        from: sources || '?', to: code,
+        humidity: null, kg: l.kg_dried_output,
+        detail: '',
+      });
+    }
+  }
+
+  return events.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+function stageLabel(s) {
+  if (s === 'cereza')     return 'Cereza fresca';
+  if (s === 'despulpado') return 'Despulpado';
+  if (s === 'seco')       return 'Café seco';
+  return s || '—';
+}
+
+function renderActionTable(events) {
+  // Group events by date for the visual day separator. Within a date,
+  // mantenemos el orden con el que vienen (ya viene DESC por fecha).
+  const wrap = el('div', { class: 'overflow-x-auto border border-sand rounded-lg' });
+  const tbody = el('tbody', {});
+  let lastDate = null;
+  for (const ev of events) {
+    if (ev.date !== lastDate) {
+      tbody.append(el('tr', { class: 'bg-cream' }, [
+        el('td', { colspan: '7', class: 'px-3 py-1.5 text-[10px] uppercase tracking-eyebrow font-semibold text-ink-500',
+          text: ev.date ? fmtDate(ev.date) : '—' }),
+      ]));
+      lastDate = ev.date;
+    }
+    tbody.append(el('tr', { class: 'border-t border-sand hover:bg-cream/40' }, [
+      el('td', { class: 'px-3 py-2 text-[11px] text-ink-500 font-mono whitespace-nowrap', text: ev.date ? fmtDate(ev.date) : '—' }),
+      el('td', { class: 'px-3 py-2 font-mono text-[12px] font-semibold text-navy cursor-pointer hover:underline',
+        title: 'Ver detalle del bache',
+        onClick: () => navigate(`/finca/bache?id=${ev.lot_id}`),
+        text: ev.bache }),
+      el('td', { class: 'px-3 py-2 text-[12px] text-navy font-semibold', text: ev.action }),
+      el('td', { class: 'px-3 py-2 text-[11px] text-ink-500',
+        text: `${ev.from} → ${ev.to}` }),
+      el('td', { class: 'px-3 py-2 text-right font-mono text-[11px]',
+        text: ev.humidity != null ? `${ev.humidity}%` : '—' }),
+      el('td', { class: 'px-3 py-2 text-right font-mono text-[11px] text-ink-700',
+        text: ev.kg != null ? fmtKg(ev.kg) : '—' }),
+      el('td', { class: 'px-3 py-2 text-[11px] text-ink-500', text: ev.detail || '' }),
+    ]));
+  }
+  const table = el('table', { class: 'w-full text-[12px]' }, [
+    el('thead', {}, [el('tr', { class: 'bg-navy text-yellow' }, [
+      el('th', { class: 'px-3 py-2 text-left uppercase tracking-eyebrow text-[10px]', text: 'Fecha' }),
+      el('th', { class: 'px-3 py-2 text-left uppercase tracking-eyebrow text-[10px]', text: 'Bache' }),
+      el('th', { class: 'px-3 py-2 text-left uppercase tracking-eyebrow text-[10px]', text: 'Acción' }),
+      el('th', { class: 'px-3 py-2 text-left uppercase tracking-eyebrow text-[10px]', text: 'Etapa' }),
+      el('th', { class: 'px-3 py-2 text-right uppercase tracking-eyebrow text-[10px]', text: 'Humedad' }),
+      el('th', { class: 'px-3 py-2 text-right uppercase tracking-eyebrow text-[10px]', text: 'Kg' }),
+      el('th', { class: 'px-3 py-2 text-left uppercase tracking-eyebrow text-[10px]', text: 'Detalle' }),
+    ])]),
+    tbody,
+  ]);
+  wrap.append(table);
+  return wrap;
 }
 
 // ── helpers ────────────────────────────────────────────────────
