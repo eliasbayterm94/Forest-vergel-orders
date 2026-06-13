@@ -20,23 +20,27 @@ const STAGE_OPTIONS = [
 ];
 
 export async function fincaLotsBulkFormView() {
-  const [refsRes, varsRes, infRes] = await Promise.all([
+  const [refsRes, varsRes, infRes, tanksRes] = await Promise.all([
     api.references(),
     api.varieties(),
     api.infusions().catch(() => ({ infusions: [] })),
+    api.fermentationTanksList({}).catch(() => ({ fermentation_tanks: [] })),
   ]);
   let allReferences = refsRes.references || [];
   let allVarieties  = varsRes.varieties  || [];
   let allInfusions  = (infRes && infRes.infusions) || [];
+  let allTanks      = (tanksRes && tanksRes.fermentation_tanks) || [];
 
   // Datalists compartidos
   const refDatalistId      = 'finca-bulk-ref-list';
   const varietyDatalistId  = 'finca-bulk-variety-list';
   const infusionDatalistId = 'finca-bulk-infusion-list';
+  const tanksDatalistId    = 'finca-bulk-tanks-list';
   const refDatalist      = el('datalist', { id: refDatalistId },      allReferences.map((r) => el('option', { value: r.name })));
   const varietyDatalist  = el('datalist', { id: varietyDatalistId },  allVarieties.map((v)  => el('option', { value: v.name })));
   const infusionDatalist = el('datalist', { id: infusionDatalistId }, allInfusions.map((i)  => el('option', { value: i.name })));
-  document.body.append(refDatalist, varietyDatalist, infusionDatalist);
+  const tanksDatalist    = el('datalist', { id: tanksDatalistId },    allTanks.map((t)      => el('option', { value: t.name })));
+  document.body.append(refDatalist, varietyDatalist, infusionDatalist, tanksDatalist);
 
   function refreshDatalist(node, list) {
     while (node.firstChild) node.removeChild(node.firstChild);
@@ -54,6 +58,7 @@ export async function fincaLotsBulkFormView() {
       refDatalistId,
       varietyDatalistId,
       infusionDatalistId,
+      tanksDatalistId,
       lookupRef: (name) => refByLowerName().get((name || '').toLowerCase()) || null,
       onRemove: () => removeRow(row),
     }, prefill);
@@ -108,6 +113,7 @@ export async function fincaLotsBulkFormView() {
     { label: 'Kg entrada *', cls: 'w-28 text-right' },
     { label: 'Inicio *',   cls: 'w-36' },
     { label: 'Variedades *', cls: 'min-w-[180px]' },
+    { label: 'Tanques',    cls: 'min-w-[150px]' },
     { label: 'Ferm. (h)',  cls: 'w-20 text-right' },
     { label: 'Infusión',   cls: 'min-w-[130px]' },
     { label: '%',          cls: 'w-16 text-right' },
@@ -309,7 +315,7 @@ export async function fincaLotsBulkFormView() {
 }
 
 // ─── Fila ──────────────────────────────────────────────────────────────
-function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, lookupRef, onRemove }, prefill) {
+function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, tanksDatalistId, lookupRef, onRemove }, prefill) {
   const cellCls = 'px-2 py-1.5 align-top';
 
   const idxLabel = el('span', { class: 'text-ink-500 font-mono text-[11px]', text: '1' });
@@ -343,6 +349,12 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
     placeholder: 'castillo, caturra',
     title: 'Nombres separados por coma',
     list: varietyDatalistId,
+  });
+  const tanksInput = el('input', {
+    type: 'text', class: 'ctrm-input w-full text-[12px]',
+    placeholder: 'Tanque 1, Tanque 2',
+    title: 'Tanques de fermentación separados por coma. Admin en /admin/config.',
+    list: tanksDatalistId,
   });
   const fermInput = el('input', {
     type: 'number', min: '0', step: '0.5',
@@ -398,6 +410,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
     el('td', { class: cellCls }, [kgInput, greenHint]),
     el('td', { class: cellCls }, [dateInput]),
     el('td', { class: cellCls }, [varietyInput]),
+    el('td', { class: cellCls }, [tanksInput]),
     el('td', { class: cellCls }, [fermInput]),
     el('td', { class: cellCls }, [infusionInput]),
     el('td', { class: cellCls }, [infusionPctInput]),
@@ -415,6 +428,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
     if (p.kg != null)  kgInput.value     = p.kg;
     if (p.date)        dateInput.value   = p.date;
     if (p.varieties)   varietyInput.value = p.varieties;
+    if (p.tanks)       tanksInput.value   = p.tanks;
     if (p.ferm != null) fermInput.value  = p.ferm;
     if (p.infusion)    infusionInput.value = p.infusion;
     if (p.infusion_pct != null) infusionPctInput.value = p.infusion_pct;
@@ -431,6 +445,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
       kg:         kgInput.value,
       date:       dateInput.value,
       varieties:  varietyInput.value,
+      tanks:      tanksInput.value,
       ferm:       fermInput.value,
       infusion:   infusionInput.value,
       infusion_pct: infusionPctInput.value,
@@ -469,6 +484,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
     }
 
     const rawVarietyNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+    const rawTankNames = tanksInput.value.split(',').map((s) => s.trim()).filter(Boolean);
     const payloadSkeleton = {
       bache_code: bache,
       process_type: processSelect.value,
@@ -476,6 +492,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, l
       kg_input_amount: kg,
       start_date: dateInput.value,
       fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+      fermentation_tanks: rawTankNames,
       notes: notesInput.value || null,
       infusion_pct: infRaw ? infPct : null,
     };

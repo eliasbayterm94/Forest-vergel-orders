@@ -99,6 +99,19 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
 
+  // Tanques de fermentación (opcional, multi-select). Validamos
+  // contra fermentation_tanks.active=true en la BD.
+  const fermentation_tanks_raw = body.fermentation_tanks;
+  let fermentation_tanks_value = [];
+  if (fermentation_tanks_raw != null) {
+    const { validateFermentationTanks } = require('./_lib/fermentationTanks');
+    let r;
+    try { r = await validateFermentationTanks(sb, fermentation_tanks_raw); }
+    catch (e) { return serverErr('Fermentation tanks lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_TANKS');
+    fermentation_tanks_value = r.tanks;
+  }
+
   // Map the kg into the appropriate column based on the stage.
   const stageInsert = {
     kg_cherry_input:     processing_stage === 'cereza'     ? kg_input_amount : null,
@@ -116,6 +129,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_input_initial: kg_input_amount,
       kg_green_expected,
       fermentation_hours,
+      fermentation_tanks: fermentation_tanks_value,
       start_date,
       notes,
       infusion_id,

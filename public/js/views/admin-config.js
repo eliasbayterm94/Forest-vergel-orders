@@ -8,14 +8,16 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes, dtRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes, ftRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
     api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
+    api.fermentationTanksList({ include_inactive: 'true' }).catch(() => ({ fermentation_tanks: [] })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
   let dryingTypes = (dtRes && dtRes.drying_types) || [];
+  let fermentationTanks = (ftRes && ftRes.fermentation_tanks) || [];
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -57,6 +59,22 @@ export async function adminConfigView() {
             const r = await api.dryingTypesUpdate(payload);
             dryingTypes = dryingTypes.map((t) => t.id === r.drying_type.id ? r.drying_type : t);
             toast(`"${r.drying_type.name}" actualizado`, 'success');
+          }
+          redraw();
+        } catch (e) { toast(e.message, 'error'); }
+      }),
+      fermentationTanksSection(fermentationTanks, async (action, payload) => {
+        try {
+          if (action === 'create') {
+            const r = await api.fermentationTanksCreate(payload);
+            const found = fermentationTanks.find((t) => t.id === r.fermentation_tank.id);
+            if (found) Object.assign(found, r.fermentation_tank);
+            else fermentationTanks.push(r.fermentation_tank);
+            toast(r.created ? `Tanque "${r.fermentation_tank.name}" creado` : `Tanque "${r.fermentation_tank.name}" actualizado`, 'success');
+          } else if (action === 'update') {
+            const r = await api.fermentationTanksUpdate(payload);
+            fermentationTanks = fermentationTanks.map((t) => t.id === r.fermentation_tank.id ? r.fermentation_tank : t);
+            toast(`"${r.fermentation_tank.name}" actualizado`, 'success');
           }
           redraw();
         } catch (e) { toast(e.message, 'error'); }
@@ -288,6 +306,77 @@ function dryingTypesSection(types, onAction) {
     ...rows,
     rows.length === 0
       ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tipos. Agrega uno arriba.' })
+      : null,
+  ]);
+}
+
+// ─── Tanques de fermentación (administrables) ───────────────────────
+// Mismo patrón que drying types pero para tanques/recipientes donde
+// se está fermentando el café. Aparecen como multi-select en el
+// modal de crear lote (single y bulk).
+function fermentationTanksSection(tanks, onAction) {
+  const nameInput = el('input', {
+    type: 'text', placeholder: 'Ej: Tanque 1', class: 'ctrm-input', maxlength: '60',
+  });
+  const kindInput = el('input', {
+    type: 'text', placeholder: 'Opcional: Plástico, Acero, …',
+    class: 'ctrm-input',
+  });
+  const addBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-primary',
+    type: 'button',
+    onClick: async () => {
+      const name = nameInput.value.trim();
+      if (!name) { return; }
+      await onAction('create', { name, kind: kindInput.value.trim() || undefined });
+      nameInput.value = ''; kindInput.value = '';
+    },
+  }, ['+ Agregar tanque']);
+
+  const rows = (tanks || []).map((t) => {
+    const renameInput = el('input', { type: 'text', value: t.name, class: 'ctrm-input mono text-[12px]' });
+    const kindEditInput = el('input', { type: 'text', value: t.kind || '', placeholder: '—', class: 'ctrm-input text-[12px]' });
+    return el('div', {
+      class: `grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 py-2 border-t border-sand ${t.active ? '' : 'opacity-60'}`,
+    }, [
+      renameInput,
+      kindEditInput,
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+        type: 'button',
+        onClick: () => onAction('update', {
+          id: t.id,
+          fields: { name: renameInput.value.trim(), kind: kindEditInput.value.trim() || null },
+        }),
+      }, ['Guardar']),
+      el('button', {
+        class: `ctrm-btn ctrm-btn-soft ctrm-btn-xs ${t.active ? 'text-crit' : 'text-ok'}`,
+        type: 'button',
+        onClick: () => onAction('update', { id: t.id, fields: { active: !t.active } }),
+      }, [t.active ? 'Desactivar' : 'Reactivar']),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Tanques de fermentación' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'Recipientes donde se fermenta el café. Aparecen como multi-select en el modal de crear lote.' }),
+    el('div', { class: 'grid grid-cols-[1fr_1fr_auto] gap-2 items-end pb-2 border-b border-sand' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Nombre' }), nameInput]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Categoría (opcional)' }), kindInput]),
+      addBtn,
+    ]),
+    rows.length > 0
+      ? el('div', { class: 'grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-[10px] uppercase tracking-eyebrow text-ink-500 pt-2' }, [
+          el('span', { text: 'Nombre' }),
+          el('span', { text: 'Categoría' }),
+          el('span', {}, []),
+          el('span', {}, []),
+        ])
+      : null,
+    ...rows,
+    rows.length === 0
+      ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tanques. Agrega uno arriba.' })
       : null,
   ]);
 }

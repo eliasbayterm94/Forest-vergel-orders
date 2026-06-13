@@ -45,6 +45,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     const kg_input_amount = Number(o.kg_input_amount);
     const start_date = o.start_date;
     const fermentation_hours = o.fermentation_hours == null ? null : Number(o.fermentation_hours);
+    const fermentation_tanks = Array.isArray(o.fermentation_tanks) ? o.fermentation_tanks : [];
     const variety_ids = Array.isArray(o.variety_ids) ? o.variety_ids : [];
     const notes = o.notes == null ? null : String(o.notes);
     let infusion_id = o.infusion_id || null;
@@ -93,6 +94,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_input_initial:    kg_input_amount,
       kg_green_expected,
       fermentation_hours,
+      fermentation_tanks,
       start_date,
       notes,
       infusion_id,
@@ -144,6 +146,18 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   // ── INSERT atómico de lotes + variedades ──
+  // Validar tanques de fermentación de todos los lotes vs. la
+  // tabla fermentation_tanks (activos). Sólo si alguna fila los
+  // trae; si todas vacías, saltamos el roundtrip.
+  const allTanks = [...new Set(cleaned.flatMap((o) => o.fermentation_tanks || []))];
+  if (allTanks.length > 0) {
+    const { validateFermentationTanks } = require('./_lib/fermentationTanks');
+    let r;
+    try { r = await validateFermentationTanks(sb, allTanks); }
+    catch (e) { return serverErr('Fermentation tanks lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_TANKS');
+  }
+
   const lotRows = cleaned.map((o) => ({
     bache_code: o.bache_code,
     reference_id: o.reference_id || null,
@@ -155,6 +169,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     kg_input_initial: o.kg_input_initial,
     kg_green_expected: o.kg_green_expected,
     fermentation_hours: o.fermentation_hours,
+    fermentation_tanks: o.fermentation_tanks || [],
     start_date: o.start_date,
     notes: o.notes,
     infusion_id: o.infusion_id,

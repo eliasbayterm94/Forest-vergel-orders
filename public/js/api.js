@@ -83,6 +83,9 @@ export const api = {
   dryingTypesList:       (query)   => request('GET',  '/api/drying-types-list',        { query }),
   dryingTypesCreate:     (payload) => request('POST', '/api/drying-types-create',      { body: payload }),
   dryingTypesUpdate:     (payload) => request('POST', '/api/drying-types-update',      { body: payload }),
+  fermentationTanksList:   (query)   => request('GET',  '/api/fermentation-tanks-list',   { query }),
+  fermentationTanksCreate: (payload) => request('POST', '/api/fermentation-tanks-create', { body: payload }),
+  fermentationTanksUpdate: (payload) => request('POST', '/api/fermentation-tanks-update', { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),
