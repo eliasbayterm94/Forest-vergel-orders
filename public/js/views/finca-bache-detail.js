@@ -74,7 +74,10 @@ export async function fincaBacheDetailView() {
     const isDried = lot.kg_dried_output != null && lot.kg_dried_output > 0;
     const isClosed = lot.status === 'Ready' || lot.status === 'Delivered';
 
-    root.append(
+    // root.append(...) acepta argumentos pero convierte null a "null"
+    // (texto literal). Por eso construimos el contenido vía el('div', {}, [...])
+    // que sí filtra nulos.
+    root.append(el('div', {}, [
       // ── Breadcrumb ──
       el('div', { class: 'mb-2' }, [
         el('button', {
@@ -267,7 +270,7 @@ export async function fincaBacheDetailView() {
             ]),
           ])
         : null,
-    );
+    ]));
   }
   redraw();
 
@@ -470,7 +473,17 @@ function buildEvents(lot, isLocked) {
     });
   }
 
-  return events;
+  // Ordenar por fecha asc (estable). Eventos con misma fecha mantienen
+  // el orden de construcción, así que ciclo 1 va antes de ciclo 2.
+  return events
+    .map((ev, i) => ({ ev, i }))
+    .sort((a, b) => {
+      const da = a.ev.date || '';
+      const db = b.ev.date || '';
+      if (da !== db) return da < db ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.ev);
 }
 
 const EVENT_COLOR = {

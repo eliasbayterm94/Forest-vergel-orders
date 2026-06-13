@@ -120,11 +120,15 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   }
 
   if (targetStatus === LOT_STATUS.Drying) {
-    // InFermentation → Drying (primera vez) o Resting → Drying (regreso).
-    update.drying_start_date = drying_start_date || today;
-    // Timestamp preciso: si el operario indicó hora específica la usamos,
-    // si no caemos a now() server-side.
-    update.drying_start_at   = drying_start_at || new Date().toISOString();
+    // PRIMERA entrada a Secado (InFermentation → Drying): registramos
+    // drying_start_date/at como punto de inicio del PRIMER ciclo de
+    // secado. En los regresos (Resting → Drying) NO se sobreescriben
+    // para preservar la trazabilidad — los regresos quedan registrados
+    // como cycle.end_date con end_reason='back_to_drying'.
+    if (lot.drying_start_date == null) {
+      update.drying_start_date = drying_start_date || today;
+      update.drying_start_at   = drying_start_at || new Date().toISOString();
+    }
     if (normalizedLocations != null) update.drying_locations = normalizedLocations;
     // Si vuelve de Descanso, limpiamos los datos de Resting para que la
     // próxima entrada vuelva a pedir humedad fresca.
