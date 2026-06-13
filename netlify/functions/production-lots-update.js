@@ -23,11 +23,14 @@ const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 const ALLOWED = new Set([
   'bache_code', 'start_date', 'kg_input_initial', 'notes',
   'process_type', 'fermentation_hours',
-  'drying_start_date', 'ready_date', 'delivered_date',
+  'drying_start_date', 'drying_locations',
+  'ready_date', 'delivered_date',
   'kg_dried_output', 'factor_rendimiento', 'kg_green_actual',
+  'final_humidity',
   'infusion_id', 'infusion_pct',
 ]);
 const PROCESS_TYPES = new Set(['Natural', 'Honey', 'Lavado']);
+const DRYING_LOCATION_OPTIONS = new Set(['Silos', 'Patio']);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -67,6 +70,46 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     const n = Number(update.fermentation_hours);
     if (!Number.isFinite(n) || n < 0) return badReq('fermentation_hours must be >= 0', 'INVALID_HOURS');
     update.fermentation_hours = n;
+  }
+  // Humedad final de la matriz (0-100)
+  if (update.final_humidity !== undefined && update.final_humidity !== null && update.final_humidity !== '') {
+    const n = Number(update.final_humidity);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return badReq('final_humidity debe estar entre 0 y 100', 'INVALID_HUMIDITY');
+    }
+    update.final_humidity = Math.round(n * 100) / 100;
+  } else if (update.final_humidity === '') {
+    update.final_humidity = null;
+  }
+  // Marquesinas de secado (array de strings, subset de {Silos, Patio})
+  if (update.drying_locations !== undefined && update.drying_locations !== null) {
+    if (!Array.isArray(update.drying_locations)) {
+      return badReq('drying_locations must be array', 'INVALID_LOCATIONS');
+    }
+    const cleaned = [...new Set(update.drying_locations.map((s) => String(s).trim()).filter(Boolean))];
+    for (const x of cleaned) {
+      if (!DRYING_LOCATION_OPTIONS.has(x)) {
+        return badReq(`drying_locations: valor inválido "${x}". Opciones: Silos, Patio.`, 'INVALID_LOCATIONS');
+      }
+    }
+    update.drying_locations = cleaned;
+  }
+  // Pesos al cerrar el bache
+  for (const f of ['kg_dried_output', 'factor_rendimiento', 'kg_green_actual']) {
+    if (update[f] !== undefined && update[f] !== null && update[f] !== '') {
+      const n = Number(update[f]);
+      if (!Number.isFinite(n) || n < 0) return badReq(`${f} debe ser >= 0`, 'INVALID_KG');
+      update[f] = n;
+    } else if (update[f] === '') {
+      update[f] = null;
+    }
+  }
+  // Validar fechas de etapa
+  for (const f of ['drying_start_date', 'ready_date', 'delivered_date']) {
+    if (update[f] != null && update[f] !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(update[f])) {
+      return badReq(`${f} must be YYYY-MM-DD`, 'INVALID_DATE');
+    }
+    if (update[f] === '') update[f] = null;
   }
   if (varietyIds !== null && varietyIds.length === 0) {
     return badReq('Al menos una variedad es requerida', 'VARIETIES_REQUIRED');

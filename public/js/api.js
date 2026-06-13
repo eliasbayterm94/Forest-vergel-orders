@@ -79,6 +79,7 @@ export const api = {
   lotDelete:       (payload) => request('POST', '/api/production-lots-delete', { body: payload }),
 
   lotRestingCycleUpdate: (payload) => request('POST', '/api/lot-resting-cycles-update', { body: payload }),
+  lotUndoStage:          (payload) => request('POST', '/api/lot-undo-stage',           { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),

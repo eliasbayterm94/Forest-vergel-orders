@@ -331,9 +331,8 @@ function buildEvents(lot, isLocked) {
       detail: `${stageLabel(lot.processing_stage)} · ${lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—'}`,
       color: EVENT_COLOR.start,
       editable: !isLocked,
-      onEditDate: async (newDate) => {
-        await api.lotUpdate({ lot_id: lot.id, fields: { start_date: newDate } });
-      },
+      editConfig: { showDate: true, dateField: 'start_date', dateTarget: 'lot' },
+      undoKind: null, // creación no se anula desde aquí
     });
   }
 
@@ -347,9 +346,12 @@ function buildEvents(lot, isLocked) {
         : 'Sin marquesinas registradas',
       color: EVENT_COLOR.drying,
       editable: !isLocked,
-      onEditDate: async (newDate) => {
-        await api.lotUpdate({ lot_id: lot.id, fields: { drying_start_date: newDate } });
+      editConfig: {
+        showDate: true, dateField: 'drying_start_date', dateTarget: 'lot',
+        showLocations: true,
+        currentLocations: lot.drying_locations || [],
       },
+      undoKind: 'drying', // → InFermentation
     });
   }
 
@@ -362,22 +364,42 @@ function buildEvents(lot, isLocked) {
       detail: `Humedad entrada: ${c.start_humidity}%${maxDaysHint(c.start_humidity)}`,
       color: EVENT_COLOR.resting,
       editable: !isLocked,
-      onEditDate: async (newDate) => {
-        await api.lotRestingCycleUpdate({ cycle_id: c.id, fields: { start_date: newDate } });
+      editConfig: {
+        showDate: true, dateField: 'start_date', dateTarget: 'cycle', cycleId: c.id,
+        showHumidity: true, humidityField: 'start_humidity', humidityTarget: 'cycle',
+        humidityLabel: 'Humedad de entrada (%)',
+        currentHumidity: c.start_humidity,
       },
+      undoKind: 'resting-in',
+      cycleId: c.id,
     });
     if (c.end_date) {
-      const action = c.end_reason === 'back_to_drying' ? '← Volver a Secado' : '→ Listo';
+      const backToDrying = c.end_reason === 'back_to_drying';
       events.push({
-        kind: c.end_reason === 'back_to_drying' ? 'drying' : 'ready',
+        kind: backToDrying ? 'back-to-drying' : 'ready-from-resting',
         date: c.end_date,
-        title: action,
+        title: backToDrying ? '← Volver a Secado' : '→ Listo',
         detail: `Humedad salida: ${c.end_humidity != null ? c.end_humidity + '%' : '—'}`,
-        color: c.end_reason === 'back_to_drying' ? EVENT_COLOR.drying : EVENT_COLOR.ready,
+        color: backToDrying ? EVENT_COLOR.drying : EVENT_COLOR.ready,
         editable: !isLocked,
-        onEditDate: async (newDate) => {
-          await api.lotRestingCycleUpdate({ cycle_id: c.id, fields: { end_date: newDate } });
+        editConfig: {
+          showDate: true,
+          dateField: backToDrying ? 'end_date' : 'ready_date',
+          dateTarget: backToDrying ? 'cycle' : 'lot',
+          cycleId: c.id,
+          showHumidity: true, humidityField: 'end_humidity', humidityTarget: 'cycle',
+          humidityLabel: backToDrying ? 'Humedad de salida (%)' : 'Humedad final (%)',
+          currentHumidity: c.end_humidity,
+          // Para ready-from-resting también se editan kg
+          showKg: !backToDrying,
+          currentKg: !backToDrying ? {
+            kg_dried_output: lot.kg_dried_output,
+            factor_rendimiento: lot.factor_rendimiento,
+            kg_green_actual: lot.kg_green_actual,
+          } : null,
         },
+        undoKind: backToDrying ? 'back-to-drying' : 'ready-from-resting',
+        cycleId: c.id,
       });
     }
   }
@@ -386,19 +408,30 @@ function buildEvents(lot, isLocked) {
   const readyFromResting = lastCycle && lastCycle.end_reason === 'to_ready' && lastCycle.end_date === lot.ready_date;
   if (lot.ready_date && !readyFromResting) {
     events.push({
-      kind: 'ready',
+      kind: 'ready-from-drying',
       date: lot.ready_date,
       title: '→ Listo',
       detail: [
         lot.kg_dried_output != null ? `Seco ${fmtKg(lot.kg_dried_output)}` : null,
         lot.factor_rendimiento != null ? `Factor ${lot.factor_rendimiento}` : null,
         lot.kg_green_actual != null ? `Verde ${fmtKg(lot.kg_green_actual)}` : null,
+        lot.final_humidity != null ? `Humedad ${lot.final_humidity}%` : null,
       ].filter(Boolean).join(' · '),
       color: EVENT_COLOR.ready,
       editable: !isLocked,
-      onEditDate: async (newDate) => {
-        await api.lotUpdate({ lot_id: lot.id, fields: { ready_date: newDate } });
+      editConfig: {
+        showDate: true, dateField: 'ready_date', dateTarget: 'lot',
+        showHumidity: true, humidityField: 'final_humidity', humidityTarget: 'lot',
+        humidityLabel: 'Humedad final (%)',
+        currentHumidity: lot.final_humidity,
+        showKg: true,
+        currentKg: {
+          kg_dried_output: lot.kg_dried_output,
+          factor_rendimiento: lot.factor_rendimiento,
+          kg_green_actual: lot.kg_green_actual,
+        },
       },
+      undoKind: 'ready-from-drying',
     });
   } else if (lot.ready_date && readyFromResting) {
     const ev = events[events.length - 1];
@@ -418,6 +451,8 @@ function buildEvents(lot, isLocked) {
       detail: '',
       color: EVENT_COLOR.delivered,
       editable: false,
+      editConfig: null,
+      undoKind: null, // despachado no se anula desde el historial
     });
   }
 
@@ -511,6 +546,7 @@ function renderHistory(lot, isLocked, reload) {
   const events = buildEvents(lot, isLocked);
   return el('div', { class: 'space-y-3' }, events.map((ev, i) => {
     const isLast = i === events.length - 1;
+    const canUndo = isLast && !isLocked && ev.undoKind != null;
     return el('div', { class: 'flex gap-3' }, [
       el('div', { class: 'flex flex-col items-center pt-1 shrink-0' }, [
         el('span', { class: 'inline-block w-2 h-2 rounded-full',
@@ -523,14 +559,24 @@ function renderHistory(lot, isLocked, reload) {
             el('span', { class: 'font-mono text-[11px] text-ink-500', text: fmtDate(ev.date) }),
             el('span', { class: 'font-display text-[13px] text-navy font-semibold', text: ev.title }),
           ]),
-          ev.editable
-            ? el('button', {
-                type: 'button',
-                class: 'ctrm-btn ctrm-btn-primary ctrm-btn-xs',
-                title: 'Editar fecha',
-                onClick: () => editEventDate(ev, reload),
-              }, ['Editar'])
-            : null,
+          el('div', { class: 'flex items-center gap-1.5' }, [
+            ev.editable && ev.editConfig
+              ? el('button', {
+                  type: 'button',
+                  class: 'ctrm-btn ctrm-btn-primary ctrm-btn-xs',
+                  title: 'Editar fecha, humedad o kg',
+                  onClick: () => editEventModal(ev, lot, reload),
+                }, ['Editar'])
+              : null,
+            canUndo
+              ? el('button', {
+                  type: 'button',
+                  class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+                  title: 'Anular este paso y volver al estado anterior',
+                  onClick: () => undoEventModal(ev, lot, reload),
+                }, ['Anular'])
+              : null,
+          ]),
         ]),
         ev.detail
           ? el('p', { class: 'text-[11px] text-ink-500 font-mono whitespace-pre-line mt-0.5', text: ev.detail })
@@ -540,43 +586,154 @@ function renderHistory(lot, isLocked, reload) {
   }));
 }
 
-function editEventDate(ev, reload) {
+// Modal de edición de evento. Según ev.editConfig muestra los inputs
+// relevantes (fecha, humedad, marquesinas, kg) y dispatches al endpoint
+// apropiado (lot-update para campos del lote, lot-resting-cycles-update
+// para campos del ciclo).
+function editEventModal(ev, lot, reload) {
+  const cfg = ev.editConfig || {};
   openModal(({ close }) => {
-    const dateInput = el('input', {
-      type: 'date',
-      value: ev.date || '',
-      class: 'ctrm-input',
-    });
+    const dateInput = cfg.showDate ? el('input', {
+      type: 'date', value: ev.date || '', class: 'ctrm-input',
+    }) : null;
+
+    const humInput = cfg.showHumidity ? el('input', {
+      type: 'number', step: '0.1', min: '0', max: '100',
+      value: cfg.currentHumidity != null ? String(cfg.currentHumidity) : '',
+      placeholder: 'Ej: 11.0', class: 'ctrm-input mono',
+    }) : null;
+
+    const locCbs = cfg.showLocations ? ['Silos', 'Patio'].map((loc) => ({
+      loc,
+      cb: el('input', { type: 'checkbox', value: loc, class: 'mr-2',
+        checked: (cfg.currentLocations || []).includes(loc) ? 'true' : null,
+      }),
+    })) : null;
+
+    const kgInputs = cfg.showKg ? {
+      dried: el('input', {
+        type: 'number', step: '0.01', min: '0',
+        value: cfg.currentKg && cfg.currentKg.kg_dried_output != null ? String(cfg.currentKg.kg_dried_output) : '',
+        class: 'ctrm-input mono', placeholder: 'Peso seco',
+      }),
+      factor: el('input', {
+        type: 'number', step: '0.01', min: '0.01',
+        value: cfg.currentKg && cfg.currentKg.factor_rendimiento != null ? String(cfg.currentKg.factor_rendimiento) : '',
+        class: 'ctrm-input mono', placeholder: 'Factor',
+      }),
+      green: el('input', {
+        type: 'number', step: '0.01', min: '0',
+        value: cfg.currentKg && cfg.currentKg.kg_green_actual != null ? String(cfg.currentKg.kg_green_actual) : '',
+        class: 'ctrm-input mono', placeholder: 'kg verde',
+      }),
+    } : null;
+
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700' }, [
-        `Editar fecha de `, el('strong', { class: 'text-navy', text: ev.title }),
+        `Editar `, el('strong', { class: 'text-navy', text: ev.title }),
       ]),
-      el('label', { class: 'ctrm-label', text: 'Nueva fecha' }),
+      dateInput ? el('label', { class: 'ctrm-label', text: 'Fecha' }) : null,
       dateInput,
+      humInput ? el('label', { class: 'ctrm-label mt-2', text: cfg.humidityLabel || 'Humedad (%)' }) : null,
+      humInput,
+      locCbs ? el('label', { class: 'ctrm-label mt-2', text: 'Marquesinas' }) : null,
+      locCbs ? el('div', { class: 'flex flex-wrap gap-2' },
+        locCbs.map(({ loc, cb }) => el('label', {
+          class: 'inline-flex items-center text-[12px] px-3 py-1.5 border border-sand rounded-md cursor-pointer',
+        }, [cb, el('span', { text: loc })]))) : null,
+      kgInputs ? el('label', { class: 'ctrm-label mt-2', text: 'Peso seco (kg)' }) : null,
+      kgInputs ? kgInputs.dried : null,
+      kgInputs ? el('label', { class: 'ctrm-label mt-2', text: 'Factor de rendimiento' }) : null,
+      kgInputs ? kgInputs.factor : null,
+      kgInputs ? el('label', { class: 'ctrm-label mt-2', text: 'kg verde reales' }) : null,
+      kgInputs ? kgInputs.green : null,
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         el('button', {
-          class: 'ctrm-btn ctrm-btn-primary',
-          type: 'button',
+          class: 'ctrm-btn ctrm-btn-primary', type: 'button',
           onClick: async (e) => {
             const btn = e.currentTarget;
-            const v = dateInput.value;
-            if (!v) { toast('Selecciona una fecha', 'warning'); return; }
-            if (v === ev.date) { close(null); return; }
+            const lotFields = {};
+            const cycleFields = {};
+
+            if (dateInput && dateInput.value && dateInput.value !== ev.date) {
+              if (cfg.dateTarget === 'cycle') cycleFields[cfg.dateField] = dateInput.value;
+              else                            lotFields[cfg.dateField]   = dateInput.value;
+            }
+            if (humInput) {
+              const v = humInput.value === '' ? '' : Number(humInput.value);
+              if (v === '' || (Number.isFinite(v) && v >= 8 && v <= 40) || (cfg.humidityField === 'final_humidity' && Number.isFinite(v) && v >= 0 && v <= 100)) {
+                if (cfg.humidityTarget === 'cycle') cycleFields[cfg.humidityField] = v;
+                else                                lotFields[cfg.humidityField]   = v;
+              } else {
+                toast(`Humedad: rango inválido`, 'warning'); return;
+              }
+            }
+            if (locCbs) {
+              lotFields.drying_locations = locCbs.filter(({ cb }) => cb.checked).map(({ loc }) => loc);
+              if (lotFields.drying_locations.length === 0) {
+                toast('Selecciona al menos una marquesina', 'warning'); return;
+              }
+            }
+            if (kgInputs) {
+              const parse = (s) => s === '' ? '' : Number(s);
+              lotFields.kg_dried_output    = parse(kgInputs.dried.value);
+              lotFields.factor_rendimiento = parse(kgInputs.factor.value);
+              lotFields.kg_green_actual    = parse(kgInputs.green.value);
+            }
+
             try {
-              await withBusy(btn, 'Guardando…', () => ev.onEditDate(v));
-              toast('Fecha actualizada', 'success');
+              await withBusy(btn, 'Guardando…', async () => {
+                if (Object.keys(lotFields).length > 0) {
+                  await api.lotUpdate({ lot_id: lot.id, fields: lotFields });
+                }
+                if (Object.keys(cycleFields).length > 0 && cfg.cycleId) {
+                  await api.lotRestingCycleUpdate({ cycle_id: cfg.cycleId, fields: cycleFields });
+                }
+              });
+              toast('Cambios guardados', 'success');
               close({ ok: true });
               reload();
             } catch (err) {
-              console.error('editEventDate failed', err);
+              console.error('editEventModal failed', err);
               toast(err.message || 'Error al guardar', 'error', 6000);
             }
           },
         }, ['Guardar']),
       ]),
     ]);
-  }, { title: 'Editar fecha' });
+  }, { title: `Editar ${ev.title}` });
+}
+
+function undoEventModal(ev, lot, reload) {
+  openModal(({ close }) => {
+    return el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `¿Anular el paso `, el('strong', { class: 'text-navy', text: ev.title }), `?`,
+      ]),
+      el('p', { class: 'text-[11px] text-warn',
+        text: 'El bache volverá al estado anterior. Los datos registrados en este paso (humedad, kg, etc.) se borran.' }),
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-danger', type: 'button',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            try {
+              await withBusy(btn, 'Anulando…', () => api.lotUndoStage({
+                lot_id: lot.id, event_kind: ev.undoKind, cycle_id: ev.cycleId,
+              }));
+              toast('Paso anulado', 'success');
+              close({ ok: true });
+              reload();
+            } catch (err) {
+              toast(err.message || 'Error al anular', 'error', 6000);
+            }
+          },
+        }, ['Anular paso']),
+      ]),
+    ]);
+  }, { title: 'Anular paso' });
 }
 
 function stageLabel(stage) {

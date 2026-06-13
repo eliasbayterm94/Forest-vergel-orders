@@ -7,13 +7,13 @@ const { ok, badReq, notFound, serverErr, methodNotAllowed, parseJson } = require
 /**
  * POST /lot-resting-cycles-update  (finca, admin)
  * Body: { cycle_id, fields }
- * Updatable fields: start_date, end_date
+ * Updatable fields: start_date, end_date, start_humidity, end_humidity
  *
- * Sólo para correcciones de captura. Cambiar humedad/end_reason
- * requeriría más cuidado (afectan reglas de alerta y trazabilidad),
- * por ahora no se permite.
+ * Para correcciones de captura desde el historial del bache.
  */
-const ALLOWED = new Set(['start_date', 'end_date']);
+const DATE_FIELDS = new Set(['start_date', 'end_date']);
+const HUM_FIELDS  = new Set(['start_humidity', 'end_humidity']);
+const ALLOWED = new Set([...DATE_FIELDS, ...HUM_FIELDS]);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -28,10 +28,19 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   for (const k of Object.keys(fields)) {
     if (!ALLOWED.has(k)) continue;
     const v = fields[k];
-    if (v != null && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      return badReq(`${k} must be YYYY-MM-DD`, 'INVALID_DATE');
+    if (DATE_FIELDS.has(k)) {
+      if (v != null && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        return badReq(`${k} must be YYYY-MM-DD`, 'INVALID_DATE');
+      }
+      update[k] = v;
+    } else if (HUM_FIELDS.has(k)) {
+      if (v == null || v === '') { update[k] = null; continue; }
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 8 || n > 40) {
+        return badReq(`${k} debe estar entre 8 y 40`, 'INVALID_HUMIDITY');
+      }
+      update[k] = Math.round(n * 100) / 100;
     }
-    update[k] = v;
   }
   if (Object.keys(update).length === 0) return badReq('No updatable fields provided', 'NO_FIELDS');
 

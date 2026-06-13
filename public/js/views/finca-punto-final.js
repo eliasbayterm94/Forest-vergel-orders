@@ -402,7 +402,11 @@ export async function fincaPuntoFinalView() {
       tbody.append(el('tr', { class: isSel ? 'bg-cream' : 'hover:bg-cream' }, [
         cellNode('Sel', '', rowCb),
         cellNode('Bache', 'font-mono text-navy font-semibold', el('div', {}, [
-          el('span', {}, [
+          el('span', {
+            class: 'cursor-pointer hover:underline',
+            title: 'Ver historial del lote',
+            onClick: () => navigate(`/finca/bache?id=${l.id}`),
+          }, [
             l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MEZCLA' }) : null,
             document.createTextNode(l.is_blend ? (l.blend_code || l.bache_code || l.lot_code) : (l.bache_code || l.lot_code)),
           ]),
