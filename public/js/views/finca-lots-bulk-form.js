@@ -10,6 +10,7 @@ import { confirmModal } from '../ui/modal.js';
 import { fmtKg } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
+import { createMultiCombobox } from '../ui/combobox.js';
 import { navigate } from '../router.js';
 
 const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
@@ -35,12 +36,10 @@ export async function fincaLotsBulkFormView() {
   const refDatalistId      = 'finca-bulk-ref-list';
   const varietyDatalistId  = 'finca-bulk-variety-list';
   const infusionDatalistId = 'finca-bulk-infusion-list';
-  const tanksDatalistId    = 'finca-bulk-tanks-list';
   const refDatalist      = el('datalist', { id: refDatalistId },      allReferences.map((r) => el('option', { value: r.name })));
   const varietyDatalist  = el('datalist', { id: varietyDatalistId },  allVarieties.map((v)  => el('option', { value: v.name })));
   const infusionDatalist = el('datalist', { id: infusionDatalistId }, allInfusions.map((i)  => el('option', { value: i.name })));
-  const tanksDatalist    = el('datalist', { id: tanksDatalistId },    allTanks.map((t)      => el('option', { value: t.name })));
-  document.body.append(refDatalist, varietyDatalist, infusionDatalist, tanksDatalist);
+  document.body.append(refDatalist, varietyDatalist, infusionDatalist);
 
   function refreshDatalist(node, list) {
     while (node.firstChild) node.removeChild(node.firstChild);
@@ -58,7 +57,7 @@ export async function fincaLotsBulkFormView() {
       refDatalistId,
       varietyDatalistId,
       infusionDatalistId,
-      tanksDatalistId,
+      allTanks,
       lookupRef: (name) => refByLowerName().get((name || '').toLowerCase()) || null,
       onRemove: () => removeRow(row),
     }, prefill);
@@ -315,7 +314,7 @@ export async function fincaLotsBulkFormView() {
 }
 
 // ─── Fila ──────────────────────────────────────────────────────────────
-function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, tanksDatalistId, lookupRef, onRemove }, prefill) {
+function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, allTanks, lookupRef, onRemove }, prefill) {
   const cellCls = 'px-2 py-1.5 align-top';
 
   const idxLabel = el('span', { class: 'text-ink-500 font-mono text-[11px]', text: '1' });
@@ -350,12 +349,12 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, t
     title: 'Nombres separados por coma',
     list: varietyDatalistId,
   });
-  const tanksInput = el('input', {
-    type: 'text', class: 'ctrm-input w-full text-[12px]',
-    placeholder: 'Tanque 1, Tanque 2',
-    title: 'Tanques de fermentación separados por coma. Admin en /admin/config.',
-    list: tanksDatalistId,
+  const tanksCombo = createMultiCombobox({
+    placeholder: (allTanks || []).length > 0 ? 'Tanques…' : '— Sin tanques (admin) —',
+    items: allTanks || [],
   });
+  // Wrapper compacto para que respete el ancho de la celda
+  const tanksCell = el('div', { class: 'text-[11px]' }, [tanksCombo.el]);
   const fermInput = el('input', {
     type: 'number', min: '0', step: '0.5',
     class: 'ctrm-input mono w-full text-[12px] text-right',
@@ -410,7 +409,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, t
     el('td', { class: cellCls }, [kgInput, greenHint]),
     el('td', { class: cellCls }, [dateInput]),
     el('td', { class: cellCls }, [varietyInput]),
-    el('td', { class: cellCls }, [tanksInput]),
+    el('td', { class: cellCls }, [tanksCell]),
     el('td', { class: cellCls }, [fermInput]),
     el('td', { class: cellCls }, [infusionInput]),
     el('td', { class: cellCls }, [infusionPctInput]),
@@ -428,7 +427,11 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, t
     if (p.kg != null)  kgInput.value     = p.kg;
     if (p.date)        dateInput.value   = p.date;
     if (p.varieties)   varietyInput.value = p.varieties;
-    if (p.tanks)       tanksInput.value   = p.tanks;
+    if (Array.isArray(p.tanks) && p.tanks.length > 0) {
+      const byName = new Map((allTanks || []).map((t) => [t.name, t]));
+      const matched = p.tanks.map((n) => byName.get(n)).filter(Boolean);
+      tanksCombo.setValues(matched);
+    }
     if (p.ferm != null) fermInput.value  = p.ferm;
     if (p.infusion)    infusionInput.value = p.infusion;
     if (p.infusion_pct != null) infusionPctInput.value = p.infusion_pct;
@@ -445,7 +448,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, t
       kg:         kgInput.value,
       date:       dateInput.value,
       varieties:  varietyInput.value,
-      tanks:      tanksInput.value,
+      tanks:      tanksCombo.getValues().map((t) => t.name),
       ferm:       fermInput.value,
       infusion:   infusionInput.value,
       infusion_pct: infusionPctInput.value,
@@ -484,7 +487,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, t
     }
 
     const rawVarietyNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-    const rawTankNames = tanksInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+    const rawTankNames = tanksCombo.getValues().map((t) => t.name);
     const payloadSkeleton = {
       bache_code: bache,
       process_type: processSelect.value,

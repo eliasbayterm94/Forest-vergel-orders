@@ -60,11 +60,13 @@ export async function fincaLotsView() {
   const varsResP = api.varieties();
   const lotsResP = api.lotsList({ active_only: 'true' });
   const infResP  = api.infusions().catch(() => ({ infusions: [] }));
+  const tanksResP = api.fermentationTanksList({}).catch(() => ({ fermentation_tanks: [] }));
 
-  const [refsRes, varsRes, lotsRes, infRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP]);
+  const [refsRes, varsRes, lotsRes, infRes, tanksRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP, tanksResP]);
   let lots = lotsRes.lots.filter((l) => l.status !== 'Ready');
   const refs = refsRes.references;
   const allVarieties = varsRes.varieties;
+  const allTanks = (tanksRes && tanksRes.fermentation_tanks) || [];
   let allInfusions = (infRes && infRes.infusions) || [];
 
   // Estado expand/collapse por lote. Por default colapsado en mobile,
@@ -1198,6 +1200,13 @@ export async function fincaLotsView() {
         createLabel: '+ Crear variedad',
       });
 
+      // Tanques de fermentación (multi-select, sin onCreate — el
+      // admin los gestiona en /admin/config).
+      const tanksCombo = createMultiCombobox({
+        placeholder: allTanks.length > 0 ? 'Selecciona tanques…' : 'Sin tanques configurados (admin en /admin/config)',
+        items: allTanks,
+      });
+
       // Infusion: combobox opcional + input % que aparece solo cuando
       // hay infusion elegida. La masa base para el calculo es el kg
       // del stage de entrada (kgInput).
@@ -1381,6 +1390,11 @@ export async function fincaLotsView() {
           el('p', { class: 'ctrm-hint', text: 'Al menos una variedad.' }),
         ]),
         el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Tanques de fermentación' }),
+          tanksCombo.el,
+          el('p', { class: 'ctrm-hint', text: 'Selecciona uno o más. Administra los disponibles en /admin/config.' }),
+        ]),
+        el('div', {}, [
           el('label', { class: 'ctrm-label', text: 'Infusión (opcional)' }),
           infusionCombo.el,
         ]),
@@ -1442,6 +1456,7 @@ export async function fincaLotsView() {
                   start_date: startInput.value,
                   fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
                   variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
+                  fermentation_tanks: tanksCombo.getValues().map((t) => t.name),
                   notes: notesInput.value || null,
                   infusion_id: chosenInfusion ? chosenInfusion.id : null,
                   infusion_pct: chosenInfusion ? infusionPct : null,
