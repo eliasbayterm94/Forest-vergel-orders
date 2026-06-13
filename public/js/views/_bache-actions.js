@@ -2,7 +2,7 @@
 // de fincaLotsView; los extraje para reutilizarlos también desde la
 // vista de detalle de bache.
 
-import { el } from '../ui/el.js';
+import { el, clear } from '../ui/el.js';
 import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { fmtKg, statusLabel } from '../ui/format.js';
@@ -43,51 +43,64 @@ export const NEXT_TRANSITIONS = {
 
 // ── Prompts ─────────────────────────────────────────────────────────
 
-export async function promptDrying(lot, isReturn) {
-  // Carga los tipos de secado activos (Silos, Patio, Nuna, …)
-  // administrados desde /admin/config. Si falla el endpoint caemos
-  // al fallback hardcodeado.
-  let types = [];
-  try {
-    const r = await api.dryingTypesList({});
-    types = (r && r.drying_types) || [];
-  } catch { types = []; }
-  const names = types.length > 0
-    ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
-    : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
-
+export function promptDrying(lot, isReturn) {
+  // Abrimos el modal inmediatamente (con un placeholder en los
+  // checkboxes) para que el usuario vea feedback al instante; los
+  // tipos de secado se cargan en segundo plano vía dryingTypesList.
   return openModal(({ close }) => {
     const defaultDate = new Date().toISOString().slice(0, 10);
     const dateInput = el('input', { type: 'date', value: defaultDate, class: 'ctrm-input' });
-    const checkboxes = names.map(({ name, kind }) => {
-      const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
-      if (!isReturn && (lot.drying_locations || []).includes(name)) cb.checked = true;
-      return { name, kind, cb };
-    });
-    const locWrap = el('div', { class: 'flex flex-wrap gap-2' },
-      checkboxes.map(({ name, kind, cb }) => el('label', {
-        class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
-      }, [
-        cb,
-        el('span', {}, [
-          name,
-          kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
-        ]),
-      ])));
+
+    const locWrap = el('div', { class: 'flex flex-wrap gap-2' });
+    locWrap.append(el('p', { class: 'text-[11px] text-ink-300 italic', text: 'Cargando tipos de secado…' }));
+
+    // checkboxes vive en el closure; lo poblamos cuando llegue la
+    // respuesta del endpoint. El handler de submit lo lee en el
+    // momento del click.
+    let checkboxes = [];
+
+    (async () => {
+      let types = [];
+      try {
+        const r = await api.dryingTypesList({});
+        types = (r && r.drying_types) || [];
+      } catch { types = []; }
+      const names = types.length > 0
+        ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
+        : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+      checkboxes = names.map(({ name, kind }) => {
+        const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
+        if (!isReturn && (lot.drying_locations || []).includes(name)) cb.checked = true;
+        return { name, kind, cb };
+      });
+      clear(locWrap);
+      for (const { name, kind, cb } of checkboxes) {
+        locWrap.append(el('label', {
+          class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
+        }, [
+          cb,
+          el('span', {}, [
+            name,
+            kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
+          ]),
+        ]));
+      }
+    })();
+
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
         isReturn ? `Devolviendo ` : `Avanzando `,
         el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
         ` a `, el('strong', { class: 'text-navy', text: 'Secado' }),
         isReturn
-          ? `. Elige las marquesinas donde lo metés esta vez.`
-          : `. Registramos la fecha de entrada y dónde se está secando.`,
+          ? `. Elige el equipo de secado donde va esta vez.`
+          : `. Registra la fecha de entrada y el equipo de secado a donde va.`,
       ]),
       el('label', { class: 'ctrm-label', text: 'Fecha de inicio de secado' }),
       dateInput,
       el('div', {}, [
         el('label', { class: 'ctrm-label' }, [
-          'Marquesinas ',
+          'Equipo / lugar de secado ',
           el('span', { class: 'ctrm-req', text: '*' }),
         ]),
         locWrap,
@@ -100,6 +113,7 @@ export async function promptDrying(lot, isReturn) {
           type: 'button',
           onClick: () => {
             if (!dateInput.value) { toast('Selecciona una fecha', 'warning'); return; }
+            if (checkboxes.length === 0) { toast('Los tipos todavía están cargando…', 'warning'); return; }
             const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ name }) => name);
             if (picked.length === 0) { toast('Selecciona al menos un tipo de secado', 'warning'); return; }
             close({ drying_start_date: dateInput.value, drying_locations: picked });
