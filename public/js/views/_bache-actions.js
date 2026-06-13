@@ -180,19 +180,54 @@ export function promptResting(lot) {
 }
 
 export function promptExitHumidity(lot, target) {
+  const isToDrying = target === 'Drying';
   return openModal(({ close }) => {
     const humInput = el('input', {
       type: 'number', min: '8', max: '40', step: '0.1',
       placeholder: 'Ej: 12.5',
       class: 'ctrm-input mono',
     });
-    const targetLabel = target === 'Drying' ? 'volver a Secado' : 'pasar a Listo';
+    const targetLabel = isToDrying ? 'volver a Secado' : 'pasar a Listo';
     const entryHum = lot.resting_humidity != null ? `${lot.resting_humidity}%` : '—';
+
+    // Si vamos de vuelta a Secado, en la MISMA modal pedimos también
+    // fecha y equipo de secado (antes eran dos modales seguidos).
+    const dateInput = isToDrying ? el('input', {
+      type: 'date', value: new Date().toISOString().slice(0, 10), class: 'ctrm-input',
+    }) : null;
+    const locWrap = isToDrying ? el('div', { class: 'flex flex-wrap gap-2' }) : null;
+    let checkboxes = [];
+    if (isToDrying) {
+      locWrap.append(el('p', { class: 'text-[11px] text-ink-300 italic', text: 'Cargando tipos de secado…' }));
+      (async () => {
+        let types = [];
+        try { const r = await api.dryingTypesList({}); types = (r && r.drying_types) || []; } catch { types = []; }
+        const names = types.length > 0
+          ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
+          : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+        checkboxes = names.map(({ name, kind }) => {
+          const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
+          return { name, kind, cb };
+        });
+        clear(locWrap);
+        for (const { name, kind, cb } of checkboxes) {
+          locWrap.append(el('label', {
+            class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
+          }, [
+            cb,
+            el('span', {}, [
+              name,
+              kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
+            ]),
+          ]));
+        }
+      })();
+    }
+
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
         `El bache `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
-        ` va a `, el('strong', { class: 'text-navy', text: targetLabel }),
-        `. Antes registramos la humedad actual del bache.`,
+        ` va a `, el('strong', { class: 'text-navy', text: targetLabel }), `.`,
       ]),
       el('p', { class: 'text-[11px] text-ink-500 font-mono', text: `Humedad de entrada al descanso: ${entryHum}` }),
       el('div', {}, [
@@ -203,6 +238,18 @@ export function promptExitHumidity(lot, target) {
         humInput,
         el('p', { class: 'ctrm-hint', text: 'Rango 8% a 40%.' }),
       ]),
+      isToDrying ? el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Fecha de regreso a secado' }),
+        dateInput,
+      ]) : null,
+      isToDrying ? el('div', {}, [
+        el('label', { class: 'ctrm-label' }, [
+          'Equipo / lugar de secado ',
+          el('span', { class: 'ctrm-req', text: '*' }),
+        ]),
+        locWrap,
+        el('p', { class: 'ctrm-hint', text: 'Marca uno o más. Administra los tipos en /admin/config.' }),
+      ]) : null,
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         el('button', {
@@ -213,9 +260,17 @@ export function promptExitHumidity(lot, target) {
             if (!Number.isFinite(v) || v < 8 || v > 40) {
               toast('Humedad: ingresa un valor entre 8 y 40', 'warning'); return;
             }
-            close(v);
+            if (isToDrying) {
+              if (!dateInput.value) { toast('Selecciona la fecha de regreso a secado', 'warning'); return; }
+              if (checkboxes.length === 0) { toast('Los tipos todavía están cargando…', 'warning'); return; }
+              const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ name }) => name);
+              if (picked.length === 0) { toast('Selecciona al menos un tipo de secado', 'warning'); return; }
+              close({ humidity: v, drying_start_date: dateInput.value, drying_locations: picked });
+            } else {
+              close(v);
+            }
           },
-        }, ['Continuar']),
+        }, [isToDrying ? 'Volver a Secado' : 'Continuar']),
       ]),
     ]);
   }, { title: 'Humedad de salida del descanso' });
@@ -383,8 +438,15 @@ export async function advanceStatus(lot, target) {
   let restingPayload = null;
 
   if (isLeavingResting) {
-    restingExitHumidity = await promptExitHumidity(lot, target);
-    if (restingExitHumidity == null) return null;
+    const exit = await promptExitHumidity(lot, target);
+    if (exit == null) return null;
+    if (typeof exit === 'object') {
+      // Resting → Drying: la modal combinada devolvió humedad + fecha + tipo.
+      restingExitHumidity = exit.humidity;
+      dryingPayload = { drying_start_date: exit.drying_start_date, drying_locations: exit.drying_locations };
+    } else {
+      restingExitHumidity = exit;
+    }
   }
 
   if (target === 'Ready' && hasPartials) {
@@ -397,8 +459,12 @@ export async function advanceStatus(lot, target) {
     yieldValues = await promptYield(lot, target, { askHumidity: !isLeavingResting });
     if (yieldValues == null) return null;
   } else if (target === 'Drying') {
-    dryingPayload = await promptDrying(lot, isReturnToDrying);
-    if (!dryingPayload) return null;
+    // Si ya tenemos dryingPayload por la modal combinada (Resting → Drying),
+    // no abrimos otro modal.
+    if (!dryingPayload) {
+      dryingPayload = await promptDrying(lot, isReturnToDrying);
+      if (!dryingPayload) return null;
+    }
   } else if (target === 'Resting') {
     restingPayload = await promptResting(lot);
     if (!restingPayload) return null;
