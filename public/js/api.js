@@ -86,6 +86,9 @@ export const api = {
   fermentationTanksList:   (query)   => request('GET',  '/api/fermentation-tanks-list',   { query }),
   fermentationTanksCreate: (payload) => request('POST', '/api/fermentation-tanks-create', { body: payload }),
   fermentationTanksUpdate: (payload) => request('POST', '/api/fermentation-tanks-update', { body: payload }),
+  fermentationTypesList:   (query)   => request('GET',  '/api/fermentation-types-list',   { query }),
+  fermentationTypesCreate: (payload) => request('POST', '/api/fermentation-types-create', { body: payload }),
+  fermentationTypesUpdate: (payload) => request('POST', '/api/fermentation-types-update', { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),

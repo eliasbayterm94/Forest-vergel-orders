@@ -47,6 +47,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     // fermentation_hours: obligatorio (default 0). 0 = entra directo a Drying.
     const fermentation_hours = o.fermentation_hours == null ? 0 : Number(o.fermentation_hours);
     const fermentation_tanks = Array.isArray(o.fermentation_tanks) ? o.fermentation_tanks : [];
+    const fermentation_types = Array.isArray(o.fermentation_types) ? o.fermentation_types : [];
     const drying_locations   = Array.isArray(o.drying_locations) ? o.drying_locations : [];
     const variety_ids = Array.isArray(o.variety_ids) ? o.variety_ids : [];
     const notes = o.notes == null ? null : String(o.notes);
@@ -97,6 +98,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_green_expected,
       fermentation_hours,
       fermentation_tanks,
+      fermentation_types,
       drying_locations,
       start_date,
       notes,
@@ -161,6 +163,16 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (!r.ok) return badReq(r.message, 'INVALID_TANKS');
   }
 
+  // Validar tipos de fermentación
+  const allTypes = [...new Set(cleaned.flatMap((o) => o.fermentation_types || []))];
+  if (allTypes.length > 0) {
+    const { validateFermentationTypes } = require('./_lib/fermentationTypes');
+    let r;
+    try { r = await validateFermentationTypes(sb, allTypes); }
+    catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_FERM_TYPES');
+  }
+
   // Validar drying_locations (de las filas con skip-fermentation)
   const allLocs = [...new Set(cleaned.flatMap((o) => o.drying_locations || []))];
   if (allLocs.length > 0) {
@@ -186,6 +198,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_green_expected: o.kg_green_expected,
       fermentation_hours: o.fermentation_hours,
       fermentation_tanks: o.fermentation_tanks || [],
+      fermentation_types: o.fermentation_types || [],
       fermentation_start_at: nowIso,
       // Skip-fermentation: nace en Drying con timestamps
       status: skip ? 'Drying' : 'InFermentation',

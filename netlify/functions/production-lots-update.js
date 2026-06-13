@@ -4,6 +4,7 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { validateDryingLocations } = require('./_lib/dryingTypes');
 const { validateFermentationTanks } = require('./_lib/fermentationTanks');
+const { validateFermentationTypes } = require('./_lib/fermentationTypes');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 
@@ -24,7 +25,7 @@ const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
  */
 const ALLOWED = new Set([
   'bache_code', 'start_date', 'kg_input_initial', 'notes',
-  'process_type', 'fermentation_hours', 'fermentation_tanks',
+  'process_type', 'fermentation_hours', 'fermentation_tanks', 'fermentation_types',
   'fermentation_start_at', 'drying_start_at',
   'drying_start_date', 'drying_locations',
   'ready_date', 'delivered_date',
@@ -139,6 +140,13 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     catch (e) { return serverErr('Fermentation tanks lookup failed', e.message); }
     if (!result.ok) return badReq(result.message, 'INVALID_TANKS');
     update.fermentation_tanks = result.tanks;
+  }
+  if (update.fermentation_types !== undefined && update.fermentation_types !== null) {
+    let result;
+    try { result = await validateFermentationTypes(sb, update.fermentation_types); }
+    catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
+    if (!result.ok) return badReq(result.message, 'INVALID_FERM_TYPES');
+    update.fermentation_types = result.types;
   }
 
   // Si cambia kg_input_initial, recalcular los campos derivados

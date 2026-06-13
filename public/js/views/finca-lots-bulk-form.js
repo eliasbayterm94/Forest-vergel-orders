@@ -21,16 +21,18 @@ const STAGE_OPTIONS = [
 ];
 
 export async function fincaLotsBulkFormView() {
-  const [refsRes, varsRes, infRes, tanksRes] = await Promise.all([
+  const [refsRes, varsRes, infRes, tanksRes, ftypesRes] = await Promise.all([
     api.references(),
     api.varieties(),
     api.infusions().catch(() => ({ infusions: [] })),
     api.fermentationTanksList({}).catch(() => ({ fermentation_tanks: [] })),
+    api.fermentationTypesList({}).catch(() => ({ fermentation_types: [] })),
   ]);
   let allReferences = refsRes.references || [];
   let allVarieties  = varsRes.varieties  || [];
   let allInfusions  = (infRes && infRes.infusions) || [];
   let allTanks      = (tanksRes && tanksRes.fermentation_tanks) || [];
+  let allFermTypes  = (ftypesRes && ftypesRes.fermentation_types) || [];
 
   // Datalists compartidos
   const refDatalistId      = 'finca-bulk-ref-list';
@@ -58,6 +60,7 @@ export async function fincaLotsBulkFormView() {
       varietyDatalistId,
       infusionDatalistId,
       allTanks,
+      allFermTypes,
       lookupRef: (name) => refByLowerName().get((name || '').toLowerCase()) || null,
       onRemove: () => removeRow(row),
     }, prefill);
@@ -113,6 +116,7 @@ export async function fincaLotsBulkFormView() {
     { label: 'Inicio *',   cls: 'w-36' },
     { label: 'Variedades *', cls: 'min-w-[180px]' },
     { label: 'Tanques',    cls: 'min-w-[150px]' },
+    { label: 'Tipos ferm.', cls: 'min-w-[150px]' },
     { label: 'Ferm. (h)',  cls: 'w-20 text-right' },
     { label: 'Infusión',   cls: 'min-w-[130px]' },
     { label: '%',          cls: 'w-16 text-right' },
@@ -314,7 +318,7 @@ export async function fincaLotsBulkFormView() {
 }
 
 // ─── Fila ──────────────────────────────────────────────────────────────
-function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, allTanks, lookupRef, onRemove }, prefill) {
+function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, allTanks, allFermTypes, lookupRef, onRemove }, prefill) {
   const cellCls = 'px-2 py-1.5 align-top';
 
   const idxLabel = el('span', { class: 'text-ink-500 font-mono text-[11px]', text: '1' });
@@ -353,8 +357,12 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
     placeholder: (allTanks || []).length > 0 ? 'Tanques…' : '— Sin tanques (admin) —',
     items: allTanks || [],
   });
-  // Wrapper compacto para que respete el ancho de la celda
   const tanksCell = el('div', { class: 'text-[11px]' }, [tanksCombo.el]);
+  const fermTypesCombo = createMultiCombobox({
+    placeholder: (allFermTypes || []).length > 0 ? 'Tipos…' : '— Sin tipos (admin) —',
+    items: allFermTypes || [],
+  });
+  const fermTypesCell = el('div', { class: 'text-[11px]' }, [fermTypesCombo.el]);
   const fermInput = el('input', {
     type: 'number', min: '0', step: '0.5', value: '0',
     class: 'ctrm-input mono w-full text-[12px] text-right',
@@ -411,6 +419,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
     el('td', { class: cellCls }, [dateInput]),
     el('td', { class: cellCls }, [varietyInput]),
     el('td', { class: cellCls }, [tanksCell]),
+    el('td', { class: cellCls }, [fermTypesCell]),
     el('td', { class: cellCls }, [fermInput]),
     el('td', { class: cellCls }, [infusionInput]),
     el('td', { class: cellCls }, [infusionPctInput]),
@@ -433,6 +442,11 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       const matched = p.tanks.map((n) => byName.get(n)).filter(Boolean);
       tanksCombo.setValues(matched);
     }
+    if (Array.isArray(p.ferm_types) && p.ferm_types.length > 0) {
+      const byName = new Map((allFermTypes || []).map((t) => [t.name, t]));
+      const matched = p.ferm_types.map((n) => byName.get(n)).filter(Boolean);
+      fermTypesCombo.setValues(matched);
+    }
     if (p.ferm != null) fermInput.value  = p.ferm;
     if (p.infusion)    infusionInput.value = p.infusion;
     if (p.infusion_pct != null) infusionPctInput.value = p.infusion_pct;
@@ -450,6 +464,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       date:       dateInput.value,
       varieties:  varietyInput.value,
       tanks:      tanksCombo.getValues().map((t) => t.name),
+      ferm_types: fermTypesCombo.getValues().map((t) => t.name),
       ferm:       fermInput.value,
       infusion:   infusionInput.value,
       infusion_pct: infusionPctInput.value,
@@ -489,6 +504,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
 
     const rawVarietyNames = varietyInput.value.split(',').map((s) => s.trim()).filter(Boolean);
     const rawTankNames = tanksCombo.getValues().map((t) => t.name);
+    const rawFermTypeNames = fermTypesCombo.getValues().map((t) => t.name);
     const payloadSkeleton = {
       bache_code: bache,
       process_type: processSelect.value,
@@ -497,6 +513,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       start_date: dateInput.value,
       fermentation_hours: fermInput.value === '' ? 0 : Number(fermInput.value),
       fermentation_tanks: rawTankNames,
+      fermentation_types: rawFermTypeNames,
       notes: notesInput.value || null,
       infusion_pct: infRaw ? infPct : null,
     };

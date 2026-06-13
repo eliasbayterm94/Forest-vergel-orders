@@ -126,6 +126,18 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     fermentation_tanks_value = r.tanks;
   }
 
+  // Tipos de fermentación (opcional, multi-select).
+  const fermentation_types_raw = body.fermentation_types;
+  let fermentation_types_value = [];
+  if (fermentation_types_raw != null) {
+    const { validateFermentationTypes } = require('./_lib/fermentationTypes');
+    let r;
+    try { r = await validateFermentationTypes(sb, fermentation_types_raw); }
+    catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_FERM_TYPES');
+    fermentation_types_value = r.types;
+  }
+
   // Marquesinas de secado (opcional al crear; útiles cuando
   // fermentation_hours === 0 y el bache nace directo en Drying).
   let drying_locations_value = null;
@@ -160,6 +172,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_green_expected,
       fermentation_hours,
       fermentation_tanks: fermentation_tanks_value,
+      fermentation_types: fermentation_types_value,
       fermentation_start_at: fermentation_start_at || new Date().toISOString(),
       // Si skip-fermentation: lote nace en Drying con sus timestamps de inicio de secado
       status: initialStatus,

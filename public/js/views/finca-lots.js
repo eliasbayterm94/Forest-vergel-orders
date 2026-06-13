@@ -61,12 +61,14 @@ export async function fincaLotsView() {
   const lotsResP = api.lotsList({ active_only: 'true' });
   const infResP  = api.infusions().catch(() => ({ infusions: [] }));
   const tanksResP = api.fermentationTanksList({}).catch(() => ({ fermentation_tanks: [] }));
+  const ftypesResP = api.fermentationTypesList({}).catch(() => ({ fermentation_types: [] }));
 
-  const [refsRes, varsRes, lotsRes, infRes, tanksRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP, tanksResP]);
+  const [refsRes, varsRes, lotsRes, infRes, tanksRes, ftypesRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP, tanksResP, ftypesResP]);
   let lots = lotsRes.lots.filter((l) => l.status !== 'Ready');
   const refs = refsRes.references;
   const allVarieties = varsRes.varieties;
   const allTanks = (tanksRes && tanksRes.fermentation_tanks) || [];
+  const allFermTypes = (ftypesRes && ftypesRes.fermentation_types) || [];
   let allInfusions = (infRes && infRes.infusions) || [];
 
   // Estado expand/collapse por lote. Por default colapsado en mobile,
@@ -1264,6 +1266,12 @@ export async function fincaLotsView() {
         items: allTanks,
       });
 
+      // Tipos de fermentación (multi-select).
+      const fermTypesCombo = createMultiCombobox({
+        placeholder: allFermTypes.length > 0 ? 'Tipos de fermentación…' : 'Sin tipos configurados (admin en /admin/config)',
+        items: allFermTypes,
+      });
+
       // Infusion: combobox opcional + input % que aparece solo cuando
       // hay infusion elegida. La masa base para el calculo es el kg
       // del stage de entrada (kgInput).
@@ -1456,6 +1464,11 @@ export async function fincaLotsView() {
           el('p', { class: 'ctrm-hint', text: 'Selecciona uno o más. Administra los disponibles en /admin/config.' }),
         ]),
         el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Tipos de fermentación' }),
+          fermTypesCombo.el,
+          el('p', { class: 'ctrm-hint', text: 'Métodos aplicados durante la fermentación (Aeróbico, Anaeróbico, etc).' }),
+        ]),
+        el('div', {}, [
           el('label', { class: 'ctrm-label', text: 'Infusión (opcional)' }),
           infusionCombo.el,
         ]),
@@ -1534,6 +1547,7 @@ export async function fincaLotsView() {
                   fermentation_start_at: localToIso(fermStartTimeInput.value) || undefined,
                   variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
                   fermentation_tanks: tanksCombo.getValues().map((t) => t.name),
+                  fermentation_types: fermTypesCombo.getValues().map((t) => t.name),
                   drying_locations: skipFerm ? dryingLocs : undefined,
                   drying_start_at: skipFerm ? (localToIso(dryingStartTimeInput.value) || undefined) : undefined,
                   notes: notesInput.value || null,
