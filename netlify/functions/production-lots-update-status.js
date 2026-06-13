@@ -51,6 +51,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     drying_start_date, drying_locations,
     resting_start_date, resting_humidity,
     resting_exit_humidity, // requerida al salir de Resting (a Drying o Ready)
+    ready_date,            // opcional, default hoy (al pasar a Ready)
+    final_humidity,        // opcional, humedad de la matriz al cerrar el bache
   } = body || {};
   if (!lot_id) return badReq('lot_id required', 'LOT_ID_REQUIRED');
   if (!Object.values(LOT_STATUS).includes(targetStatus)) return badReq('invalid status', 'INVALID_STATUS');
@@ -86,6 +88,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
       return badReq('resting_exit_humidity debe estar entre 8 y 40', 'INVALID_HUMIDITY');
     }
     normalizedExitHumidity = Math.round(n * 100) / 100;
+  }
+  if (ready_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(ready_date)) {
+    return badReq('ready_date must be YYYY-MM-DD', 'INVALID_DATE');
+  }
+  let normalizedFinalHumidity = null;
+  if (final_humidity != null && final_humidity !== '') {
+    const n = Number(final_humidity);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return badReq('final_humidity debe estar entre 0 y 100', 'INVALID_HUMIDITY');
+    }
+    normalizedFinalHumidity = Math.round(n * 100) / 100;
   }
 
   const sb = getSupabase();
@@ -125,7 +138,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     }
     update.resting_humidity = normalizedHumidity;
   }
-  if (targetStatus === LOT_STATUS.Ready)     update.ready_date = today;
+  if (targetStatus === LOT_STATUS.Ready) {
+    update.ready_date = ready_date || today;
+    // Humedad final: si el operario la ingresó la usamos; si no, y
+    // venimos de Resting, caemos a la humedad de salida del reposo
+    // (esa misma es la humedad final del bache).
+    if (normalizedFinalHumidity != null) {
+      update.final_humidity = normalizedFinalHumidity;
+    } else if (normalizedExitHumidity != null) {
+      update.final_humidity = normalizedExitHumidity;
+    }
+  }
   if (targetStatus === LOT_STATUS.Delivered) update.delivered_date = today;
 
   if (kg_dried_output != null) {

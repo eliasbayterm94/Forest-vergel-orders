@@ -186,7 +186,14 @@ export function promptExitHumidity(lot, target) {
   }, { title: 'Humedad de salida del descanso' });
 }
 
-export function promptYield(lot, target) {
+export function promptYield(lot, target, opts = {}) {
+  const isReady = target === 'Ready';
+  // Para Resting → Ready la humedad ya se capturó como exit_humidity;
+  // ahí no la pedimos otra vez. Para Drying → Ready directo, sí.
+  const askHumidity = isReady && opts.askHumidity !== false;
+  // La fecha solo aplica a Ready (Delivered ya no la usa este prompt).
+  const askDate = isReady;
+  const today = new Date().toISOString().slice(0, 10);
   return openModal(({ close }) => {
     const driedInput = el('input', {
       type: 'number', step: '0.01', min: '0',
@@ -206,6 +213,13 @@ export function promptYield(lot, target) {
       placeholder: 'Auto desde peso seco / factor',
       class: 'ctrm-input mono',
     });
+    const dateInput = askDate ? el('input', {
+      type: 'date', value: today, class: 'ctrm-input',
+    }) : null;
+    const humidityInput = askHumidity ? el('input', {
+      type: 'number', step: '0.1', min: '0', max: '100',
+      placeholder: 'Ej: 11.0', class: 'ctrm-input mono',
+    }) : null;
     const formula = el('p', { class: 'ctrm-hint', text: `Verde = (peso seco ÷ factor) × ${KG_PER_SACO}` });
     let greenManuallyEdited = lot.kg_green_actual != null;
 
@@ -235,6 +249,10 @@ export function promptYield(lot, target) {
       formula,
       el('label', { class: 'ctrm-label mt-2', text: 'kg verde reales' }),
       greenInput,
+      askDate ? el('label', { class: 'ctrm-label mt-2', text: 'Fecha de cierre (Listo)' }) : null,
+      dateInput,
+      askHumidity ? el('label', { class: 'ctrm-label mt-2', text: 'Humedad final (%)' }) : null,
+      humidityInput,
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         el('button', {
@@ -247,12 +265,69 @@ export function promptYield(lot, target) {
             if (dried  != null && !(dried >= 0))  { toast('Peso seco inválido', 'warning'); return; }
             if (factor != null && !(factor > 0))  { toast('Factor inválido (> 0)', 'warning'); return; }
             if (green  != null && !(green >= 0))  { toast('kg verde inválido', 'warning'); return; }
-            close({ kg_dried_output: dried, factor_rendimiento: factor, kg_green_actual: green });
+            const ready_date = dateInput && dateInput.value ? dateInput.value : null;
+            const humidity = humidityInput && humidityInput.value !== '' ? Number(humidityInput.value) : null;
+            if (humidity != null && !(humidity >= 0 && humidity <= 100)) {
+              toast('Humedad debe estar entre 0 y 100', 'warning'); return;
+            }
+            close({
+              kg_dried_output: dried, factor_rendimiento: factor, kg_green_actual: green,
+              ready_date, final_humidity: humidity,
+            });
           },
         }, ['Confirmar']),
       ]),
     ]);
   }, { title: `Cambiar estado a ${statusLabel(target)}` });
+}
+
+// Modal para cerrar un bache con parciales (Drying/Resting → Ready).
+// Pide fecha de cierre y, si no venimos de Resting (donde la exit
+// humidity ya cubre eso), la humedad final.
+export function promptCloseBache(lot, partials, opts = {}) {
+  const askHumidity = opts.askHumidity !== false;
+  const today = new Date().toISOString().slice(0, 10);
+  const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+  const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+  return openModal(({ close }) => {
+    const dateInput = el('input', { type: 'date', value: today, class: 'ctrm-input' });
+    const humInput = askHumidity ? el('input', {
+      type: 'number', step: '0.1', min: '0', max: '100',
+      placeholder: 'Ej: 11.0', class: 'ctrm-input mono',
+    }) : null;
+    return el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `Cerrando bache `, el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+        ` con `, el('strong', { text: `${partials.length} parcial(es)` }), `.`,
+      ]),
+      el('p', { class: 'text-[11px] font-mono text-ink-500',
+        text: `Total: ${fmtKg(sumDried)} seco · ${fmtKg(sumGreen)} verde` }),
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Fecha de cierre (Listo)' }),
+        dateInput,
+      ]),
+      askHumidity ? el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Humedad final (%)' }),
+        humInput,
+        el('p', { class: 'ctrm-hint', text: 'Opcional. Queda en el registro del lote.' }),
+      ]) : null,
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-primary', type: 'button',
+          onClick: () => {
+            const ready_date = dateInput.value || null;
+            if (!ready_date) { toast('Indica la fecha de cierre', 'warning'); return; }
+            const humidity = humInput && humInput.value !== '' ? Number(humInput.value) : null;
+            if (humidity != null && !(humidity >= 0 && humidity <= 100)) {
+              toast('Humedad debe estar entre 0 y 100', 'warning'); return;
+            }
+            close({ ready_date, final_humidity: humidity });
+          },
+        }, ['Cerrar bache']),
+      ]),
+    ]);
+  }, { title: 'Cerrar bache' });
 }
 
 // ── Advance status (helper compartido) ──────────────────────────────
@@ -268,6 +343,7 @@ export async function advanceStatus(lot, target) {
 
   let restingExitHumidity = null;
   let yieldValues = null;
+  let closeMeta = null;
   let dryingPayload = null;
   let restingPayload = null;
 
@@ -277,16 +353,13 @@ export async function advanceStatus(lot, target) {
   }
 
   if (target === 'Ready' && hasPartials) {
-    const sumDried = partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
-    const sumGreen = partials.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
-    const ok = await confirmModal(
-      `Cerrar bache ${lot.bache_code || lot.lot_code} con ${partials.length} parcial(es)? ` +
-      `Total: ${fmtKg(sumDried)} seco · ${fmtKg(sumGreen)} verde.`,
-      { title: 'Cerrar bache' },
-    );
-    if (!ok) return null;
+    // Path con parciales: confirma + pide fecha + humedad final.
+    // Si viene de Resting, la humedad ya quedó capturada como exit
+    // humidity → no la pedimos otra vez aquí.
+    closeMeta = await promptCloseBache(lot, partials, { askHumidity: !isLeavingResting });
+    if (closeMeta == null) return null;
   } else if (target === 'Ready' || target === 'Delivered') {
-    yieldValues = await promptYield(lot, target);
+    yieldValues = await promptYield(lot, target, { askHumidity: !isLeavingResting });
     if (yieldValues == null) return null;
   } else if (target === 'Drying') {
     dryingPayload = await promptDrying(lot, isReturnToDrying);
@@ -313,6 +386,12 @@ export async function advanceStatus(lot, target) {
     if (yieldValues.kg_dried_output    != null) payload.kg_dried_output    = yieldValues.kg_dried_output;
     if (yieldValues.factor_rendimiento != null) payload.factor_rendimiento = yieldValues.factor_rendimiento;
     if (yieldValues.kg_green_actual    != null) payload.kg_green_actual    = yieldValues.kg_green_actual;
+    if (yieldValues.ready_date         != null) payload.ready_date         = yieldValues.ready_date;
+    if (yieldValues.final_humidity     != null) payload.final_humidity     = yieldValues.final_humidity;
+  }
+  if (closeMeta) {
+    if (closeMeta.ready_date     != null) payload.ready_date     = closeMeta.ready_date;
+    if (closeMeta.final_humidity != null) payload.final_humidity = closeMeta.final_humidity;
   }
   return api.lotUpdateStatus(payload);
 }
