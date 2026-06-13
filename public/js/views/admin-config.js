@@ -8,12 +8,14 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
+    api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
+  let dryingTypes = (dtRes && dtRes.drying_types) || [];
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -40,6 +42,22 @@ export async function adminConfigView() {
           leadTimes = leadTimes.map((row) =>
             row.process_type === proc ? { ...row, ...r.row } : row);
           toast(`${proc}: ${describeChanges(fields)}`, 'success');
+          redraw();
+        } catch (e) { toast(e.message, 'error'); }
+      }),
+      dryingTypesSection(dryingTypes, async (action, payload) => {
+        try {
+          if (action === 'create') {
+            const r = await api.dryingTypesCreate(payload);
+            const found = dryingTypes.find((t) => t.id === r.drying_type.id);
+            if (found) Object.assign(found, r.drying_type);
+            else dryingTypes.push(r.drying_type);
+            toast(r.created ? `Tipo "${r.drying_type.name}" creado` : `Tipo "${r.drying_type.name}" actualizado`, 'success');
+          } else if (action === 'update') {
+            const r = await api.dryingTypesUpdate(payload);
+            dryingTypes = dryingTypes.map((t) => t.id === r.drying_type.id ? r.drying_type : t);
+            toast(`"${r.drying_type.name}" actualizado`, 'success');
+          }
           redraw();
         } catch (e) { toast(e.message, 'error'); }
       }),
@@ -200,5 +218,76 @@ function footerNote(config) {
       ? `Última actualización: ${fmtDate(config.updated_at)}${config.updated_by ? ` por ${config.updated_by}` : ''}.`
       : '',
     ' Los cambios se reflejan en /finca/cola y el dashboard al recargar (puede tomar unos segundos por el cache del servidor).',
+  ]);
+}
+
+// ─── Tipos de secado (administrables) ───────────────────────────────
+// Permite agregar/reactivar/desactivar los equipos donde se manda a
+// secar el café (Silos, Patio, Nuna, etc.). Los lotes históricos
+// preservan el nombre referenciado aunque el tipo se desactive.
+function dryingTypesSection(types, onAction) {
+  const nameInput = el('input', {
+    type: 'text', placeholder: 'Ej: Nuna', class: 'ctrm-input', maxlength: '60',
+  });
+  const kindInput = el('input', {
+    type: 'text', placeholder: 'Opcional: Mecánico, Natural, …',
+    class: 'ctrm-input',
+  });
+  const addBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-primary',
+    type: 'button',
+    onClick: async () => {
+      const name = nameInput.value.trim();
+      if (!name) { return; }
+      await onAction('create', { name, kind: kindInput.value.trim() || undefined });
+      nameInput.value = ''; kindInput.value = '';
+    },
+  }, ['+ Agregar tipo']);
+
+  const rows = (types || []).map((t) => {
+    const renameInput = el('input', { type: 'text', value: t.name, class: 'ctrm-input mono text-[12px]' });
+    const kindEditInput = el('input', { type: 'text', value: t.kind || '', placeholder: '—', class: 'ctrm-input text-[12px]' });
+    return el('div', {
+      class: `grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 py-2 border-t border-sand ${t.active ? '' : 'opacity-60'}`,
+    }, [
+      renameInput,
+      kindEditInput,
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+        type: 'button',
+        onClick: () => onAction('update', {
+          id: t.id,
+          fields: { name: renameInput.value.trim(), kind: kindEditInput.value.trim() || null },
+        }),
+      }, ['Guardar']),
+      el('button', {
+        class: `ctrm-btn ctrm-btn-soft ctrm-btn-xs ${t.active ? 'text-crit' : 'text-ok'}`,
+        type: 'button',
+        onClick: () => onAction('update', { id: t.id, fields: { active: !t.active } }),
+      }, [t.active ? 'Desactivar' : 'Reactivar']),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Tipos de secado' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'Equipos/lugares donde se manda a secar el café. Aparecen en el modal de "→ Secado" para que el operario los seleccione.' }),
+    el('div', { class: 'grid grid-cols-[1fr_1fr_auto] gap-2 items-end pb-2 border-b border-sand' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Nombre' }), nameInput]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Categoría (opcional)' }), kindInput]),
+      addBtn,
+    ]),
+    rows.length > 0
+      ? el('div', { class: 'grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-[10px] uppercase tracking-eyebrow text-ink-500 pt-2' }, [
+          el('span', { text: 'Nombre' }),
+          el('span', { text: 'Categoría' }),
+          el('span', {}, []),
+          el('span', {}, []),
+        ])
+      : null,
+    ...rows,
+    rows.length === 0
+      ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tipos. Agrega uno arriba.' })
+      : null,
   ]);
 }

@@ -2,6 +2,7 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
+const { validateDryingLocations } = require('./_lib/dryingTypes');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 
@@ -30,7 +31,6 @@ const ALLOWED = new Set([
   'infusion_id', 'infusion_pct',
 ]);
 const PROCESS_TYPES = new Set(['Natural', 'Honey', 'Lavado']);
-const DRYING_LOCATION_OPTIONS = new Set(['Silos', 'Patio']);
 
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -81,19 +81,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   } else if (update.final_humidity === '') {
     update.final_humidity = null;
   }
-  // Marquesinas de secado (array de strings, subset de {Silos, Patio})
-  if (update.drying_locations !== undefined && update.drying_locations !== null) {
-    if (!Array.isArray(update.drying_locations)) {
-      return badReq('drying_locations must be array', 'INVALID_LOCATIONS');
-    }
-    const cleaned = [...new Set(update.drying_locations.map((s) => String(s).trim()).filter(Boolean))];
-    for (const x of cleaned) {
-      if (!DRYING_LOCATION_OPTIONS.has(x)) {
-        return badReq(`drying_locations: valor inválido "${x}". Opciones: Silos, Patio.`, 'INVALID_LOCATIONS');
-      }
-    }
-    update.drying_locations = cleaned;
-  }
+  // Marquesinas de secado: validadas más abajo contra drying_types
+  // dinámica (ver bloque después de getSupabase()).
   // Pesos al cerrar el bache
   for (const f of ['kg_dried_output', 'factor_rendimiento', 'kg_green_actual']) {
     if (update[f] !== undefined && update[f] !== null && update[f] !== '') {
@@ -134,6 +123,14 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   }
 
   const sb = getSupabase();
+
+  if (update.drying_locations !== undefined && update.drying_locations !== null) {
+    let result;
+    try { result = await validateDryingLocations(sb, update.drying_locations); }
+    catch (e) { return serverErr('Drying types lookup failed', e.message); }
+    if (!result.ok) return badReq(result.message, 'INVALID_LOCATIONS');
+    update.drying_locations = result.locations;
+  }
 
   // Si cambia kg_input_initial, recalcular los campos derivados
   // (kg_cherry_input/kg_despulpado_input/kg_dried_output según stage,

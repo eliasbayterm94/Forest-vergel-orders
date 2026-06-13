@@ -12,6 +12,9 @@ import { withBusy } from '../ui/busy.js';
 
 export const PROCESS_TYPES = ['Natural', 'Honey', 'Lavado'];
 
+// Fallback estático para el caso (raro) de que falle la carga de
+// drying-types-list. Los tipos reales se administran en /admin/config
+// y se cargan vía api.dryingTypesList() en promptDrying.
 export const DRYING_LOCATIONS = ['Silos', 'Patio'];
 export const INPUT_STAGE_DIVISORS = { cereza: 7.65, despulpado: 4.20, seco: 1.34 };
 export const KG_PER_SACO = 70;
@@ -40,19 +43,37 @@ export const NEXT_TRANSITIONS = {
 
 // ── Prompts ─────────────────────────────────────────────────────────
 
-export function promptDrying(lot, isReturn) {
+export async function promptDrying(lot, isReturn) {
+  // Carga los tipos de secado activos (Silos, Patio, Nuna, …)
+  // administrados desde /admin/config. Si falla el endpoint caemos
+  // al fallback hardcodeado.
+  let types = [];
+  try {
+    const r = await api.dryingTypesList({});
+    types = (r && r.drying_types) || [];
+  } catch { types = []; }
+  const names = types.length > 0
+    ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
+    : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+
   return openModal(({ close }) => {
     const defaultDate = new Date().toISOString().slice(0, 10);
     const dateInput = el('input', { type: 'date', value: defaultDate, class: 'ctrm-input' });
-    const checkboxes = DRYING_LOCATIONS.map((loc) => {
-      const cb = el('input', { type: 'checkbox', value: loc, class: 'mr-2' });
-      if (!isReturn && (lot.drying_locations || []).includes(loc)) cb.checked = true;
-      return { loc, cb };
+    const checkboxes = names.map(({ name, kind }) => {
+      const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
+      if (!isReturn && (lot.drying_locations || []).includes(name)) cb.checked = true;
+      return { name, kind, cb };
     });
-    const locWrap = el('div', { class: 'flex flex-wrap gap-3' },
-      checkboxes.map(({ loc, cb }) => el('label', {
+    const locWrap = el('div', { class: 'flex flex-wrap gap-2' },
+      checkboxes.map(({ name, kind, cb }) => el('label', {
         class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
-      }, [cb, el('span', { text: loc })])));
+      }, [
+        cb,
+        el('span', {}, [
+          name,
+          kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
+        ]),
+      ])));
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
         isReturn ? `Devolviendo ` : `Avanzando `,
@@ -70,7 +91,7 @@ export function promptDrying(lot, isReturn) {
           el('span', { class: 'ctrm-req', text: '*' }),
         ]),
         locWrap,
-        el('p', { class: 'ctrm-hint', text: 'Marca una o más. Se puede combinar Silos + Patio.' }),
+        el('p', { class: 'ctrm-hint', text: 'Marca uno o más. Administra los tipos disponibles en /admin/config.' }),
       ]),
       el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
@@ -79,8 +100,8 @@ export function promptDrying(lot, isReturn) {
           type: 'button',
           onClick: () => {
             if (!dateInput.value) { toast('Selecciona una fecha', 'warning'); return; }
-            const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ loc }) => loc);
-            if (picked.length === 0) { toast('Selecciona al menos una marquesina', 'warning'); return; }
+            const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ name }) => name);
+            if (picked.length === 0) { toast('Selecciona al menos un tipo de secado', 'warning'); return; }
             close({ drying_start_date: dateInput.value, drying_locations: picked });
           },
         }, [isReturn ? 'Volver a Secado' : 'Avanzar a Secado']),

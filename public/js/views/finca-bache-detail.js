@@ -590,8 +590,18 @@ function renderHistory(lot, isLocked, reload) {
 // relevantes (fecha, humedad, marquesinas, kg) y dispatches al endpoint
 // apropiado (lot-update para campos del lote, lot-resting-cycles-update
 // para campos del ciclo).
-function editEventModal(ev, lot, reload) {
+async function editEventModal(ev, lot, reload) {
   const cfg = ev.editConfig || {};
+  // Para edición de marquesinas cargamos los tipos activos.
+  let dryingTypeNames = ['Silos', 'Patio'];
+  if (cfg.showLocations) {
+    try {
+      const r = await api.dryingTypesList({});
+      if (r && Array.isArray(r.drying_types) && r.drying_types.length > 0) {
+        dryingTypeNames = r.drying_types.map((t) => t.name);
+      }
+    } catch { /* fallback hardcoded */ }
+  }
   openModal(({ close }) => {
     const dateInput = cfg.showDate ? el('input', {
       type: 'date', value: ev.date || '', class: 'ctrm-input',
@@ -603,7 +613,7 @@ function editEventModal(ev, lot, reload) {
       placeholder: 'Ej: 11.0', class: 'ctrm-input mono',
     }) : null;
 
-    const locCbs = cfg.showLocations ? ['Silos', 'Patio'].map((loc) => ({
+    const locCbs = cfg.showLocations ? dryingTypeNames.map((loc) => ({
       loc,
       cb: el('input', { type: 'checkbox', value: loc, class: 'mr-2',
         checked: (cfg.currentLocations || []).includes(loc) ? 'true' : null,

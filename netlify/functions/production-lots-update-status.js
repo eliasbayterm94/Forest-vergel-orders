@@ -7,6 +7,7 @@ const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, notFound, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { maybeCompleteOrder } = require('./_lib/orderCompletion');
 const { bogotaToday } = require('./_lib/bogotaTime');
+const { validateDryingLocations } = require('./_lib/dryingTypes');
 
 /**
  * POST /production-lots-update-status  (finca, admin)
@@ -38,8 +39,6 @@ const VALID_TRANSITIONS = {
   Ready:          ['Delivered'],
 };
 
-const DRYING_LOCATION_OPTIONS = new Set(['Silos', 'Patio']);
-
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
@@ -62,17 +61,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (resting_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(resting_start_date)) {
     return badReq('resting_start_date must be YYYY-MM-DD', 'INVALID_DATE');
   }
+  // drying_locations se valida más abajo usando getSupabase().
   let normalizedLocations = null;
-  if (drying_locations != null) {
-    if (!Array.isArray(drying_locations)) return badReq('drying_locations must be array', 'INVALID_LOCATIONS');
-    const cleaned = [...new Set(drying_locations.map((s) => String(s).trim()).filter(Boolean))];
-    for (const x of cleaned) {
-      if (!DRYING_LOCATION_OPTIONS.has(x)) {
-        return badReq(`drying_locations: valor inválido "${x}". Opciones: Silos, Patio.`, 'INVALID_LOCATIONS');
-      }
-    }
-    normalizedLocations = cleaned;
-  }
   let normalizedHumidity = null;
   if (resting_humidity != null) {
     const n = Number(resting_humidity);
@@ -102,6 +92,15 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   }
 
   const sb = getSupabase();
+
+  if (drying_locations != null) {
+    let result;
+    try { result = await validateDryingLocations(sb, drying_locations); }
+    catch (e) { return serverErr('Drying types lookup failed', e.message); }
+    if (!result.ok) return badReq(result.message, 'INVALID_LOCATIONS');
+    normalizedLocations = result.locations;
+  }
+
   const { data: lot, error: loadErr } = await sb
     .from('production_lots').select('*').eq('id', lot_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);

@@ -80,6 +80,9 @@ export const api = {
 
   lotRestingCycleUpdate: (payload) => request('POST', '/api/lot-resting-cycles-update', { body: payload }),
   lotUndoStage:          (payload) => request('POST', '/api/lot-undo-stage',           { body: payload }),
+  dryingTypesList:       (query)   => request('GET',  '/api/drying-types-list',        { query }),
+  dryingTypesCreate:     (payload) => request('POST', '/api/drying-types-create',      { body: payload }),
+  dryingTypesUpdate:     (payload) => request('POST', '/api/drying-types-update',      { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),
