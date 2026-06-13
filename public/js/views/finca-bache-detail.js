@@ -337,13 +337,27 @@ function buildEvents(lot, isLocked) {
   }
 
   if (lot.drying_start_date) {
+    // Calcular horas reales de fermentación si hay timestamps precisos.
+    let fermDetail = '';
+    if (lot.fermentation_start_at && lot.drying_start_at) {
+      const start = new Date(lot.fermentation_start_at).getTime();
+      const end   = new Date(lot.drying_start_at).getTime();
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        const realHours = Math.round((end - start) / 3600000);
+        const planHours = Number(lot.fermentation_hours || 0);
+        fermDetail = planHours > 0
+          ? `Fermentación · Plan: ${planHours}h · Real: ${realHours}h`
+          : `Fermentación real: ${realHours}h`;
+      }
+    }
+    const locDetail = (lot.drying_locations || []).length > 0
+      ? `Marquesinas: ${(lot.drying_locations || []).join(' · ')}`
+      : 'Sin marquesinas registradas';
     events.push({
       kind: 'drying',
       date: lot.drying_start_date,
       title: '→ Secado',
-      detail: (lot.drying_locations || []).length > 0
-        ? `Marquesinas: ${(lot.drying_locations || []).join(' · ')}`
-        : 'Sin marquesinas registradas',
+      detail: fermDetail ? `${locDetail}\n${fermDetail}` : locDetail,
       color: EVENT_COLOR.drying,
       editable: !isLocked,
       editConfig: {

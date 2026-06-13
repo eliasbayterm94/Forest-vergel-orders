@@ -1183,8 +1183,65 @@ export async function fincaLotsView() {
       });
 
       const fermInput = el('input', {
-        type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
+        type: 'number', min: '0', step: '0.5', value: '0',
+        placeholder: '0 = entra directo a Secado',
         class: 'ctrm-input mono',
+      });
+      // Hora exacta de inicio de fermentación (opcional). Default
+      // server-side = now() al crear si queda vacío.
+      const fermStartTimeInput = el('input', {
+        type: 'datetime-local',
+        class: 'ctrm-input mono text-[12px]',
+      });
+      // Sección que aparece cuando fermentation_hours === 0
+      // (skip-fermentation → lote nace en Drying directo).
+      const dryingStartTimeInput = el('input', {
+        type: 'datetime-local',
+        class: 'ctrm-input mono text-[12px]',
+      });
+      const dryingTanksLoaderHint = el('span', { class: 'text-[10px] text-ink-300 italic', text: 'Cargando…' });
+      let dryingCombo = null;
+      // Cargamos los tipos de secado solo si se va a usar (skip-ferm).
+      let dryingTypesLoaded = false;
+      const dryingTanksWrap = el('div', { class: 'min-h-[40px]' }, [dryingTanksLoaderHint]);
+      const ensureDryingTypesLoaded = async () => {
+        if (dryingTypesLoaded) return;
+        dryingTypesLoaded = true;
+        let types = [];
+        try {
+          const r = await api.dryingTypesList({});
+          types = (r && r.drying_types) || [];
+        } catch { types = []; }
+        const items = types.map((t) => ({ id: t.id, name: t.name }));
+        dryingCombo = createMultiCombobox({
+          placeholder: items.length > 0 ? 'Equipo / lugar de secado…' : 'Sin tipos (admin en /admin/config)',
+          items,
+        });
+        dryingTanksWrap.replaceChildren(dryingCombo.el);
+      };
+      const skipSection = el('div', {
+        class: 'p-3 rounded-md border border-warn/40 bg-warn/5 space-y-2',
+        style: 'display:none;',
+      }, [
+        el('p', { class: 'text-[11px] text-warn font-semibold',
+          text: '⚠ Como las horas de fermentación son 0, el bache entrará directo a Secado.' }),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Equipo / lugar de secado *' }),
+          dryingTanksWrap,
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Hora exacta de inicio de secado (opcional)' }),
+          dryingStartTimeInput,
+        ]),
+      ]);
+      fermInput.addEventListener('input', () => {
+        const v = Number(fermInput.value);
+        if (Number.isFinite(v) && v === 0) {
+          skipSection.style.display = '';
+          ensureDryingTypesLoaded();
+        } else {
+          skipSection.style.display = 'none';
+        }
       });
 
       const vCombo = createMultiCombobox({
@@ -1380,7 +1437,11 @@ export async function fincaLotsView() {
         ]),
 
         labelled('Fecha de inicio', startInput),
-        labelled('Horas de fermentación', fermInput),
+        el('div', { class: 'grid grid-cols-2 gap-2' }, [
+          labelled('Horas de fermentación *', fermInput),
+          labelled('Hora exacta inicio (opcional)', fermStartTimeInput),
+        ]),
+        skipSection,
         el('div', {}, [
           el('label', { class: 'ctrm-label' }, [
             'Variedades ',
@@ -1447,6 +1508,21 @@ export async function fincaLotsView() {
               }
 
               try {
+                const fermHoursNum = fermInput.value === '' ? 0 : Number(fermInput.value);
+                if (!Number.isFinite(fermHoursNum) || fermHoursNum < 0) {
+                  toast('Horas de fermentación: indica un número ≥ 0', 'warning'); return;
+                }
+                // Si skip-fermentation: drying locations es obligatorio.
+                const skipFerm = fermHoursNum === 0;
+                let dryingLocs = [];
+                if (skipFerm) {
+                  dryingLocs = dryingCombo ? dryingCombo.getValues().map((d) => d.name) : [];
+                  if (dryingLocs.length === 0) {
+                    toast('Con 0h de fermentación, selecciona al menos un equipo de secado', 'warning', 4500);
+                    return;
+                  }
+                }
+                const localToIso = (v) => v ? new Date(v).toISOString() : null;
                 const r = await withBusy(btn, 'Creando lote…', () => api.lotCreate({
                   bache_code: bacheCode,
                   reference_id: chosenRef ? chosenRef.id : null,
@@ -1454,9 +1530,12 @@ export async function fincaLotsView() {
                   processing_stage: chosenStage,
                   kg_input_amount: kg,
                   start_date: startInput.value,
-                  fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+                  fermentation_hours: fermHoursNum,
+                  fermentation_start_at: localToIso(fermStartTimeInput.value) || undefined,
                   variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
                   fermentation_tanks: tanksCombo.getValues().map((t) => t.name),
+                  drying_locations: skipFerm ? dryingLocs : undefined,
+                  drying_start_at: skipFerm ? (localToIso(dryingStartTimeInput.value) || undefined) : undefined,
                   notes: notesInput.value || null,
                   infusion_id: chosenInfusion ? chosenInfusion.id : null,
                   infusion_pct: chosenInfusion ? infusionPct : null,

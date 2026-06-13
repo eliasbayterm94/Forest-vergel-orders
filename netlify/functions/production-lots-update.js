@@ -25,6 +25,7 @@ const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 const ALLOWED = new Set([
   'bache_code', 'start_date', 'kg_input_initial', 'notes',
   'process_type', 'fermentation_hours', 'fermentation_tanks',
+  'fermentation_start_at', 'drying_start_at',
   'drying_start_date', 'drying_locations',
   'ready_date', 'delivered_date',
   'kg_dried_output', 'factor_rendimiento', 'kg_green_actual',

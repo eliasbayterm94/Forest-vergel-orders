@@ -29,6 +29,7 @@ exports.handler = requireAuth(async (event) => {
     resting_start_date, resting_humidity,
     kg_input_initial, conversion_factor,
     final_humidity, fermentation_tanks,
+    fermentation_start_at, drying_start_at,
     notes, created_by, created_at, updated_at,
     infusion_id, infusion_pct,
     lot_resting_cycles (

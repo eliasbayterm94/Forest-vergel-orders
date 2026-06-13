@@ -356,9 +356,10 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
   // Wrapper compacto para que respete el ancho de la celda
   const tanksCell = el('div', { class: 'text-[11px]' }, [tanksCombo.el]);
   const fermInput = el('input', {
-    type: 'number', min: '0', step: '0.5',
+    type: 'number', min: '0', step: '0.5', value: '0',
     class: 'ctrm-input mono w-full text-[12px] text-right',
-    placeholder: '—',
+    placeholder: '0',
+    title: 'Horas planificadas de fermentación. 0 = entra directo a Secado.',
   });
   const infusionInput = el('input', {
     type: 'text', class: 'ctrm-input w-full text-[12px]',
@@ -494,7 +495,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       processing_stage: stageSelect.value,
       kg_input_amount: kg,
       start_date: dateInput.value,
-      fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+      fermentation_hours: fermInput.value === '' ? 0 : Number(fermInput.value),
       fermentation_tanks: rawTankNames,
       notes: notesInput.value || null,
       infusion_pct: infRaw ? infPct : null,

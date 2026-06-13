@@ -47,7 +47,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   const {
     lot_id, status: targetStatus,
     kg_dried_output, factor_rendimiento, kg_green_actual,
-    drying_start_date, drying_locations,
+    drying_start_date, drying_start_at, drying_locations,
     resting_start_date, resting_humidity,
     resting_exit_humidity, // requerida al salir de Resting (a Drying o Ready)
     ready_date,            // opcional, default hoy (al pasar a Ready)
@@ -122,6 +122,9 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (targetStatus === LOT_STATUS.Drying) {
     // InFermentation → Drying (primera vez) o Resting → Drying (regreso).
     update.drying_start_date = drying_start_date || today;
+    // Timestamp preciso: si el operario indicó hora específica la usamos,
+    // si no caemos a now() server-side.
+    update.drying_start_at   = drying_start_at || new Date().toISOString();
     if (normalizedLocations != null) update.drying_locations = normalizedLocations;
     // Si vuelve de Descanso, limpiamos los datos de Resting para que la
     // próxima entrada vuelva a pedir humedad fresca.

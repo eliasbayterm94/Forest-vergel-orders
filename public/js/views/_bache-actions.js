@@ -50,6 +50,8 @@ export function promptDrying(lot, isReturn) {
   return openModal(({ close }) => {
     const defaultDate = new Date().toISOString().slice(0, 10);
     const dateInput = el('input', { type: 'date', value: defaultDate, class: 'ctrm-input' });
+    // Hora exacta opcional. Default backend = now() si queda vacía.
+    const timeInput = el('input', { type: 'time', class: 'ctrm-input mono text-[13px]' });
 
     const locWrap = el('div', { class: 'flex flex-wrap gap-2' });
     locWrap.append(el('p', { class: 'text-[11px] text-ink-300 italic', text: 'Cargando tipos de secado…' }));
@@ -96,8 +98,10 @@ export function promptDrying(lot, isReturn) {
           ? `. Elige el equipo de secado donde va esta vez.`
           : `. Registra la fecha de entrada y el equipo de secado a donde va.`,
       ]),
-      el('label', { class: 'ctrm-label', text: 'Fecha de inicio de secado' }),
-      dateInput,
+      el('div', { class: 'grid grid-cols-2 gap-2' }, [
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'Fecha de inicio de secado' }), dateInput]),
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'Hora exacta (opcional)' }), timeInput]),
+      ]),
       el('div', {}, [
         el('label', { class: 'ctrm-label' }, [
           'Equipo / lugar de secado ',
@@ -116,7 +120,11 @@ export function promptDrying(lot, isReturn) {
             if (checkboxes.length === 0) { toast('Los tipos todavía están cargando…', 'warning'); return; }
             const picked = checkboxes.filter(({ cb }) => cb.checked).map(({ name }) => name);
             if (picked.length === 0) { toast('Selecciona al menos un tipo de secado', 'warning'); return; }
-            close({ drying_start_date: dateInput.value, drying_locations: picked });
+            // Combinar fecha + hora opcional → ISO timestamp para drying_start_at
+            const drying_start_at = timeInput.value
+              ? new Date(`${dateInput.value}T${timeInput.value}`).toISOString()
+              : undefined;
+            close({ drying_start_date: dateInput.value, drying_start_at, drying_locations: picked });
           },
         }, [isReturn ? 'Volver a Secado' : 'Avanzar a Secado']),
       ]),
@@ -477,6 +485,7 @@ export async function advanceStatus(lot, target) {
   if (dryingPayload) {
     payload.drying_start_date = dryingPayload.drying_start_date;
     payload.drying_locations  = dryingPayload.drying_locations;
+    if (dryingPayload.drying_start_at) payload.drying_start_at = dryingPayload.drying_start_at;
   }
   if (restingPayload) {
     payload.resting_start_date = restingPayload.resting_start_date;

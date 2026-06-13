@@ -92,6 +92,48 @@ function daysSince(dateStr) {
   return Math.max(0, Math.floor((now - d) / 86400000));
 }
 
+// Horas reales transcurridas entre dos timestamps ISO. Si endIso es
+// null, usa el momento actual (útil para "lleva X horas en marcha").
+function hoursBetween(startIso, endIso) {
+  if (!startIso) return null;
+  const start = new Date(startIso).getTime();
+  if (!Number.isFinite(start)) return null;
+  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  return Math.max(0, (end - start) / 3600000);
+}
+
+// Construye la metaLine de fermentación según el estado del lote:
+//   InFermentation: "Plan: 48h · Lleva: 12h" (color rojo si pasó)
+//   Drying o más:   "Plan: 48h · Real: 52h"  (badge ámbar si > +10%)
+function fermentationLineFor(l) {
+  const plan = Number(l.fermentation_hours || 0);
+  if (plan === 0 && l.status === 'InFermentation') return null;
+  const ferm = l.fermentation_start_at;
+  if (!ferm) {
+    return plan > 0 ? metaLineRaw('Fermentación', `Plan: ${plan}h`) : null;
+  }
+  if (l.status === 'InFermentation') {
+    const elapsed = hoursBetween(ferm, null);
+    if (elapsed == null) return metaLineRaw('Fermentación', `Plan: ${plan}h`);
+    const over = plan > 0 && elapsed > plan;
+    const valueClass = over ? 'text-crit font-bold' : '';
+    return metaLineRaw('Fermentación', `Plan: ${plan}h · Lleva: ${Math.round(elapsed)}h`, valueClass);
+  }
+  const real = hoursBetween(ferm, l.drying_start_at);
+  if (real == null) return metaLineRaw('Fermentación', `Plan: ${plan}h`);
+  const diff = plan > 0 ? Math.abs(real - plan) / plan : 0;
+  const off = diff > 0.1;
+  const valueClass = off ? 'text-warn font-semibold' : '';
+  return metaLineRaw('Fermentación', `Plan: ${plan}h · Real: ${Math.round(real)}h`, valueClass);
+}
+
+function metaLineRaw(label, value, valueClass = '') {
+  return el('div', { class: 'flex items-baseline gap-1.5' }, [
+    el('span', { class: 'text-[9px] uppercase tracking-wide text-ink-300 w-24 shrink-0', text: label }),
+    el('span', { class: `text-[12px] font-mono font-semibold ${valueClass || 'text-ink-700'}`, text: value }),
+  ]);
+}
+
 function stageStartDate(lot) {
   if (lot.status === 'Resting')        return lot.resting_start_date;
   if (lot.status === 'Drying')         return lot.drying_start_date;
@@ -277,8 +319,9 @@ export async function fincaTableroView() {
             metaLine('Kg iniciales', `${fmtKg(l.kg_input_initial || 0)} kg`),
             metaLine('Etapa', etapaTxt),
             humidity != null ? metaLine('Humedad', `${humidity}%`) : null,
-            l.fermentation_hours && l.status === 'InFermentation'
-              ? metaLine('Fermentación', `${l.fermentation_hours} h`) : null,
+            // Horas de fermentación: muestra plan/lleva (en proceso)
+            // o plan/real (cuando ya pasó a secado o más allá).
+            fermentationLineFor(l),
             totalDays != null
               ? metaLine('Días totales', `${totalDays} ${totalDays === 1 ? 'día' : 'días'} · desde ${fmtDate(l.start_date)}`)
               : null,

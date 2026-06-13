@@ -44,8 +44,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     const processing_stage = o.processing_stage;
     const kg_input_amount = Number(o.kg_input_amount);
     const start_date = o.start_date;
-    const fermentation_hours = o.fermentation_hours == null ? null : Number(o.fermentation_hours);
+    // fermentation_hours: obligatorio (default 0). 0 = entra directo a Drying.
+    const fermentation_hours = o.fermentation_hours == null ? 0 : Number(o.fermentation_hours);
     const fermentation_tanks = Array.isArray(o.fermentation_tanks) ? o.fermentation_tanks : [];
+    const drying_locations   = Array.isArray(o.drying_locations) ? o.drying_locations : [];
     const variety_ids = Array.isArray(o.variety_ids) ? o.variety_ids : [];
     const notes = o.notes == null ? null : String(o.notes);
     let infusion_id = o.infusion_id || null;
@@ -66,7 +68,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       errs.push('kg_input_amount must be > 0');
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errs.push('start_date must be YYYY-MM-DD');
-    if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
+    if (!Number.isFinite(fermentation_hours) || fermentation_hours < 0)
       errs.push('fermentation_hours must be >= 0');
     if (variety_ids.length === 0) errs.push('al menos una variedad es requerida');
     if (infusion_id || infusion_pct != null) {
@@ -95,6 +97,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_green_expected,
       fermentation_hours,
       fermentation_tanks,
+      drying_locations,
       start_date,
       notes,
       infusion_id,
@@ -158,24 +161,44 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (!r.ok) return badReq(r.message, 'INVALID_TANKS');
   }
 
-  const lotRows = cleaned.map((o) => ({
-    bache_code: o.bache_code,
-    reference_id: o.reference_id || null,
-    process_type: o.process_type,
-    processing_stage: o.processing_stage,
-    kg_cherry_input: o.kg_cherry_input,
-    kg_despulpado_input: o.kg_despulpado_input,
-    kg_dried_output: o.kg_dried_output,
-    kg_input_initial: o.kg_input_initial,
-    kg_green_expected: o.kg_green_expected,
-    fermentation_hours: o.fermentation_hours,
-    fermentation_tanks: o.fermentation_tanks || [],
-    start_date: o.start_date,
-    notes: o.notes,
-    infusion_id: o.infusion_id,
-    infusion_pct: o.infusion_pct,
-    created_by: o.created_by,
-  }));
+  // Validar drying_locations (de las filas con skip-fermentation)
+  const allLocs = [...new Set(cleaned.flatMap((o) => o.drying_locations || []))];
+  if (allLocs.length > 0) {
+    const { validateDryingLocations } = require('./_lib/dryingTypes');
+    let r;
+    try { r = await validateDryingLocations(sb, allLocs); }
+    catch (e) { return serverErr('Drying types lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_LOCATIONS');
+  }
+
+  const nowIso = new Date().toISOString();
+  const lotRows = cleaned.map((o) => {
+    const skip = Number(o.fermentation_hours) === 0;
+    return {
+      bache_code: o.bache_code,
+      reference_id: o.reference_id || null,
+      process_type: o.process_type,
+      processing_stage: o.processing_stage,
+      kg_cherry_input: o.kg_cherry_input,
+      kg_despulpado_input: o.kg_despulpado_input,
+      kg_dried_output: o.kg_dried_output,
+      kg_input_initial: o.kg_input_initial,
+      kg_green_expected: o.kg_green_expected,
+      fermentation_hours: o.fermentation_hours,
+      fermentation_tanks: o.fermentation_tanks || [],
+      fermentation_start_at: nowIso,
+      // Skip-fermentation: nace en Drying con timestamps
+      status: skip ? 'Drying' : 'InFermentation',
+      drying_start_date: skip ? o.start_date : null,
+      drying_start_at:   skip ? nowIso       : null,
+      drying_locations:  skip ? (o.drying_locations || []) : [],
+      start_date: o.start_date,
+      notes: o.notes,
+      infusion_id: o.infusion_id,
+      infusion_pct: o.infusion_pct,
+      created_by: o.created_by,
+    };
+  });
 
   const { data: insertedLots, error: insErr } = await sb
     .from('production_lots').insert(lotRows).select();

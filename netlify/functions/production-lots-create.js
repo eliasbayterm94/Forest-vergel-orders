@@ -55,10 +55,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   const start_date = body.start_date;
-  const fermentation_hours = body.fermentation_hours == null ? null : Number(body.fermentation_hours);
+  // fermentation_hours ahora es OBLIGATORIO (default 0). Si llega 0
+  // el lote nace directo en Drying (skip fermentation).
+  const fermentation_hours = body.fermentation_hours == null ? 0 : Number(body.fermentation_hours);
   const variety_ids = Array.isArray(body.variety_ids) ? body.variety_ids : [];
   const notes = body.notes == null ? null : String(body.notes);
   const initial_assignments = Array.isArray(body.initial_assignments) ? body.initial_assignments : [];
+
+  // Timestamps opcionales (ISO). Default: now() server-side.
+  // fermentation_start_at: cuándo arrancó la fermentación.
+  // drying_start_at: cuándo entró a secado (solo si skip-fermentation o si el operario
+  // especifica al avanzar a Drying via update-status).
+  const fermentation_start_at = body.fermentation_start_at || null;
+  const drying_start_at = body.drying_start_at || null;
+  const drying_start_date = body.drying_start_date || null;
 
   if (!bache_code) errors.push('bache_code required');
   else if (bache_code.length > 60) errors.push('bache_code too long (max 60 chars)');
@@ -70,9 +80,13 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     errors.push('kg_input_amount must be > 0');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errors.push('start_date must be YYYY-MM-DD');
-  if (fermentation_hours != null && (!Number.isFinite(fermentation_hours) || fermentation_hours < 0))
+  if (!Number.isFinite(fermentation_hours) || fermentation_hours < 0)
     errors.push('fermentation_hours must be >= 0');
   if (variety_ids.length === 0) errors.push('al menos una variedad es requerida');
+  // Si fermentation_hours === 0 y el caller pasó drying locations, validar formato date
+  if (drying_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(drying_start_date)) {
+    errors.push('drying_start_date must be YYYY-MM-DD');
+  }
   if (errors.length) return badReq(errors.join('; '), 'VALIDATION_ERROR');
 
   const sb = getSupabase();
@@ -112,6 +126,22 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     fermentation_tanks_value = r.tanks;
   }
 
+  // Marquesinas de secado (opcional al crear; útiles cuando
+  // fermentation_hours === 0 y el bache nace directo en Drying).
+  let drying_locations_value = null;
+  if (body.drying_locations != null) {
+    const { validateDryingLocations } = require('./_lib/dryingTypes');
+    let r;
+    try { r = await validateDryingLocations(sb, body.drying_locations); }
+    catch (e) { return serverErr('Drying types lookup failed', e.message); }
+    if (!r.ok) return badReq(r.message, 'INVALID_LOCATIONS');
+    drying_locations_value = r.locations;
+  }
+
+  // Skip-fermentation: si las horas son 0 el bache nace en Drying.
+  const skipFermentation = fermentation_hours === 0;
+  const initialStatus = skipFermentation ? 'Drying' : 'InFermentation';
+
   // Map the kg into the appropriate column based on the stage.
   const stageInsert = {
     kg_cherry_input:     processing_stage === 'cereza'     ? kg_input_amount : null,
@@ -130,6 +160,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_green_expected,
       fermentation_hours,
       fermentation_tanks: fermentation_tanks_value,
+      fermentation_start_at: fermentation_start_at || new Date().toISOString(),
+      // Si skip-fermentation: lote nace en Drying con sus timestamps de inicio de secado
+      status: initialStatus,
+      drying_start_date: skipFermentation ? (drying_start_date || start_date) : null,
+      drying_start_at:   skipFermentation ? (drying_start_at || new Date().toISOString()) : null,
+      drying_locations:  skipFermentation ? (drying_locations_value || []) : [],
       start_date,
       notes,
       infusion_id,
