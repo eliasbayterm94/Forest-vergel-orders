@@ -243,6 +243,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
 
   // Histórico de ciclos de descanso. Cada Drying → Resting abre un ciclo;
   // cada Resting → Drying / Ready lo cierra con su humedad de salida.
+  // Si vamos a Resting (entrada), insertamos el ciclo nuevo.
   if (targetStatus === LOT_STATUS.Resting) {
     const { data: prev } = await sb
       .from('lot_resting_cycles').select('cycle_number')
@@ -258,6 +259,12 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     if (cycErr) console.warn('Resting cycle insert failed', cycErr.message);
   }
   if (isLeavingResting) {
+    // Fecha de salida del descanso: si el operario escogió una en el
+    // modal (drying_start_date para volver a secado, ready_date para
+    // pasar a listo) la usamos; si no, today por defecto.
+    const exitDate = targetStatus === LOT_STATUS.Drying
+      ? (drying_start_date || today)
+      : (ready_date || today);
     // Cerramos el ciclo activo (el de mayor cycle_number sin end_date).
     const { data: active } = await sb
       .from('lot_resting_cycles').select('id')
@@ -266,7 +273,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     const activeId = active && active[0] && active[0].id;
     if (activeId) {
       const { error: cycErr } = await sb.from('lot_resting_cycles').update({
-        end_date: today,
+        end_date: exitDate,
         end_humidity: normalizedExitHumidity,
         end_reason: targetStatus === LOT_STATUS.Drying ? 'back_to_drying' : 'to_ready',
       }).eq('id', activeId);
