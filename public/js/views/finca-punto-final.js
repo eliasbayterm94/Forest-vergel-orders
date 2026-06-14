@@ -12,7 +12,7 @@ import { navigate } from '../router.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { openModal, confirmModal } from '../ui/modal.js';
-import { generateInventoryPdf } from '../ui/pdf.js';
+import { generateInventoryPdf, generateLotPassportPdf } from '../ui/pdf.js';
 
 export async function fincaPuntoFinalView() {
   const [lotsRes, ordersRes] = await Promise.all([
@@ -419,6 +419,16 @@ export async function fincaPuntoFinalView() {
                   .join(' + '),
               })
             : null,
+          el('button', {
+            type: 'button',
+            class: 'text-[10px] text-navy hover:underline mt-1 block',
+            title: 'Descargar la hoja de vida del lote (PDF A4)',
+            onClick: (e) => {
+              e.stopPropagation();
+              try { generateLotPassportPdf(l); }
+              catch (err) { toast(err.message || 'Error al generar la hoja de vida', 'error'); }
+            },
+          }, ['↓ Lot Passport']),
           l.is_blend
             ? el('button', {
                 type: 'button',

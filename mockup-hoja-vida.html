@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Coffee Lot Passport</title>
+<style>
+  /* ============================================
+     Coffee Lot Passport — A4 portrait
+     Dimensions: 210mm × 297mm
+     Showing two pages: regular bache + blend (MZ)
+     ============================================ */
+  :root {
+    --navy: #1b203d;
+    --navy-dark: #0c0c0b;
+    --yellow: #e7e244;
+    --ink-900: #1a1a17;
+    --ink-700: #2a2a28;
+    --ink-500: #5a5a55;
+    --ink-300: #9a9a95;
+    --sand: #e8e8e2;
+    --cream: #f5f4ee;
+    --cream-deep: #efe9d8;
+    --coffee: #5c3d23;
+    --olive: #5d8b66;
+    --amber: #c4892a;
+    --rust: #a8521e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #ddd; color: var(--ink-700);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+
+  /* A4 page wrapper */
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    background: #fff;
+    box-shadow: 0 4px 20px rgba(0,0,0,.12);
+    position: relative;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+
+  /* ───────── HEADER BAND ───────── */
+  .header {
+    background: var(--navy-dark);
+    color: #fff;
+    padding: 14mm 16mm 8mm;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative;
+  }
+  .header::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+    background: linear-gradient(90deg, var(--yellow) 0%, var(--amber) 50%, var(--coffee) 100%);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .brand-mark {
+    width: 38px; height: 38px; background: var(--yellow); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Playfair Display', Georgia, serif;
+    font-weight: 900; font-size: 22px; color: var(--navy-dark);
+  }
+  .brand-name {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 16px; font-weight: 700; letter-spacing: 1.5px;
+  }
+  .brand-sub { font-size: 9px; letter-spacing: 2px; color: var(--yellow); margin-top: 2px; text-transform: uppercase; }
+  .doc-label {
+    text-align: right;
+  }
+  .doc-label-eyebrow {
+    font-size: 8px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--yellow); margin-bottom: 2px;
+  }
+  .doc-label-title {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+  }
+
+  /* ───────── HERO / IDENTITY ───────── */
+  .hero {
+    padding: 16mm 16mm 10mm;
+    background: var(--cream);
+    border-bottom: 1px solid var(--sand);
+    position: relative;
+  }
+  .hero-eyebrow {
+    font-size: 9px; letter-spacing: 3.5px; text-transform: uppercase;
+    color: var(--ink-500); font-weight: 600; margin-bottom: 6px;
+  }
+  .lot-code {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 62px; font-weight: 900; color: var(--navy-dark);
+    letter-spacing: -1px; line-height: 1;
+  }
+  .lot-code .prefix-pill {
+    display: inline-block; font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    background: var(--olive); color: #fff;
+    padding: 3px 8px; border-radius: 4px;
+    vertical-align: top; margin-right: 8px;
+    transform: translateY(8px);
+  }
+  .reference {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 20px; font-style: italic; color: var(--ink-700);
+    margin-top: 6px;
+  }
+  .pill-row {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px;
+  }
+  .pill {
+    background: #fff; border: 1px solid var(--sand);
+    padding: 5px 12px; border-radius: 999px;
+    font-size: 11px; color: var(--ink-700); font-weight: 600;
+  }
+  .pill.process { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .pill.varieties { background: var(--cream-deep); border-color: var(--cream-deep); }
+
+  /* Components row for blend variant */
+  .blend-components {
+    margin-top: 10px;
+    font-size: 11px; color: var(--ink-500); font-family: 'JetBrains Mono', monospace;
+  }
+  .blend-components strong { color: var(--coffee); }
+
+  /* ───────── KPI GRID ───────── */
+  .kpi-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--sand);
+    border-bottom: 1px solid var(--sand);
+  }
+  .kpi {
+    padding: 8mm 6mm; border-right: 1px solid var(--sand);
+    text-align: center;
+  }
+  .kpi:nth-child(3n) { border-right: none; }
+  .kpi:nth-child(n+4) { border-top: 1px solid var(--sand); }
+  .kpi-label {
+    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--ink-500); font-weight: 600; margin-bottom: 6px;
+  }
+  .kpi-value {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 24px; font-weight: 700; color: var(--navy-dark);
+    line-height: 1;
+  }
+  .kpi-unit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--ink-500); margin-left: 4px; font-weight: 500;
+  }
+  .kpi-sub {
+    font-size: 10px; color: var(--ink-300); margin-top: 4px;
+  }
+
+  /* ───────── PROCESS JOURNEY ───────── */
+  .journey {
+    padding: 12mm 16mm 8mm;
+    flex: 1;
+  }
+  .journey-title {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 16px; font-weight: 600; color: var(--navy-dark);
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .journey-title::after {
+    content: ''; flex: 1; height: 1px; background: var(--sand);
+  }
+
+  /* Timeline */
+  .timeline {
+    position: relative;
+    padding-left: 50px;
+  }
+  .timeline::before {
+    content: ''; position: absolute;
+    left: 19px; top: 12px; bottom: 12px;
+    width: 2px;
+    background: linear-gradient(180deg,
+      var(--olive) 0%, var(--olive) 20%,
+      var(--amber) 40%, var(--rust) 65%,
+      var(--coffee) 85%, var(--coffee) 100%);
+    border-radius: 1px;
+  }
+  .event { position: relative; margin-bottom: 12px; }
+  .event:last-child { margin-bottom: 0; }
+  .event-icon {
+    position: absolute; left: -50px; top: 0;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #fff;
+    border: 2.5px solid var(--olive);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1;
+  }
+  .event-icon svg { width: 20px; height: 20px; stroke-width: 2; }
+  .event-icon.fermentation { border-color: var(--olive); color: var(--olive); }
+  .event-icon.drying       { border-color: var(--amber); color: var(--amber); }
+  .event-icon.resting      { border-color: #6e8cb0; color: #6e8cb0; }
+  .event-icon.drying-back  { border-color: var(--amber); color: var(--amber); }
+  .event-icon.ready        { border-color: var(--coffee); color: var(--coffee); background: var(--coffee); }
+  .event-icon.ready svg    { color: #fff; }
+
+  .event-body {
+    background: var(--cream); border-radius: 8px;
+    padding: 10px 14px;
+    border-left: 3px solid transparent;
+  }
+  .event-body.fermentation { border-left-color: var(--olive); }
+  .event-body.drying       { border-left-color: var(--amber); }
+  .event-body.resting      { border-left-color: #6e8cb0; }
+  .event-body.drying-back  { border-left-color: var(--amber); background: #fbf6ea; }
+  .event-body.ready        { border-left-color: var(--coffee); background: #f0e7dd; }
+
+  .event-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .event-title {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 13px; font-weight: 700; color: var(--navy-dark);
+  }
+  .event-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--ink-500);
+  }
+  .event-detail {
+    font-size: 10.5px; color: var(--ink-700); line-height: 1.5;
+  }
+  .event-detail .kv {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    margin-right: 14px;
+  }
+  .event-detail .kv-label {
+    font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--ink-300); font-weight: 600;
+  }
+  .event-detail .kv-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px; color: var(--navy-dark); font-weight: 600;
+  }
+  .event-detail .chips {
+    display: inline-flex; gap: 4px; flex-wrap: wrap; vertical-align: middle;
+  }
+  .chip {
+    background: rgba(0,0,0,.04); border-radius: 3px;
+    padding: 1px 6px; font-size: 9.5px; color: var(--ink-700); font-weight: 600;
+  }
+
+  /* ───────── FOOTER ───────── */
+  .footer {
+    background: var(--cream);
+    border-top: 1px solid var(--sand);
+    padding: 10mm 16mm;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 16px;
+  }
+  .footer-sig {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 12px; color: var(--ink-700); font-style: italic;
+  }
+  .footer-sig strong { font-weight: 700; color: var(--navy-dark); font-style: normal; display: block; font-size: 14px; }
+  .footer-qr {
+    width: 56px; height: 56px;
+    background:
+      repeating-linear-gradient(45deg, var(--navy-dark) 0 4px, transparent 4px 8px),
+      repeating-linear-gradient(-45deg, var(--navy-dark) 0 4px, transparent 4px 8px);
+    background-color: #fff;
+    border: 4px solid #fff;
+    box-shadow: inset 0 0 0 1px var(--ink-300);
+    border-radius: 4px;
+  }
+  .footer-meta {
+    text-align: right;
+    font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--ink-500);
+  }
+  .footer-meta strong {
+    display: block; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--navy-dark); margin-top: 4px;
+    text-transform: none; letter-spacing: 0;
+  }
+
+  /* Decorative coffee ring (subtle background) */
+  .deco {
+    position: absolute; right: -80px; top: 100mm;
+    width: 240px; height: 240px;
+    border: 1px solid var(--cream-deep); border-radius: 50%;
+    pointer-events: none;
+  }
+  .deco::before {
+    content: ''; position: absolute; inset: 30px;
+    border: 1px solid var(--cream-deep); border-radius: 50%;
+  }
+
+  /* Page label for the mockup viewer */
+  .page-label {
+    align-self: center; font-size: 11px; color: #666; letter-spacing: 2px;
+    text-transform: uppercase; font-weight: 600;
+  }
+
+  /* Note panel */
+  .design-note {
+    max-width: 210mm;
+    padding: 16px; background: #fff; border-radius: 8px;
+    font-size: 12px; color: var(--ink-700); line-height: 1.6;
+  }
+  .design-note h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 14px; margin-bottom: 8px; color: var(--navy-dark);
+  }
+  .design-note ul { margin-left: 20px; }
+  .design-note strong { color: var(--coffee); }
+</style>
+</head>
+<body>
+
+<div class="page-label">PAGE 1 — REGULAR LOT</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     PAGE 1 — REGULAR BACHE (26-152 example)
+     ═══════════════════════════════════════════════════════════ -->
+<article class="page">
+
+  <header class="header">
+    <div class="brand">
+      <div class="brand-mark">F</div>
+      <div>
+        <div class="brand-name">FOREST · EL VERGEL</div>
+        <div class="brand-sub">Specialty Coffee Producers</div>
+      </div>
+    </div>
+    <div class="doc-label">
+      <div class="doc-label-eyebrow">Document</div>
+      <div class="doc-label-title">Coffee Lot Passport</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-eyebrow">Lot Identifier</div>
+    <div class="lot-code">26-152</div>
+    <div class="reference">Las Margaritas</div>
+    <div class="pill-row">
+      <span class="pill process">Washed</span>
+      <span class="pill varieties">Bourbon Rosado</span>
+      <span class="pill">2026 Harvest</span>
+    </div>
+    <div class="deco"></div>
+  </section>
+
+  <section class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Cherry input</div>
+      <div class="kpi-value">486<span class="kpi-unit">kg</span></div>
+      <div class="kpi-sub">Fresh cherry received</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Dried parchment</div>
+      <div class="kpi-value">105<span class="kpi-unit">kg</span></div>
+      <div class="kpi-sub">Final moisture 11.5%</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Green coffee</div>
+      <div class="kpi-value">80<span class="kpi-unit">kg</span></div>
+      <div class="kpi-sub">Calculated yield</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Yield factor</div>
+      <div class="kpi-value">92.1</div>
+      <div class="kpi-sub">kg parchment / 70kg green</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Conversion</div>
+      <div class="kpi-value">4.63<span class="kpi-unit">×</span></div>
+      <div class="kpi-sub">Cherry → dried ratio</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Total days</div>
+      <div class="kpi-value">32</div>
+      <div class="kpi-sub">Cherry to completion</div>
+    </div>
+  </section>
+
+  <section class="journey">
+    <h2 class="journey-title">Process Journey</h2>
+
+    <div class="timeline">
+
+      <!-- Cherry reception -->
+      <div class="event">
+        <div class="event-icon fermentation">
+          <!-- Lucide: sprout -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 20h10"/><path d="M10 20c5.5-2.5 8-7 8-12V5l-2.5.5C12 6 9 9 9 14.5"/><path d="M14 20c-5.5-2.5-8-7-8-12V5l2.5.5C12 6 14 9 14 14.5"/>
+          </svg>
+        </div>
+        <div class="event-body fermentation">
+          <div class="event-head">
+            <div class="event-title">Cherry Reception</div>
+            <div class="event-date">26 Mar 2026 · 06:00</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Stage</span><span class="kv-value">Fresh Cherry</span></span>
+            <span class="kv"><span class="kv-label">Weight</span><span class="kv-value">486 kg</span></span>
+            <span class="kv"><span class="kv-label">Variety</span><span class="kv-value">Bourbon Rosado</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fermentation -->
+      <div class="event">
+        <div class="event-icon fermentation">
+          <!-- Lucide: droplets -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05Z"/>
+            <path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/>
+          </svg>
+        </div>
+        <div class="event-body fermentation">
+          <div class="event-head">
+            <div class="event-title">Fermentation</div>
+            <div class="event-date">26 Mar · 06:00 → 28 Mar · 05:30</div>
+          </div>
+          <div class="event-detail">
+            <div style="margin-bottom: 4px;">
+              <span class="kv"><span class="kv-label">Planned</span><span class="kv-value">48 h</span></span>
+              <span class="kv"><span class="kv-label">Actual</span><span class="kv-value">47.5 h</span></span>
+              <span class="kv"><span class="kv-label">Method</span>
+                <span class="chips">
+                  <span class="chip">Anaerobic</span>
+                  <span class="chip">Lactic</span>
+                  <span class="chip">Yeast</span>
+                </span>
+              </span>
+            </div>
+            <div>
+              <span class="kv"><span class="kv-label">Tanks</span>
+                <span class="chips">
+                  <span class="chip">Tank 1 · Plastic</span>
+                  <span class="chip">Tank 2 · Plastic</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Drying -->
+      <div class="event">
+        <div class="event-icon drying">
+          <!-- Lucide: sun -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+        </div>
+        <div class="event-body drying">
+          <div class="event-head">
+            <div class="event-title">Drying — Initial</div>
+            <div class="event-date">28 Mar 2026 · 14:00</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Equipment</span>
+              <span class="chips">
+                <span class="chip">Silos · Mechanical</span>
+                <span class="chip">Patio · Natural</span>
+              </span>
+            </span>
+            <span class="kv"><span class="kv-label">Duration</span><span class="kv-value">8 days</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resting cycle 1 -->
+      <div class="event">
+        <div class="event-icon resting">
+          <!-- Lucide: moon -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6.36 6.36 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+          </svg>
+        </div>
+        <div class="event-body resting">
+          <div class="event-head">
+            <div class="event-title">Resting · Cycle 1</div>
+            <div class="event-date">05 Apr → 09 Apr 2026</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Entry moisture</span><span class="kv-value">14.2%</span></span>
+            <span class="kv"><span class="kv-label">Exit moisture</span><span class="kv-value">12.6%</span></span>
+            <span class="kv"><span class="kv-label">Duration</span><span class="kv-value">4 days</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Back to drying -->
+      <div class="event">
+        <div class="event-icon drying-back">
+          <!-- Lucide: refresh-cw -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-6.7-8.7L21 8"/><path d="M21 3v5h-5"/>
+          </svg>
+        </div>
+        <div class="event-body drying-back">
+          <div class="event-head">
+            <div class="event-title">Drying — Resumed</div>
+            <div class="event-date">09 Apr 2026</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Equipment</span>
+              <span class="chips"><span class="chip">Patio · Natural</span></span>
+            </span>
+            <span class="kv"><span class="kv-label">Reason</span><span class="kv-value">Moisture adjustment</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ready -->
+      <div class="event">
+        <div class="event-icon ready">
+          <!-- Lucide: check -->
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6 9 17l-5-5"/>
+          </svg>
+        </div>
+        <div class="event-body ready">
+          <div class="event-head">
+            <div class="event-title">Lot Closed · Ready for Export</div>
+            <div class="event-date">04 Apr 2026 · 16:00</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Dried</span><span class="kv-value">105 kg</span></span>
+            <span class="kv"><span class="kv-label">Factor</span><span class="kv-value">92.1</span></span>
+            <span class="kv"><span class="kv-label">Green</span><span class="kv-value">80 kg</span></span>
+            <span class="kv"><span class="kv-label">Final moisture</span><span class="kv-value">11.5%</span></span>
+            <span class="kv"><span class="kv-label">Conversion</span><span class="kv-value">4.63×</span></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-sig">
+      <strong>Processed at El Vergel</strong>
+      <span>Specialty coffee, traced from cherry to green.</span>
+    </div>
+    <div class="footer-qr" title="QR code (placeholder)"></div>
+    <div class="footer-meta">
+      Document closed
+      <strong>2026-04-04</strong>
+      <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--ink-300);margin-top:2px;letter-spacing:0;">FV-LOT-26-152</span>
+    </div>
+  </footer>
+</article>
+
+<!-- ═══════════════════════════════════════════════════════════
+     PAGE 2 — BLEND (MZ-2026-0001 example)
+     ═══════════════════════════════════════════════════════════ -->
+<div class="page-label">PAGE 2 — BLEND VARIANT (MZ-...)</div>
+
+<article class="page">
+
+  <header class="header">
+    <div class="brand">
+      <div class="brand-mark">F</div>
+      <div>
+        <div class="brand-name">FOREST · EL VERGEL</div>
+        <div class="brand-sub">Specialty Coffee Producers</div>
+      </div>
+    </div>
+    <div class="doc-label">
+      <div class="doc-label-eyebrow">Document</div>
+      <div class="doc-label-title">Coffee Blend Passport</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-eyebrow">Blend Identifier</div>
+    <div class="lot-code">
+      <span class="prefix-pill">BLEND</span>MZ-2026-0001
+    </div>
+    <div class="reference">Forest House Reserve</div>
+    <div class="pill-row">
+      <span class="pill process">Mixed · Honey / Washed</span>
+      <span class="pill varieties">Geisha · Bourbon Rosado · Papayo</span>
+    </div>
+    <div class="blend-components">
+      Blended from
+      <strong>26-152</strong> (105 kg) +
+      <strong>26-167</strong> (116 kg) +
+      <strong>26-216</strong> (100 kg)
+      &nbsp;·&nbsp; Total 321 kg dried
+    </div>
+    <div class="deco"></div>
+  </section>
+
+  <section class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Component lots</div>
+      <div class="kpi-value">3</div>
+      <div class="kpi-sub">Sources combined</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Total dried</div>
+      <div class="kpi-value">321<span class="kpi-unit">kg</span></div>
+      <div class="kpi-sub">Sum of components</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Green coffee</div>
+      <div class="kpi-value">244<span class="kpi-unit">kg</span></div>
+      <div class="kpi-sub">Weighted average</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Weighted factor</div>
+      <div class="kpi-value">92.8</div>
+      <div class="kpi-sub">Across components</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Avg. moisture</div>
+      <div class="kpi-value">11.0<span class="kpi-unit">%</span></div>
+      <div class="kpi-sub">At blend creation</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Created</div>
+      <div class="kpi-value">14<span class="kpi-unit">d</span></div>
+      <div class="kpi-sub">Since first component ready</div>
+    </div>
+  </section>
+
+  <section class="journey">
+    <h2 class="journey-title">Component Lineage</h2>
+
+    <div class="timeline">
+
+      <div class="event">
+        <div class="event-icon fermentation">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 20h10"/><path d="M10 20c5.5-2.5 8-7 8-12V5l-2.5.5C12 6 9 9 9 14.5"/><path d="M14 20c-5.5-2.5-8-7-8-12V5l2.5.5C12 6 14 9 14 14.5"/>
+          </svg>
+        </div>
+        <div class="event-body fermentation">
+          <div class="event-head">
+            <div class="event-title">Lot 26-152 · Las Margaritas</div>
+            <div class="event-date">26 Mar → 04 Apr · 32 days</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Process</span><span class="kv-value">Washed</span></span>
+            <span class="kv"><span class="kv-label">Variety</span><span class="kv-value">Bourbon Rosado</span></span>
+            <span class="kv"><span class="kv-label">Contribution</span><span class="kv-value">105 kg dried</span></span>
+            <span class="kv"><span class="kv-label">Factor</span><span class="kv-value">92.1</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="event">
+        <div class="event-icon drying">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 20h10"/><path d="M10 20c5.5-2.5 8-7 8-12V5l-2.5.5C12 6 9 9 9 14.5"/><path d="M14 20c-5.5-2.5-8-7-8-12V5l2.5.5C12 6 14 9 14 14.5"/>
+          </svg>
+        </div>
+        <div class="event-body drying">
+          <div class="event-head">
+            <div class="event-title">Lot 26-167 · El Vergel Signature</div>
+            <div class="event-date">01 Apr → 13 Apr · 12 days</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Process</span><span class="kv-value">Honey</span></span>
+            <span class="kv"><span class="kv-label">Variety</span><span class="kv-value">Bourbon Rosado</span></span>
+            <span class="kv"><span class="kv-label">Contribution</span><span class="kv-value">116 kg dried</span></span>
+            <span class="kv"><span class="kv-label">Factor</span><span class="kv-value">93.3</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="event">
+        <div class="event-icon resting">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 20h10"/><path d="M10 20c5.5-2.5 8-7 8-12V5l-2.5.5C12 6 9 9 9 14.5"/><path d="M14 20c-5.5-2.5-8-7-8-12V5l2.5.5C12 6 14 9 14 14.5"/>
+          </svg>
+        </div>
+        <div class="event-body resting">
+          <div class="event-head">
+            <div class="event-title">Lot 26-216 · El Vergel Signature</div>
+            <div class="event-date">23 Apr → 15 May · 22 days</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Process</span><span class="kv-value">Honey</span></span>
+            <span class="kv"><span class="kv-label">Variety</span><span class="kv-value">Geisha</span></span>
+            <span class="kv"><span class="kv-label">Contribution</span><span class="kv-value">100 kg dried</span></span>
+            <span class="kv"><span class="kv-label">Factor</span><span class="kv-value">93.3</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="event">
+        <div class="event-icon ready">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6 9 17l-5-5"/>
+          </svg>
+        </div>
+        <div class="event-body ready">
+          <div class="event-head">
+            <div class="event-title">Blend Created · Ready for Export</div>
+            <div class="event-date">28 May 2026</div>
+          </div>
+          <div class="event-detail">
+            <span class="kv"><span class="kv-label">Total dried</span><span class="kv-value">321 kg</span></span>
+            <span class="kv"><span class="kv-label">Total green</span><span class="kv-value">244 kg</span></span>
+            <span class="kv"><span class="kv-label">Weighted factor</span><span class="kv-value">92.8</span></span>
+            <span class="kv"><span class="kv-label">Avg. moisture</span><span class="kv-value">11.0%</span></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-sig">
+      <strong>Processed at El Vergel</strong>
+      <span>Curated blend of specialty single-origin lots.</span>
+    </div>
+    <div class="footer-qr"></div>
+    <div class="footer-meta">
+      Document closed
+      <strong>2026-05-28</strong>
+      <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--ink-300);margin-top:2px;letter-spacing:0;">FV-MZ-2026-0001</span>
+    </div>
+  </footer>
+</article>
+
+<div class="design-note">
+  <h3>Design notes</h3>
+  <ul>
+    <li><strong>Format</strong>: A4 portrait, single page. Both regular lots and blends fit cleanly without overflow.</li>
+    <li><strong>Iconos</strong>: Lucide-style line icons (sprout, droplets, sun, moon, refresh, check). Limpio, profesional, escalable. En el PDF irían como paths SVG embebidos.</li>
+    <li><strong>Paleta</strong>: navy base + amarillo Forest + acentos cálidos (olivo para fermentación, ámbar para secado, azul-gris para descanso, café para listo). Cada etapa se identifica con su color en el icono y el borde izquierdo de la card.</li>
+    <li><strong>Tipografía</strong>: Playfair Display (serif elegante) para títulos y código del bache; Inter para texto; JetBrains Mono para datos numéricos. Si quieres mantener Forest 100% sin fuentes nuevas, usamos las del sistema (Georgia / Helvetica).</li>
+    <li><strong>Mezclas (MZ-)</strong>: pill "BLEND" + lista de baches componentes en hero. El timeline cambia de "Process Journey" a "Component Lineage" — cada paso es un lote padre con su factor y contribución.</li>
+    <li><strong>Footer</strong>: firma + QR (link al detalle online del bache) + fecha de cierre + ID FV-LOT-XX-XXX.</li>
+    <li><strong>Datos omitidos</strong> (por petición): infusión, %, notas comerciales, destino del despacho.</li>
+    <li><strong>Inglés</strong>: todos los labels en EN. Las variedades, referencias y nombres de tanques quedan en su nombre original (no se traducen).</li>
+  </ul>
+</div>
+
+</body>
+</html>

@@ -17,6 +17,7 @@ import {
   advanceStatus as advanceStatusShared,
   editBacheModal,
 } from './_bache-actions.js';
+import { generateLotPassportPdf } from '../ui/pdf.js';
 
 export async function fincaBacheDetailView() {
   const id = currentQuery().get('id');
@@ -176,6 +177,16 @@ export async function fincaBacheDetailView() {
                   class: 'ctrm-btn ctrm-btn-yellow ctrm-btn-sm',
                   onClick: () => navigate('/finca/despachos'),
                 }, ['Despachar'])
+              : null,
+            (lot.status === 'Ready' || lot.status === 'Delivered')
+              ? el('button', {
+                  class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+                  title: 'Descargar hoja de vida del lote (PDF A4)',
+                  onClick: () => {
+                    try { generateLotPassportPdf(lot); }
+                    catch (e) { toast(e.message || 'Error al generar la hoja de vida', 'error'); }
+                  },
+                }, ['↓ Lot Passport'])
               : null,
             isLocked
               ? el('span', { class: 'text-[11px] italic text-ink-300', text: 'Bache despachado · sólo lectura' })

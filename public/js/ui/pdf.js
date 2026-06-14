@@ -21,8 +21,14 @@ const NAVY_DARK   = [12, 12, 11];
 const YELLOW      = [231, 226, 68];
 const INK_700     = [42, 42, 40];
 const INK_500     = [90, 90, 85];
+const INK_300     = [154, 154, 147];
 const SAND        = [232, 232, 226];
 const CREAM       = [245, 244, 238];
+const OLIVE       = [122, 138, 87];   // fermentation
+const AMBER       = [221, 174, 62];   // drying
+const SLATE       = [126, 158, 193];  // resting
+const COFFEE      = [93, 139, 102];   // ready / closed
+const CHERRY_RED  = [168, 53, 28];    // cherry reception
 
 function ensureLib() {
   if (!(window.jspdf && window.jspdf.jsPDF)) {
@@ -497,4 +503,569 @@ export function generateInventoryPdf(items) {
 
   const stamp = new Date().toISOString().slice(0, 10);
   doc.save(`inventario-bodega-${stamp}.pdf`);
+}
+
+// ── Lot Passport (Hoja de vida) ────────────────────────────────
+// Single-page A4 portrait document handed out when a lot reaches
+// Punto Final. English-language, designed to look like a wine
+// certificate: huge lot code, KPI grid, process journey timeline
+// with one card per stage (Cherry → Fermentation → Drying →
+// Resting · Cycle N → Drying — Resumed → Lot Closed), and a
+// footer with a QR encoding the bache code.
+//
+// Blend variant: replaces the timeline with a "Component Lineage"
+// section listing each parent lote with its kg seco contribution.
+export function generateLotPassportPdf(lot) {
+  const jsPDF = ensureLib();
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+  const W = doc.internal.pageSize.getWidth();   // 595
+  const H = doc.internal.pageSize.getHeight();  // 842
+  const M = 36;
+
+  const isBlend = !!lot.is_blend;
+  const code = isBlend
+    ? (lot.blend_code || lot.bache_code || lot.lot_code || '—')
+    : (lot.bache_code || lot.lot_code || '—');
+
+  // ── Header band ──────────────────────────────────────────────
+  doc.setFillColor(...NAVY_DARK);
+  doc.rect(0, 0, W, 72, 'F');
+  doc.setFillColor(...YELLOW);
+  doc.roundedRect(M, 22, 32, 32, 4, 4, 'F');
+  doc.setTextColor(...NAVY_DARK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('F', M + 16, 44, { align: 'center' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FOREST · EL VERGEL', M + 46, 36);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...YELLOW);
+  doc.text('Lot Passport', M + 46, 48);
+  // Right side
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...YELLOW);
+  doc.text(
+    `ISSUED  ${fmtDate(lot.ready_date || lot.delivered_date || new Date().toISOString().slice(0, 10))}`,
+    W - M, 36, { align: 'right' },
+  );
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  doc.text(
+    isBlend
+      ? `Blend · ${(lot.blend_components || []).length} components`
+      : 'Single origin lot',
+    W - M, 50, { align: 'right' },
+  );
+
+  // ── Hero card ────────────────────────────────────────────────
+  let y = 92;
+  const heroH = 124;
+  doc.setFillColor(...CREAM);
+  doc.roundedRect(M, y, W - 2 * M, heroH, 8, 8, 'F');
+  doc.setDrawColor(...YELLOW);
+  doc.setLineWidth(3);
+  doc.line(M, y, M + 80, y);
+
+  // Process pill (top-left)
+  const procColor = processColorFor(lot.process_type);
+  if (isBlend) {
+    doc.setFillColor(...NAVY);
+    doc.roundedRect(M + 18, y + 16, 52, 16, 8, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...YELLOW);
+    doc.text('BLEND', M + 44, y + 27, { align: 'center' });
+  } else {
+    doc.setFillColor(...procColor);
+    const pillTxt = (lot.process_type || '—').toUpperCase();
+    const pillW = Math.max(48, pillTxt.length * 5 + 16);
+    doc.roundedRect(M + 18, y + 16, pillW, 16, 8, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text(pillTxt, M + 18 + pillW / 2, y + 27, { align: 'center' });
+  }
+
+  // Reference name (top-right)
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...INK_500);
+  doc.text('REFERENCE', W - M - 18, y + 24, { align: 'right' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...NAVY);
+  doc.text(lot.reference_name || '—', W - M - 18, y + 36, { align: 'right' });
+
+  // Huge lot code
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(48);
+  doc.setTextColor(...NAVY);
+  doc.text(String(code), M + 18, y + 80);
+
+  // Subtitle (variety or components)
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...INK_700);
+  const subline = isBlend
+    ? `Components: ${(lot.blend_components || [])
+        .map((c) => c.bache_code || c.blend_code || c.lot_code).join('  +  ')}`
+    : `Variety: ${(lot.varieties || []).map((v) => v.name).join(', ') || '—'}`;
+  doc.text(doc.splitTextToSize(subline, W - 2 * M - 36), M + 18, y + 98);
+
+  // Date range
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(8);
+  doc.setTextColor(...INK_500);
+  const durTxt = (lot.start_date && lot.ready_date)
+    ? `${fmtDate(lot.start_date)}  to  ${fmtDate(lot.ready_date)}  ·  ${daysBetweenYmd(lot.start_date, lot.ready_date)} days end-to-end`
+    : (lot.start_date ? `Started ${fmtDate(lot.start_date)}` : '—');
+  doc.text(durTxt, M + 18, y + 114);
+
+  y += heroH + 16;
+
+  // ── KPI grid 3x2 ─────────────────────────────────────────────
+  const kpis = [
+    { label: 'CHERRY INPUT',   value: lot.kg_input_initial != null ? `${fmtKg(lot.kg_input_initial)} kg` : '—' },
+    { label: 'DRIED OUTPUT',   value: lot.kg_dried_output != null  ? `${fmtKg(lot.kg_dried_output)} kg`  : '—' },
+    { label: 'GREEN YIELD',    value: lot.kg_green_actual != null  ? `${fmtKg(lot.kg_green_actual)} kg`  : '—' },
+    { label: 'YIELD FACTOR',   value: lot.factor_rendimiento != null ? String(lot.factor_rendimiento) : '—' },
+    { label: 'CONVERSION',     value: lot.conversion_factor != null ? `${lot.conversion_factor}x` : '—' },
+    { label: 'FINAL HUMIDITY', value: lot.final_humidity != null ? `${lot.final_humidity}%` : '—' },
+  ];
+  const gap = 8;
+  const kpiW = (W - 2 * M - 2 * gap) / 3;
+  const kpiH = 54;
+  kpis.forEach((k, i) => {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const x = M + col * (kpiW + gap);
+    const yy = y + row * (kpiH + gap);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...SAND);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(x, yy, kpiW, kpiH, 4, 4, 'FD');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(...INK_500);
+    doc.text(k.label, x + 10, yy + 16);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(...NAVY);
+    doc.text(k.value, x + 10, yy + 38);
+  });
+  y += 2 * kpiH + gap + 18;
+
+  // ── Section title ───────────────────────────────────────────
+  const sectionTitle = isBlend ? 'COMPONENT LINEAGE' : 'PROCESS JOURNEY';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...NAVY);
+  doc.text(sectionTitle, M, y);
+  const tw = doc.getTextWidth(sectionTitle);
+  doc.setDrawColor(...YELLOW);
+  doc.setLineWidth(2.4);
+  doc.line(M, y + 5, M + tw + 6, y + 5);
+  y += 22;
+
+  // ── Body ────────────────────────────────────────────────────
+  if (isBlend) {
+    drawBlendComponents(doc, lot, M, y, W, H);
+  } else {
+    drawProcessJourney(doc, lot, M, y, W, H);
+  }
+
+  // ── Footer (drawn once on the LAST page) ────────────────────
+  drawPassportFooter(doc, code, lot, W, H, M);
+
+  doc.save(`lot-passport-${code}.pdf`);
+}
+
+function processColorFor(p) {
+  if (p === 'Natural') return [58, 111, 74];
+  if (p === 'Honey')   return [221, 174, 62];
+  if (p === 'Lavado')  return [126, 158, 193];
+  return NAVY;
+}
+
+function daysBetweenYmd(a, b) {
+  if (!a || !b) return 0;
+  const da = new Date(a + 'T00:00:00Z').getTime();
+  const db = new Date(b + 'T00:00:00Z').getTime();
+  return Math.max(0, Math.floor((db - da) / 86400000));
+}
+
+// Builds the events used by the Process Journey timeline. Mirrors
+// finca-bache-detail.js buildEvents but produces a richer, more
+// PDF-friendly shape (glyph + colour + multi-line detail rows).
+function buildPassportEvents(lot) {
+  const events = [];
+
+  // Cherry reception = start of fermentation
+  if (lot.start_date) {
+    const lines = [];
+    if (lot.kg_input_initial != null) lines.push(`Cherry weighed in: ${fmtKg(lot.kg_input_initial)} kg`);
+    const varieties = (lot.varieties || []).map((v) => v.name).join(', ');
+    if (varieties) lines.push(`Variety: ${varieties}`);
+    events.push({
+      kind: 'cherry',
+      date: lot.start_date,
+      dateLabel: fmtDate(lot.start_date),
+      title: 'Cherry Reception',
+      color: CHERRY_RED,
+      glyph: 'C',
+      lines,
+    });
+  }
+
+  // Fermentation block — shown as its own card, regardless of
+  // whether drying has started.
+  if (lot.start_date) {
+    const lines = [];
+    const tanks = (lot.fermentation_tanks || []).join(', ');
+    const types = (lot.fermentation_types || []).join(', ');
+    if (types) lines.push(`Type: ${types}`);
+    if (tanks) lines.push(`Tanks: ${tanks}`);
+
+    const planH = Number(lot.fermentation_hours || 0);
+    if (lot.fermentation_start_at && lot.drying_start_at) {
+      const start = new Date(lot.fermentation_start_at).getTime();
+      const end   = new Date(lot.drying_start_at).getTime();
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        const realH = Math.round((end - start) / 3600000);
+        if (planH > 0) lines.push(`Duration: planned ${planH}h  /  actual ${realH}h`);
+        else lines.push(`Duration: ${realH}h`);
+      }
+    } else if (planH > 0) {
+      lines.push(`Duration: ${planH}h planned`);
+    }
+    if (lines.length === 0) lines.push('Anaerobic fermentation');
+
+    events.push({
+      kind: 'fermentation',
+      date: lot.start_date,
+      dateLabel: fmtDate(lot.start_date),
+      title: 'Fermentation',
+      color: OLIVE,
+      glyph: 'F',
+      lines,
+    });
+  }
+
+  // Initial drying
+  if (lot.drying_start_date) {
+    const locs = (lot.drying_locations || []).join(', ');
+    const lines = [];
+    if (locs) lines.push(`Drying surface: ${locs}`);
+
+    // Span of initial drying = until first resting cycle start, or
+    // ready_date if no cycles.
+    const cycles = (lot.resting_cycles || []).slice()
+      .sort((a, b) => a.cycle_number - b.cycle_number);
+    const initialEnd = cycles.length > 0 ? cycles[0].start_date : lot.ready_date;
+    if (initialEnd) {
+      const d = daysBetweenYmd(lot.drying_start_date, initialEnd);
+      lines.push(`Duration: ${d} days  (${fmtDate(lot.drying_start_date)} → ${fmtDate(initialEnd)})`);
+    }
+    if (lines.length === 0) lines.push('—');
+
+    events.push({
+      kind: 'drying',
+      date: lot.drying_start_date,
+      dateLabel: fmtDate(lot.drying_start_date),
+      title: cycles.length > 0 ? 'Drying — Initial Phase' : 'Drying',
+      color: AMBER,
+      glyph: 'D',
+      lines,
+    });
+  }
+
+  // Resting cycles (and the Drying — Resumed cards in between)
+  const cycles = (lot.resting_cycles || []).slice()
+    .sort((a, b) => a.cycle_number - b.cycle_number);
+  cycles.forEach((c, idx) => {
+    const restLines = [];
+    if (c.start_humidity != null) restLines.push(`Entry humidity: ${c.start_humidity}%`);
+    if (c.end_humidity != null)   restLines.push(`Exit humidity: ${c.end_humidity}%`);
+    if (c.start_date && c.end_date) {
+      const d = daysBetweenYmd(c.start_date, c.end_date);
+      restLines.push(`Duration: ${d} days  (${fmtDate(c.start_date)} → ${fmtDate(c.end_date)})`);
+    } else if (c.start_date) {
+      restLines.push(`Started: ${fmtDate(c.start_date)}`);
+    }
+    events.push({
+      kind: 'resting',
+      date: c.start_date,
+      dateLabel: fmtDate(c.start_date),
+      title: `Resting · Cycle ${c.cycle_number}`,
+      color: SLATE,
+      glyph: 'R',
+      lines: restLines,
+    });
+
+    // If this cycle ended with back_to_drying, add a "Drying — Resumed" card
+    if (c.end_date && c.end_reason === 'back_to_drying') {
+      const next = cycles[idx + 1];
+      const resumeEnd = next ? next.start_date : lot.ready_date;
+      const lines = [];
+      const locs = (lot.drying_locations || []).join(', ');
+      if (locs) lines.push(`Drying surface: ${locs}`);
+      if (resumeEnd && c.end_date) {
+        const d = daysBetweenYmd(c.end_date, resumeEnd);
+        lines.push(`Duration: ${d} days  (${fmtDate(c.end_date)} → ${fmtDate(resumeEnd)})`);
+      }
+      if (lines.length === 0) lines.push('—');
+      events.push({
+        kind: 'drying-resumed',
+        date: c.end_date,
+        dateLabel: fmtDate(c.end_date),
+        title: 'Drying — Resumed',
+        color: AMBER,
+        glyph: 'D',
+        lines,
+      });
+    }
+  });
+
+  // Final close
+  if (lot.ready_date) {
+    const lines = [];
+    if (lot.kg_dried_output != null) lines.push(`Dry weight: ${fmtKg(lot.kg_dried_output)} kg`);
+    if (lot.factor_rendimiento != null) lines.push(`Yield factor: ${lot.factor_rendimiento}`);
+    if (lot.kg_green_actual != null) lines.push(`Green yield: ${fmtKg(lot.kg_green_actual)} kg`);
+    if (lot.final_humidity != null) lines.push(`Final humidity: ${lot.final_humidity}%`);
+    if (lines.length === 0) lines.push('—');
+    events.push({
+      kind: 'closed',
+      date: lot.ready_date,
+      dateLabel: fmtDate(lot.ready_date),
+      title: 'Lot Closed',
+      color: COFFEE,
+      glyph: 'OK',
+      lines,
+    });
+  }
+
+  return events
+    .map((ev, i) => ({ ev, i }))
+    .sort((a, b) => {
+      const da = a.ev.date || '';
+      const db = b.ev.date || '';
+      if (da !== db) return da < db ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.ev);
+}
+
+function drawProcessJourney(doc, lot, M, startY, W, H) {
+  const events = buildPassportEvents(lot);
+  if (events.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(9);
+    doc.setTextColor(...INK_500);
+    doc.text('No events recorded.', M, startY + 10);
+    return;
+  }
+
+  const bulletX  = M + 12;
+  const contentX = M + 36;
+  const contentW = W - M - contentX;
+  let y = startY;
+  const bottomLimit = H - 100; // leave space for footer
+
+  events.forEach((ev, i) => {
+    const lineH   = 11;
+    const cardH   = 32 + ev.lines.length * lineH;
+
+    if (y + cardH > bottomLimit) {
+      doc.addPage();
+      y = 60;
+    }
+
+    // Connector line (drawn only between events on the same page)
+    if (i > 0 && y > 70) {
+      doc.setDrawColor(...SAND);
+      doc.setLineWidth(1.2);
+      doc.line(bulletX, y - 8, bulletX, y + 4);
+    }
+
+    // Bullet
+    doc.setFillColor(...ev.color);
+    doc.circle(bulletX, y + 8, 7.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text(ev.glyph, bulletX, y + 11, { align: 'center' });
+
+    // Card body
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...SAND);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(contentX, y - 2, contentW, cardH, 4, 4, 'FD');
+    // Left edge accent
+    doc.setFillColor(...ev.color);
+    doc.rect(contentX, y - 2, 3, cardH, 'F');
+
+    // Title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...NAVY);
+    doc.text(ev.title, contentX + 12, y + 12);
+
+    // Date right
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...INK_500);
+    doc.text(ev.dateLabel, contentX + contentW - 12, y + 12, { align: 'right' });
+
+    // Detail lines
+    let dy = y + 26;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...INK_700);
+    ev.lines.forEach((line) => {
+      doc.text(line, contentX + 12, dy);
+      dy += lineH;
+    });
+
+    y += cardH + 8;
+  });
+}
+
+function drawBlendComponents(doc, lot, M, startY, W, H) {
+  const comps = lot.blend_components || [];
+  if (comps.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(9);
+    doc.setTextColor(...INK_500);
+    doc.text('No components recorded.', M, startY + 10);
+    return;
+  }
+
+  // Intro line
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(...INK_500);
+  const total = comps.reduce((s, c) => s + Number(c.kg_dried_used || 0), 0);
+  doc.text(
+    `${comps.length} source lots combined  ·  ${fmtKg(total)} kg total dry weight`,
+    M, startY,
+  );
+  let y = startY + 16;
+
+  doc.autoTable({
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Source lot', 'Process', 'Dry weight', 'Share of blend']],
+    body: comps.map((c) => {
+      const kg = Number(c.kg_dried_used || 0);
+      const pct = total > 0 ? Math.round((kg / total) * 1000) / 10 : 0;
+      return [
+        c.bache_code || c.blend_code || c.lot_code || '—',
+        c.process_type || '—',
+        { content: `${fmtKg(kg)} kg`, styles: { halign: 'right' } },
+        { content: `${pct}%`, styles: { halign: 'right' } },
+      ];
+    }),
+    styles: { font: 'helvetica', fontSize: 10, cellPadding: 8, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
+    headStyles: { fillColor: NAVY, textColor: YELLOW, fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: CREAM },
+    columnStyles: {
+      0: { cellWidth: 110, fontStyle: 'bold' },
+      2: { halign: 'right' }, 3: { halign: 'right' },
+    },
+  });
+}
+
+function drawPassportFooter(doc, code, lot, W, H, M) {
+  const pageCount = doc.getNumberOfPages();
+  doc.setPage(pageCount);
+
+  const fy = H - 72;
+  doc.setFillColor(...NAVY_DARK);
+  doc.rect(0, fy, W, 72, 'F');
+
+  // QR (left)
+  const qrSize = 56;
+  const qrX = M;
+  const qrY = fy + 8;
+  drawQrCode(doc, code, qrX, qrY, qrSize);
+
+  // Centre text
+  const cx = qrX + qrSize + 16;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FOREST · EL VERGEL', cx, fy + 22);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...YELLOW);
+  doc.text('Production Passport · Authentic Origin', cx, fy + 36);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(190, 190, 190);
+  doc.text(
+    `Generated ${new Date().toLocaleString('en-US')}  ·  Forest Production Bridge`,
+    cx, fy + 50,
+  );
+
+  // Right: lot code label
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...YELLOW);
+  doc.text('LOT', W - M, fy + 22, { align: 'right' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text(String(code), W - M, fy + 38, { align: 'right' });
+}
+
+// Renders the QR using qrcode-generator (loaded via CDN). Draws
+// each module as a navy rect on a white background. Falls back to
+// a navy square with the code printed below if the lib isn't
+// available.
+function drawQrCode(doc, payload, x, y, size) {
+  doc.setFillColor(255, 255, 255);
+  doc.rect(x, y, size, size, 'F');
+
+  const QR = window.qrcode;
+  if (typeof QR !== 'function') {
+    doc.setDrawColor(...YELLOW);
+    doc.setLineWidth(0.5);
+    doc.rect(x, y, size, size, 'D');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...NAVY);
+    doc.text(String(payload), x + size / 2, y + size / 2 + 2, { align: 'center' });
+    return;
+  }
+
+  try {
+    const qr = QR(0, 'M');
+    qr.addData(String(payload));
+    qr.make();
+    const count = qr.getModuleCount();
+    const cell  = size / count;
+    doc.setFillColor(...NAVY_DARK);
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (qr.isDark(r, c)) {
+          doc.rect(x + c * cell, y + r * cell, cell + 0.2, cell + 0.2, 'F');
+        }
+      }
+    }
+  } catch {
+    doc.setDrawColor(...YELLOW);
+    doc.setLineWidth(0.5);
+    doc.rect(x, y, size, size, 'D');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...NAVY);
+    doc.text(String(payload), x + size / 2, y + size / 2 + 2, { align: 'center' });
+  }
 }
