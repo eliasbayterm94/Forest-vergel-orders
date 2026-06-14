@@ -700,154 +700,150 @@ function daysBetweenYmd(a, b) {
   return Math.max(0, Math.floor((db - da) / 86400000));
 }
 
-// Builds the events used by the Process Journey timeline. Mirrors
-// finca-bache-detail.js buildEvents but produces a richer, more
-// PDF-friendly shape (glyph + colour + multi-line detail rows).
+// Builds the events used by the Process Journey timeline. Each
+// event becomes one numbered card in the PDF: a colored disc
+// with a step numeral, an iconic vector glyph, a title + tagline,
+// and a row of pill-style metric badges.
 function buildPassportEvents(lot) {
   const events = [];
 
-  // Cherry reception = start of fermentation
+  // ── Cherry Reception ───────────────────────────────────────
   if (lot.start_date) {
-    const lines = [];
-    if (lot.kg_input_initial != null) lines.push(`Cherry weighed in: ${fmtKg(lot.kg_input_initial)} kg`);
-    const varieties = (lot.varieties || []).map((v) => v.name).join(', ');
-    if (varieties) lines.push(`Variety: ${varieties}`);
+    const variety = (lot.varieties || []).map((v) => v.name).join(', ');
     events.push({
       kind: 'cherry',
       date: lot.start_date,
       dateLabel: fmtDate(lot.start_date),
       title: 'Cherry Reception',
+      tagline: variety || 'Single variety lot',
+      pills: [
+        lot.kg_input_initial != null
+          ? { label: 'WEIGHED IN', value: `${fmtKg(lot.kg_input_initial)} kg` }
+          : null,
+        { label: 'LOT STARTED', value: fmtDate(lot.start_date) },
+      ].filter(Boolean),
       color: CHERRY_RED,
-      glyph: 'C',
-      lines,
     });
   }
 
-  // Fermentation block — shown as its own card, regardless of
-  // whether drying has started.
+  // ── Fermentation ───────────────────────────────────────────
   if (lot.start_date) {
-    const lines = [];
+    const types = (lot.fermentation_types || []).join(' · ') || 'Anaerobic';
     const tanks = (lot.fermentation_tanks || []).join(', ');
-    const types = (lot.fermentation_types || []).join(', ');
-    if (types) lines.push(`Type: ${types}`);
-    if (tanks) lines.push(`Tanks: ${tanks}`);
+    const tag = tanks ? `${types}  ·  Tanks ${tanks}` : types;
 
     const planH = Number(lot.fermentation_hours || 0);
+    let realH = null;
     if (lot.fermentation_start_at && lot.drying_start_at) {
-      const start = new Date(lot.fermentation_start_at).getTime();
-      const end   = new Date(lot.drying_start_at).getTime();
-      if (Number.isFinite(start) && Number.isFinite(end)) {
-        const realH = Math.round((end - start) / 3600000);
-        if (planH > 0) lines.push(`Duration: planned ${planH}h  /  actual ${realH}h`);
-        else lines.push(`Duration: ${realH}h`);
-      }
-    } else if (planH > 0) {
-      lines.push(`Duration: ${planH}h planned`);
+      const a = new Date(lot.fermentation_start_at).getTime();
+      const b = new Date(lot.drying_start_at).getTime();
+      if (Number.isFinite(a) && Number.isFinite(b)) realH = Math.round((b - a) / 3600000);
     }
-    if (lines.length === 0) lines.push('Anaerobic fermentation');
+    const pills = [];
+    if (planH > 0) pills.push({ label: 'PLANNED', value: `${planH} h` });
+    if (realH != null) pills.push({ label: 'ACTUAL', value: `${realH} h` });
+    if (planH > 0 && realH != null) {
+      const delta = realH - planH;
+      pills.push({ label: 'DELTA', value: `${delta >= 0 ? '+' : ''}${delta} h` });
+    }
+    if (pills.length === 0) pills.push({ label: 'PHASE', value: 'Anaerobic' });
 
     events.push({
       kind: 'fermentation',
       date: lot.start_date,
       dateLabel: fmtDate(lot.start_date),
       title: 'Fermentation',
+      tagline: tag,
+      pills,
       color: OLIVE,
-      glyph: 'F',
-      lines,
     });
   }
 
-  // Initial drying
+  // ── Drying — Initial Phase ─────────────────────────────────
   if (lot.drying_start_date) {
-    const locs = (lot.drying_locations || []).join(', ');
-    const lines = [];
-    if (locs) lines.push(`Drying surface: ${locs}`);
-
-    // Span of initial drying = until first resting cycle start, or
-    // ready_date if no cycles.
+    const locs = (lot.drying_locations || []).join(', ') || 'Drying patio';
     const cycles = (lot.resting_cycles || []).slice()
       .sort((a, b) => a.cycle_number - b.cycle_number);
     const initialEnd = cycles.length > 0 ? cycles[0].start_date : lot.ready_date;
-    if (initialEnd) {
-      const d = daysBetweenYmd(lot.drying_start_date, initialEnd);
-      lines.push(`Duration: ${d} days  (${fmtDate(lot.drying_start_date)} → ${fmtDate(initialEnd)})`);
-    }
-    if (lines.length === 0) lines.push('—');
+    const days = initialEnd ? daysBetweenYmd(lot.drying_start_date, initialEnd) : 0;
 
     events.push({
       kind: 'drying',
       date: lot.drying_start_date,
       dateLabel: fmtDate(lot.drying_start_date),
       title: cycles.length > 0 ? 'Drying — Initial Phase' : 'Drying',
+      tagline: `Drying surface: ${locs}`,
+      pills: [
+        days > 0    ? { label: 'DURATION', value: `${days} days` } : null,
+        initialEnd  ? { label: 'ENDED',    value: fmtDate(initialEnd) } : null,
+      ].filter(Boolean),
       color: AMBER,
-      glyph: 'D',
-      lines,
     });
   }
 
-  // Resting cycles (and the Drying — Resumed cards in between)
+  // ── Resting cycles (+ Drying — Resumed inserts) ────────────
   const cycles = (lot.resting_cycles || []).slice()
     .sort((a, b) => a.cycle_number - b.cycle_number);
   cycles.forEach((c, idx) => {
-    const restLines = [];
-    if (c.start_humidity != null) restLines.push(`Entry humidity: ${c.start_humidity}%`);
-    if (c.end_humidity != null)   restLines.push(`Exit humidity: ${c.end_humidity}%`);
+    const pills = [];
+    if (c.start_humidity != null) pills.push({ label: 'ENTRY', value: `${c.start_humidity}%` });
+    if (c.end_humidity != null)   pills.push({ label: 'EXIT',  value: `${c.end_humidity}%` });
     if (c.start_date && c.end_date) {
       const d = daysBetweenYmd(c.start_date, c.end_date);
-      restLines.push(`Duration: ${d} days  (${fmtDate(c.start_date)} → ${fmtDate(c.end_date)})`);
-    } else if (c.start_date) {
-      restLines.push(`Started: ${fmtDate(c.start_date)}`);
+      pills.push({ label: 'DURATION', value: `${d} d` });
     }
     events.push({
       kind: 'resting',
       date: c.start_date,
       dateLabel: fmtDate(c.start_date),
       title: `Resting · Cycle ${c.cycle_number}`,
+      tagline: c.end_date
+        ? `${fmtDate(c.start_date)}  →  ${fmtDate(c.end_date)}`
+        : `Started ${fmtDate(c.start_date)}`,
+      pills,
       color: SLATE,
-      glyph: 'R',
-      lines: restLines,
     });
 
-    // If this cycle ended with back_to_drying, add a "Drying — Resumed" card
     if (c.end_date && c.end_reason === 'back_to_drying') {
       const next = cycles[idx + 1];
       const resumeEnd = next ? next.start_date : lot.ready_date;
-      const lines = [];
-      const locs = (lot.drying_locations || []).join(', ');
-      if (locs) lines.push(`Drying surface: ${locs}`);
-      if (resumeEnd && c.end_date) {
-        const d = daysBetweenYmd(c.end_date, resumeEnd);
-        lines.push(`Duration: ${d} days  (${fmtDate(c.end_date)} → ${fmtDate(resumeEnd)})`);
-      }
-      if (lines.length === 0) lines.push('—');
+      const locs = (lot.drying_locations || []).join(', ') || 'Drying patio';
+      const d = (resumeEnd && c.end_date) ? daysBetweenYmd(c.end_date, resumeEnd) : 0;
       events.push({
         kind: 'drying-resumed',
         date: c.end_date,
         dateLabel: fmtDate(c.end_date),
         title: 'Drying — Resumed',
+        tagline: `Drying surface: ${locs}`,
+        pills: [
+          d > 0      ? { label: 'DURATION', value: `${d} days` } : null,
+          resumeEnd  ? { label: 'ENDED',    value: fmtDate(resumeEnd) } : null,
+        ].filter(Boolean),
         color: AMBER,
-        glyph: 'D',
-        lines,
       });
     }
   });
 
-  // Final close
+  // ── Lot Closed ─────────────────────────────────────────────
   if (lot.ready_date) {
-    const lines = [];
-    if (lot.kg_dried_output != null) lines.push(`Dry weight: ${fmtKg(lot.kg_dried_output)} kg`);
-    if (lot.factor_rendimiento != null) lines.push(`Yield factor: ${lot.factor_rendimiento}`);
-    if (lot.kg_green_actual != null) lines.push(`Green yield: ${fmtKg(lot.kg_green_actual)} kg`);
-    if (lot.final_humidity != null) lines.push(`Final humidity: ${lot.final_humidity}%`);
-    if (lines.length === 0) lines.push('—');
+    const pills = [];
+    if (lot.kg_dried_output != null)   pills.push({ label: 'DRY',      value: `${fmtKg(lot.kg_dried_output)} kg` });
+    if (lot.factor_rendimiento != null) pills.push({ label: 'FACTOR',   value: String(lot.factor_rendimiento) });
+    if (lot.kg_green_actual != null)   pills.push({ label: 'GREEN',    value: `${fmtKg(lot.kg_green_actual)} kg` });
+    if (lot.final_humidity != null)    pills.push({ label: 'HUMIDITY', value: `${lot.final_humidity}%` });
+
+    const tagline = lot.start_date
+      ? `${daysBetweenYmd(lot.start_date, lot.ready_date)} days end-to-end`
+      : 'Lot finished and ready for milling';
+
     events.push({
       kind: 'closed',
       date: lot.ready_date,
       dateLabel: fmtDate(lot.ready_date),
       title: 'Lot Closed',
+      tagline,
+      pills,
       color: COFFEE,
-      glyph: 'OK',
-      lines,
     });
   }
 
@@ -872,69 +868,178 @@ function drawProcessJourney(doc, lot, M, startY, W, H) {
     return;
   }
 
-  const bulletX  = M + 12;
-  const contentX = M + 36;
-  const contentW = W - M - contentX;
+  const cardW = W - 2 * M;
+  const cardH = 70;
+  const bottomLimit = H - 96;
   let y = startY;
-  const bottomLimit = H - 100; // leave space for footer
 
   events.forEach((ev, i) => {
-    const lineH   = 11;
-    const cardH   = 32 + ev.lines.length * lineH;
-
     if (y + cardH > bottomLimit) {
       doc.addPage();
       y = 60;
     }
 
-    // Connector line (drawn only between events on the same page)
-    if (i > 0 && y > 70) {
-      doc.setDrawColor(...SAND);
-      doc.setLineWidth(1.2);
-      doc.line(bulletX, y - 8, bulletX, y + 4);
-    }
-
-    // Bullet
-    doc.setFillColor(...ev.color);
-    doc.circle(bulletX, y + 8, 7.5, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(255, 255, 255);
-    doc.text(ev.glyph, bulletX, y + 11, { align: 'center' });
-
-    // Card body
+    // Card background — white with sand border + colored left edge
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...SAND);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(contentX, y - 2, contentW, cardH, 4, 4, 'FD');
-    // Left edge accent
+    doc.setLineWidth(0.6);
+    doc.roundedRect(M, y, cardW, cardH, 6, 6, 'FD');
     doc.setFillColor(...ev.color);
-    doc.rect(contentX, y - 2, 3, cardH, 'F');
+    doc.rect(M, y, 4, cardH, 'F');
 
-    // Title
+    // Numbered disc on the left
+    const discR  = 20;
+    const discCx = M + 38;
+    const discCy = y + cardH / 2;
+    doc.setFillColor(...ev.color);
+    doc.circle(discCx, discCy, discR, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(...NAVY);
-    doc.text(ev.title, contentX + 12, y + 12);
+    doc.setFontSize(20);
+    doc.setTextColor(255, 255, 255);
+    doc.text(String(i + 1).padStart(2, '0'), discCx, discCy + 7, { align: 'center' });
 
-    // Date right
-    doc.setFont('helvetica', 'normal');
+    // Stage icon to the right of the disc
+    const iconCx = M + 78;
+    const iconCy = discCy;
+    drawStageIcon(doc, ev.kind, iconCx, iconCy, ev.color);
+
+    // Title + date row
+    const titleX = M + 100;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(...NAVY);
+    doc.text(ev.title.toUpperCase(), titleX, y + 22);
+
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(...INK_500);
-    doc.text(ev.dateLabel, contentX + contentW - 12, y + 12, { align: 'right' });
+    doc.text((ev.dateLabel || '').toUpperCase(), M + cardW - 14, y + 22, { align: 'right' });
 
-    // Detail lines
-    let dy = y + 26;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(...INK_700);
-    ev.lines.forEach((line) => {
-      doc.text(line, contentX + 12, dy);
-      dy += lineH;
-    });
+    // Title underline accent
+    doc.setDrawColor(...ev.color);
+    doc.setLineWidth(1.6);
+    const titleW = doc.getTextWidth(ev.title.toUpperCase());
+    doc.line(titleX, y + 26, titleX + Math.min(titleW, 80), y + 26);
+
+    // Tagline
+    if (ev.tagline) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(...INK_700);
+      const tagSplit = doc.splitTextToSize(ev.tagline, cardW - (titleX - M) - 24);
+      doc.text(tagSplit[0] || '', titleX, y + 39);
+    }
+
+    // Pill row at the bottom
+    if (ev.pills && ev.pills.length > 0) {
+      drawPillRow(doc, ev.pills, titleX, y + 50, cardW - (titleX - M) - 18, ev.color);
+    }
 
     y += cardH + 8;
   });
+}
+
+function drawPillRow(doc, pills, x, y, maxW, color) {
+  let px = x;
+  const pillH = 18;
+  for (const p of pills) {
+    // Measure value width with bold 9pt
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    const valW = doc.getTextWidth(p.value);
+    // Measure label width with 6pt uppercase
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    const lblW = doc.getTextWidth(p.label);
+    const pillW = Math.max(valW, lblW) + 14;
+
+    if (px + pillW > x + maxW) break;
+
+    doc.setFillColor(...CREAM);
+    doc.setDrawColor(...SAND);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(px, y, pillW, pillH, 9, 9, 'FD');
+    // Color dot
+    doc.setFillColor(...color);
+    doc.circle(px + 6, y + pillH / 2, 1.8, 'F');
+    // Label (tiny uppercase, top half)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.2);
+    doc.setTextColor(...INK_500);
+    doc.text(p.label, px + 12, y + 7.5);
+    // Value (bigger, bottom half)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...color);
+    doc.text(p.value, px + 12, y + 15);
+
+    px += pillW + 6;
+  }
+}
+
+// Simple iconic glyphs drawn with jsPDF primitives. Each one is
+// roughly 18x18pt centred on (cx, cy) and uses the event color.
+function drawStageIcon(doc, kind, cx, cy, color) {
+  doc.setFillColor(...color);
+  doc.setDrawColor(...color);
+
+  if (kind === 'cherry') {
+    // Two cherries + stem
+    doc.circle(cx - 3, cy + 3, 4.5, 'F');
+    doc.circle(cx + 4, cy + 4, 4.5, 'F');
+    doc.setDrawColor(58, 111, 74);
+    doc.setLineWidth(1.2);
+    doc.line(cx - 3, cy - 1, cx + 1, cy - 8);
+    doc.line(cx + 4, cy, cx + 1, cy - 8);
+  } else if (kind === 'fermentation') {
+    // Conical flask + bubbles
+    doc.setLineWidth(1.8);
+    doc.line(cx - 6, cy - 6, cx - 3, cy + 6);
+    doc.line(cx + 6, cy - 6, cx + 3, cy + 6);
+    doc.line(cx - 6, cy - 6, cx + 6, cy - 6);
+    doc.line(cx - 3, cy + 6, cx + 3, cy + 6);
+    doc.setFillColor(...color);
+    doc.circle(cx - 2, cy - 10, 1.4, 'F');
+    doc.circle(cx + 2, cy - 12, 1.4, 'F');
+    doc.circle(cx,     cy - 15, 1.6, 'F');
+  } else if (kind === 'drying' || kind === 'drying-resumed') {
+    // Sun: filled disc + 8 short rays
+    doc.setFillColor(...color);
+    doc.circle(cx, cy, 4.5, 'F');
+    doc.setLineWidth(1.6);
+    for (let a = 0; a < 8; a++) {
+      const rad = (a * Math.PI) / 4;
+      const r1 = 7;
+      const r2 = 10.5;
+      doc.line(cx + Math.cos(rad) * r1, cy + Math.sin(rad) * r1,
+               cx + Math.cos(rad) * r2, cy + Math.sin(rad) * r2);
+    }
+    if (kind === 'drying-resumed') {
+      // Small refresh-arrow on top-right
+      doc.setLineWidth(1.2);
+      doc.line(cx + 10, cy - 10, cx + 14, cy - 6);
+      doc.line(cx + 14, cy - 6,  cx + 10, cy - 6);
+      doc.line(cx + 14, cy - 6,  cx + 14, cy - 10);
+    }
+  } else if (kind === 'resting') {
+    // Crescent moon
+    doc.setFillColor(...color);
+    doc.circle(cx, cy, 8, 'F');
+    doc.setFillColor(255, 255, 255);
+    doc.circle(cx + 4, cy - 2, 7, 'F');
+  } else if (kind === 'closed') {
+    // Coffee cup with steam
+    doc.setFillColor(...color);
+    doc.roundedRect(cx - 7, cy - 3, 11, 9, 1, 1, 'F');
+    doc.setLineWidth(1.5);
+    doc.line(cx + 4, cy - 1, cx + 7, cy + 1);
+    doc.line(cx + 7, cy + 1, cx + 4, cy + 4);
+    // Steam
+    doc.setLineWidth(0.9);
+    doc.line(cx - 4, cy - 10, cx - 4, cy - 7);
+    doc.line(cx,     cy - 12, cx,     cy - 8);
+    doc.line(cx + 4, cy - 10, cx + 4, cy - 7);
+  }
 }
 
 function drawBlendComponents(doc, lot, M, startY, W, H) {

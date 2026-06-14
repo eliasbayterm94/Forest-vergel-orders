@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Lot Passport — Timeline v2 preview</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px;
+    background: #1b203d;
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #2a2a28;
+  }
+  .page {
+    width: 595px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 40px 36px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .section-title {
+    font-weight: 800;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    color: #1b203d;
+    position: relative;
+    margin: 0 0 22px 0;
+    display: inline-block;
+  }
+  .section-title::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -6px;
+    height: 2.4px;
+    width: calc(100% + 6px);
+    background: #e7e244;
+  }
+  .card {
+    position: relative;
+    border: 0.6px solid #e8e8e2;
+    border-radius: 6px;
+    background: #fff;
+    height: 70px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+  .card .accent {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+  }
+  .disc {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    color: #fff;
+    font-weight: 800;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 18px;
+    flex-shrink: 0;
+  }
+  .icon {
+    width: 22px;
+    height: 22px;
+    margin-left: 14px;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+  .body {
+    flex: 1;
+    padding-right: 14px;
+    overflow: hidden;
+  }
+  .body .row1 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .body .row1 .title {
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: #1b203d;
+    position: relative;
+  }
+  .body .row1 .title::after {
+    content: '';
+    display: block;
+    height: 1.6px;
+    width: 60%;
+    margin-top: 3px;
+  }
+  .body .row1 .date {
+    font-weight: 700;
+    font-size: 8px;
+    letter-spacing: 0.5px;
+    color: #5a5a55;
+  }
+  .body .tag {
+    font-size: 9px;
+    color: #2a2a28;
+    margin-top: 4px;
+  }
+  .pills {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .pill {
+    background: #f5f4ee;
+    border: 0.5px solid #e8e8e2;
+    border-radius: 9px;
+    height: 18px;
+    padding: 0 12px 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pill .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pill .lbl {
+    font-weight: 800;
+    font-size: 6.2px;
+    letter-spacing: 0.4px;
+    color: #5a5a55;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  .pill .val {
+    font-weight: 800;
+    font-size: 9px;
+    line-height: 1;
+  }
+  .pill .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  /* per-stage colors */
+  .cherry  { --c: #a8351c; }
+  .ferm    { --c: #7a8a57; }
+  .drying  { --c: #ddae3e; }
+  .resting { --c: #7e9ec1; }
+  .closed  { --c: #5d8b66; }
+
+  .accent { background: var(--c); }
+  .disc   { background: var(--c); }
+  .body .row1 .title::after { background: var(--c); }
+  .pill .dot { background: var(--c); }
+  .pill .val { color: var(--c); }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="section-title">PROCESS JOURNEY</p>
+
+  <!-- 1. Cherry -->
+  <div class="card cherry">
+    <div class="accent"></div>
+    <div class="disc">01</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <circle cx="9" cy="14" r="5" fill="currentColor" style="color:var(--c)"/>
+      <circle cx="15" cy="15" r="5" fill="currentColor" style="color:var(--c)"/>
+      <path d="M9 9 L13 4 M15 10 L13 4" stroke="#3a6f4a" stroke-width="1.5"/>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Cherry Reception</span>
+        <span class="date">JUN 8, 2026</span>
+      </div>
+      <div class="tag">Bourbon Rosado, Pink Bourbon</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">WEIGHED IN</span><span class="val">820 kg</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">LOT STARTED</span><span class="val">Jun 8, 2026</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Fermentation -->
+  <div class="card ferm">
+    <div class="accent"></div>
+    <div class="disc">02</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <path d="M8 6 L11 18 M16 6 L13 18 M8 6 L16 6 M11 18 L13 18" stroke="currentColor" stroke-width="1.8" style="color:var(--c)" fill="none"/>
+      <circle cx="10" cy="3"  r="1.4" fill="currentColor" style="color:var(--c)"/>
+      <circle cx="14" cy="1.5" r="1.4" fill="currentColor" style="color:var(--c)"/>
+      <circle cx="12" cy="-1"  r="1.6" fill="currentColor" style="color:var(--c)"/>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Fermentation</span>
+        <span class="date">JUN 8, 2026</span>
+      </div>
+      <div class="tag">Anaeróbico · Maceración Carbónica · Tanks A1, B2</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">PLANNED</span><span class="val">48 h</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">ACTUAL</span><span class="val">52 h</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">DELTA</span><span class="val">+4 h</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Drying -->
+  <div class="card drying">
+    <div class="accent"></div>
+    <div class="disc">03</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="4.5" fill="currentColor" style="color:var(--c)"/>
+      <g stroke="currentColor" stroke-width="1.6" style="color:var(--c)">
+        <line x1="12" y1="4"  x2="12" y2="1.5"/>
+        <line x1="12" y1="20" x2="12" y2="22.5"/>
+        <line x1="4"  y1="12" x2="1.5" y2="12"/>
+        <line x1="20" y1="12" x2="22.5" y2="12"/>
+        <line x1="6.3" y1="6.3"  x2="4.5" y2="4.5"/>
+        <line x1="17.7" y1="6.3" x2="19.5" y2="4.5"/>
+        <line x1="6.3" y1="17.7" x2="4.5" y2="19.5"/>
+        <line x1="17.7" y1="17.7" x2="19.5" y2="19.5"/>
+      </g>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Drying — Initial Phase</span>
+        <span class="date">JUN 10, 2026</span>
+      </div>
+      <div class="tag">Drying surface: Marquesina Norte, Patio 3</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">DURATION</span><span class="val">12 days</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">ENDED</span><span class="val">Jun 22, 2026</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Resting -->
+  <div class="card resting">
+    <div class="accent"></div>
+    <div class="disc">04</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="8" fill="currentColor" style="color:var(--c)"/>
+      <circle cx="16" cy="10" r="7" fill="#fff"/>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Resting · Cycle 1</span>
+        <span class="date">JUN 22, 2026</span>
+      </div>
+      <div class="tag">Jun 22, 2026  →  Jul 4, 2026</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">ENTRY</span><span class="val">19%</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">EXIT</span><span class="val">14%</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">DURATION</span><span class="val">12 d</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Drying — Resumed -->
+  <div class="card drying">
+    <div class="accent"></div>
+    <div class="disc">05</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="13" r="4.5" fill="currentColor" style="color:var(--c)"/>
+      <g stroke="currentColor" stroke-width="1.6" style="color:var(--c)">
+        <line x1="12" y1="5"  x2="12" y2="2.5"/>
+        <line x1="12" y1="21" x2="12" y2="23.5"/>
+        <line x1="4"  y1="13" x2="1.5" y2="13"/>
+        <line x1="20" y1="13" x2="22.5" y2="13"/>
+        <line x1="6.3" y1="7.3"  x2="4.5" y2="5.5"/>
+        <line x1="17.7" y1="7.3" x2="19.5" y2="5.5"/>
+        <line x1="6.3" y1="18.7" x2="4.5" y2="20.5"/>
+        <line x1="17.7" y1="18.7" x2="19.5" y2="20.5"/>
+      </g>
+      <path d="M19 3 L22 6 L19 6 L22 6 L22 3" stroke="currentColor" stroke-width="1.2" fill="none" style="color:var(--c)"/>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Drying — Resumed</span>
+        <span class="date">JUL 4, 2026</span>
+      </div>
+      <div class="tag">Drying surface: Marquesina Norte</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">DURATION</span><span class="val">5 days</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">ENDED</span><span class="val">Jul 9, 2026</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Lot Closed -->
+  <div class="card closed">
+    <div class="accent"></div>
+    <div class="disc">06</div>
+    <svg class="icon" viewBox="0 0 24 24" fill="none">
+      <rect x="5" y="9" width="11" height="9" rx="1" fill="currentColor" style="color:var(--c)"/>
+      <path d="M16 11 L19 13 L16 16" stroke="currentColor" stroke-width="1.6" fill="none" style="color:var(--c)"/>
+      <g stroke="currentColor" stroke-width="0.9" style="color:var(--c)">
+        <line x1="8" y1="2"  x2="8" y2="5"/>
+        <line x1="12" y1="0" x2="12" y2="4"/>
+        <line x1="16" y1="2" x2="16" y2="5"/>
+      </g>
+    </svg>
+    <div class="body">
+      <div class="row1">
+        <span class="title">Lot Closed</span>
+        <span class="date">JUL 9, 2026</span>
+      </div>
+      <div class="tag">31 days end-to-end</div>
+      <div class="pills">
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">DRY</span><span class="val">142 kg</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">FACTOR</span><span class="val">1.18</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">GREEN</span><span class="val">120 kg</span></div></div>
+        <div class="pill"><span class="dot"></span><div class="stack"><span class="lbl">HUMIDITY</span><span class="val">11%</span></div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
