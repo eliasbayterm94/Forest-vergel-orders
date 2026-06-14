@@ -43,51 +43,41 @@ export const NEXT_TRANSITIONS = {
 
 // ── Prompts ─────────────────────────────────────────────────────────
 
-export function promptDrying(lot, isReturn) {
-  // Abrimos el modal inmediatamente (con un placeholder en los
-  // checkboxes) para que el usuario vea feedback al instante; los
-  // tipos de secado se cargan en segundo plano vía dryingTypesList.
+export async function promptDrying(lot, isReturn) {
+  // Precargamos los tipos de secado ANTES de abrir la modal para
+  // garantizar que los checkboxes aparezcan de una.
+  let dryingTypeNames = [];
+  try {
+    const r = await api.dryingTypesList({});
+    const types = (r && r.drying_types) || [];
+    dryingTypeNames = types.length > 0
+      ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
+      : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+  } catch {
+    dryingTypeNames = DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+  }
   return openModal(({ close }) => {
     const defaultDate = new Date().toISOString().slice(0, 10);
     const dateInput = el('input', { type: 'date', value: defaultDate, class: 'ctrm-input' });
     // Hora exacta opcional. Default backend = now() si queda vacía.
     const timeInput = el('input', { type: 'time', class: 'ctrm-input mono text-[13px]' });
 
-    const locWrap = el('div', { class: 'flex flex-wrap gap-2' });
-    locWrap.append(el('p', { class: 'text-[11px] text-ink-300 italic', text: 'Cargando tipos de secado…' }));
-
-    // checkboxes vive en el closure; lo poblamos cuando llegue la
-    // respuesta del endpoint. El handler de submit lo lee en el
-    // momento del click.
-    let checkboxes = [];
-
-    (async () => {
-      let types = [];
-      try {
-        const r = await api.dryingTypesList({});
-        types = (r && r.drying_types) || [];
-      } catch { types = []; }
-      const names = types.length > 0
-        ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
-        : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
-      checkboxes = names.map(({ name, kind }) => {
-        const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
-        if (!isReturn && (lot.drying_locations || []).includes(name)) cb.checked = true;
-        return { name, kind, cb };
-      });
-      clear(locWrap);
-      for (const { name, kind, cb } of checkboxes) {
-        locWrap.append(el('label', {
-          class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
-        }, [
-          cb,
-          el('span', {}, [
-            name,
-            kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
-          ]),
-        ]));
-      }
-    })();
+    const checkboxes = dryingTypeNames.map(({ name, kind }) => {
+      const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
+      if (!isReturn && (lot.drying_locations || []).includes(name)) cb.checked = true;
+      return { name, kind, cb };
+    });
+    const locWrap = el('div', { class: 'flex flex-wrap gap-2' },
+      checkboxes.map(({ name, kind, cb }) => el('label', {
+        class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
+      }, [
+        cb,
+        el('span', {}, [
+          name,
+          kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
+        ]),
+      ])),
+    );
 
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
@@ -187,8 +177,24 @@ export function promptResting(lot) {
   }, { title: 'Entrada a Descanso' });
 }
 
-export function promptExitHumidity(lot, target) {
+export async function promptExitHumidity(lot, target) {
   const isToDrying = target === 'Drying';
+  // Si vamos a Drying, precargamos los tipos de secado ANTES de
+  // abrir la modal para que los checkboxes aparezcan de una sin
+  // estado "Cargando…". Esto evita carreras o errores async que
+  // podrían dejar el área vacía en una segunda vuelta.
+  let dryingTypeNames = [];
+  if (isToDrying) {
+    try {
+      const r = await api.dryingTypesList({});
+      const types = (r && r.drying_types) || [];
+      dryingTypeNames = types.length > 0
+        ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
+        : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+    } catch {
+      dryingTypeNames = DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
+    }
+  }
   return openModal(({ close }) => {
     const humInput = el('input', {
       type: 'number', min: '8', max: '40', step: '0.1',
@@ -199,37 +205,28 @@ export function promptExitHumidity(lot, target) {
     const entryHum = lot.resting_humidity != null ? `${lot.resting_humidity}%` : '—';
 
     // Si vamos de vuelta a Secado, en la MISMA modal pedimos también
-    // fecha y equipo de secado (antes eran dos modales seguidos).
+    // fecha y equipo de secado.
     const dateInput = isToDrying ? el('input', {
       type: 'date', value: new Date().toISOString().slice(0, 10), class: 'ctrm-input',
     }) : null;
-    const locWrap = isToDrying ? el('div', { class: 'flex flex-wrap gap-2' }) : null;
     let checkboxes = [];
+    let locWrap = null;
     if (isToDrying) {
-      locWrap.append(el('p', { class: 'text-[11px] text-ink-300 italic', text: 'Cargando tipos de secado…' }));
-      (async () => {
-        let types = [];
-        try { const r = await api.dryingTypesList({}); types = (r && r.drying_types) || []; } catch { types = []; }
-        const names = types.length > 0
-          ? types.map((t) => ({ name: t.name, kind: t.kind || '' }))
-          : DRYING_LOCATIONS.map((n) => ({ name: n, kind: '' }));
-        checkboxes = names.map(({ name, kind }) => {
-          const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
-          return { name, kind, cb };
-        });
-        clear(locWrap);
-        for (const { name, kind, cb } of checkboxes) {
-          locWrap.append(el('label', {
-            class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
-          }, [
-            cb,
-            el('span', {}, [
-              name,
-              kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
-            ]),
-          ]));
-        }
-      })();
+      checkboxes = dryingTypeNames.map(({ name, kind }) => {
+        const cb = el('input', { type: 'checkbox', value: name, class: 'mr-2' });
+        return { name, kind, cb };
+      });
+      locWrap = el('div', { class: 'flex flex-wrap gap-2' },
+        checkboxes.map(({ name, kind, cb }) => el('label', {
+          class: 'inline-flex items-center text-[13px] text-ink-700 cursor-pointer px-3 py-2 border border-sand rounded-md hover:bg-cream',
+        }, [
+          cb,
+          el('span', {}, [
+            name,
+            kind ? el('span', { class: 'ml-1 text-[10px] text-ink-300 uppercase tracking-eyebrow', text: kind }) : null,
+          ]),
+        ])),
+      );
     }
 
     return el('div', { class: 'space-y-3' }, [
