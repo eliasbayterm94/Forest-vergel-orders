@@ -122,14 +122,16 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (targetStatus === LOT_STATUS.Drying) {
     // PRIMERA entrada a Secado (InFermentation → Drying): registramos
     // drying_start_date/at como punto de inicio del PRIMER ciclo de
-    // secado. En los regresos (Resting → Drying) NO se sobreescriben
-    // para preservar la trazabilidad — los regresos quedan registrados
-    // como cycle.end_date con end_reason='back_to_drying'.
+    // secado, y guardamos las marquesinas en production_lots.drying_locations.
+    // En los regresos (Resting → Drying) NO se sobreescriben para preservar
+    // la trazabilidad — los regresos quedan registrados como cycle.end_date
+    // con end_reason='back_to_drying' Y las marquesinas del NUEVO secado
+    // se guardan en lot_resting_cycles.drying_locations_after (más abajo).
     if (lot.drying_start_date == null) {
       update.drying_start_date = drying_start_date || today;
       update.drying_start_at   = drying_start_at || new Date().toISOString();
+      if (normalizedLocations != null) update.drying_locations = normalizedLocations;
     }
-    if (normalizedLocations != null) update.drying_locations = normalizedLocations;
     // Si vuelve de Descanso, limpiamos los datos de Resting para que la
     // próxima entrada vuelva a pedir humedad fresca.
     if (lot.status === LOT_STATUS.Resting) {
@@ -272,11 +274,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
       .order('cycle_number', { ascending: false }).limit(1);
     const activeId = active && active[0] && active[0].id;
     if (activeId) {
-      const { error: cycErr } = await sb.from('lot_resting_cycles').update({
+      const cycleClose = {
         end_date: exitDate,
         end_humidity: normalizedExitHumidity,
         end_reason: targetStatus === LOT_STATUS.Drying ? 'back_to_drying' : 'to_ready',
-      }).eq('id', activeId);
+      };
+      // Resting → Drying: las marquesinas del nuevo secado se guardan
+      // en el ciclo que se cierra (en drying_locations_after), no en
+      // production_lots.drying_locations (que conserva las del secado
+      // inicial). Resting → Ready no aplica.
+      if (targetStatus === LOT_STATUS.Drying && normalizedLocations != null) {
+        cycleClose.drying_locations_after = normalizedLocations;
+      }
+      const { error: cycErr } = await sb.from('lot_resting_cycles')
+        .update(cycleClose).eq('id', activeId);
       if (cycErr) console.warn('Resting cycle close failed', cycErr.message);
     }
   }

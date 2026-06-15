@@ -807,7 +807,9 @@ function buildPassportEvents(lot) {
     if (c.end_date && c.end_reason === 'back_to_drying') {
       const next = cycles[idx + 1];
       const resumeEnd = next ? next.start_date : lot.ready_date;
-      const locs = (lot.drying_locations || []).join(', ') || 'Drying patio';
+      // Marquesinas del secado RESUMIDO viven en el ciclo (drying_locations_after),
+      // no en lot.drying_locations (que conserva las del secado inicial).
+      const locs = (c.drying_locations_after || []).join(', ') || 'Drying patio';
       const d = (resumeEnd && c.end_date) ? daysBetweenYmd(c.end_date, resumeEnd) : 0;
       events.push({
         kind: 'drying-resumed',

@@ -34,7 +34,7 @@ exports.handler = requireAuth(async (event) => {
     infusion_id, infusion_pct,
     lot_resting_cycles (
       id, cycle_number, start_date, start_humidity,
-      end_date, end_humidity, end_reason
+      end_date, end_humidity, end_reason, drying_locations_after
     ),
     coffee_references!left ( id, name ),
     infusions ( id, name ),
@@ -174,6 +174,7 @@ exports.handler = requireAuth(async (event) => {
         end_date: c.end_date,
         end_humidity: c.end_humidity != null ? Number(c.end_humidity) : null,
         end_reason: c.end_reason,
+        drying_locations_after: Array.isArray(c.drying_locations_after) ? c.drying_locations_after : [],
       }))
       .sort((a, b) => a.cycle_number - b.cycle_number),
     resting_cycles_count: (l.lot_resting_cycles || []).length,

@@ -338,14 +338,26 @@ function buildEvents(lot, isLocked) {
   const events = [];
 
   if (lot.start_date) {
+    const fTypes = (lot.fermentation_types || []).join(' · ');
+    const fTanks = (lot.fermentation_tanks || []).join(' · ');
+    const detailLines = [
+      `${stageLabel(lot.processing_stage)} · ${lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—'}`,
+      fTypes ? `Tipos: ${fTypes}` : null,
+      fTanks ? `Tanques: ${fTanks}` : null,
+    ].filter(Boolean);
     events.push({
       kind: 'start',
       date: lot.start_date,
       title: 'Fermentación iniciada',
-      detail: `${stageLabel(lot.processing_stage)} · ${lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—'}`,
+      detail: detailLines.join('\n'),
       color: EVENT_COLOR.start,
       editable: !isLocked,
-      editConfig: { showDate: true, dateField: 'start_date', dateTarget: 'lot' },
+      editConfig: {
+        showDate: true, dateField: 'start_date', dateTarget: 'lot',
+        showFermentationTanks: true, showFermentationTypes: true,
+        currentFermentationTanks: lot.fermentation_tanks || [],
+        currentFermentationTypes: lot.fermentation_types || [],
+      },
       undoKind: null, // creación no se anula desde aquí
     });
   }
@@ -377,6 +389,7 @@ function buildEvents(lot, isLocked) {
       editConfig: {
         showDate: true, dateField: 'drying_start_date', dateTarget: 'lot',
         showLocations: true,
+        locationsTarget: 'lot', locationsField: 'drying_locations',
         currentLocations: lot.drying_locations || [],
       },
       undoKind: 'drying', // → InFermentation
@@ -403,11 +416,20 @@ function buildEvents(lot, isLocked) {
     });
     if (c.end_date) {
       const backToDrying = c.end_reason === 'back_to_drying';
+      const cycleLocs = c.drying_locations_after || [];
+      const exitDetailParts = [
+        `Humedad salida: ${c.end_humidity != null ? c.end_humidity + '%' : '—'}`,
+      ];
+      if (backToDrying) {
+        exitDetailParts.push(cycleLocs.length > 0
+          ? `Marquesinas: ${cycleLocs.join(' · ')}`
+          : 'Sin marquesinas registradas');
+      }
       events.push({
         kind: backToDrying ? 'back-to-drying' : 'ready-from-resting',
         date: c.end_date,
         title: backToDrying ? '← Volver a Secado' : '→ Listo',
-        detail: `Humedad salida: ${c.end_humidity != null ? c.end_humidity + '%' : '—'}`,
+        detail: exitDetailParts.join('\n'),
         color: backToDrying ? EVENT_COLOR.drying : EVENT_COLOR.ready,
         editable: !isLocked,
         editConfig: {
@@ -418,6 +440,11 @@ function buildEvents(lot, isLocked) {
           showHumidity: true, humidityField: 'end_humidity', humidityTarget: 'cycle',
           humidityLabel: backToDrying ? 'Humedad de salida (%)' : 'Humedad final (%)',
           currentHumidity: c.end_humidity,
+          // Para back-to-drying: editar marquesinas DEL ciclo (drying_locations_after)
+          showLocations: backToDrying,
+          locationsTarget: backToDrying ? 'cycle' : null,
+          locationsField:  backToDrying ? 'drying_locations_after' : null,
+          currentLocations: backToDrying ? cycleLocs : null,
           // Para ready-from-resting también se editan kg
           showKg: !backToDrying,
           currentKg: !backToDrying ? {
@@ -625,21 +652,29 @@ function renderHistory(lot, isLocked, reload) {
 }
 
 // Modal de edición de evento. Según ev.editConfig muestra los inputs
-// relevantes (fecha, humedad, marquesinas, kg) y dispatches al endpoint
-// apropiado (lot-update para campos del lote, lot-resting-cycles-update
-// para campos del ciclo).
+// relevantes (fecha, humedad, marquesinas, kg, tanques/tipos de
+// fermentación) y dispatches al endpoint apropiado:
+//   lotUpdate                → campos del lote (drying_locations, fermentation_*)
+//   lotRestingCycleUpdate    → campos del ciclo (drying_locations_after, etc.)
 async function editEventModal(ev, lot, reload) {
   const cfg = ev.editConfig || {};
-  // Para edición de marquesinas cargamos los tipos activos.
+  // Pre-cargas en paralelo según lo que pida la config.
+  const [dryRes, tankRes, typeRes] = await Promise.all([
+    cfg.showLocations ? api.dryingTypesList({}).catch(() => null) : Promise.resolve(null),
+    cfg.showFermentationTanks ? api.fermentationTanksList({}).catch(() => null) : Promise.resolve(null),
+    cfg.showFermentationTypes ? api.fermentationTypesList({}).catch(() => null) : Promise.resolve(null),
+  ]);
   let dryingTypeNames = ['Silos', 'Patio'];
-  if (cfg.showLocations) {
-    try {
-      const r = await api.dryingTypesList({});
-      if (r && Array.isArray(r.drying_types) && r.drying_types.length > 0) {
-        dryingTypeNames = r.drying_types.map((t) => t.name);
-      }
-    } catch { /* fallback hardcoded */ }
+  if (dryRes && Array.isArray(dryRes.drying_types) && dryRes.drying_types.length > 0) {
+    dryingTypeNames = dryRes.drying_types.map((t) => t.name);
   }
+  const tankNames = (tankRes && tankRes.fermentation_tanks)
+    ? tankRes.fermentation_tanks.map((t) => t.name)
+    : [];
+  const typeNames = (typeRes && typeRes.fermentation_types)
+    ? typeRes.fermentation_types.map((t) => t.name)
+    : [];
+
   openModal(({ close }) => {
     const dateInput = cfg.showDate ? el('input', {
       type: 'date', value: ev.date || '', class: 'ctrm-input',
@@ -651,10 +686,24 @@ async function editEventModal(ev, lot, reload) {
       placeholder: 'Ej: 11.0', class: 'ctrm-input mono',
     }) : null;
 
+    // Marquesinas — se guardan donde diga locationsTarget (lot/cycle)
     const locCbs = cfg.showLocations ? dryingTypeNames.map((loc) => ({
       loc,
       cb: el('input', { type: 'checkbox', value: loc, class: 'mr-2',
         checked: (cfg.currentLocations || []).includes(loc) ? 'true' : null,
+      }),
+    })) : null;
+
+    const tankCbs = cfg.showFermentationTanks ? tankNames.map((name) => ({
+      name,
+      cb: el('input', { type: 'checkbox', value: name, class: 'mr-2',
+        checked: (cfg.currentFermentationTanks || []).includes(name) ? 'true' : null,
+      }),
+    })) : null;
+    const typeCbs = cfg.showFermentationTypes ? typeNames.map((name) => ({
+      name,
+      cb: el('input', { type: 'checkbox', value: name, class: 'mr-2',
+        checked: (cfg.currentFermentationTypes || []).includes(name) ? 'true' : null,
       }),
     })) : null;
 
@@ -676,6 +725,13 @@ async function editEventModal(ev, lot, reload) {
       }),
     } : null;
 
+    function chipGroup(items) {
+      return el('div', { class: 'flex flex-wrap gap-2' },
+        items.map(({ name, cb }) => el('label', {
+          class: 'inline-flex items-center text-[12px] px-3 py-1.5 border border-sand rounded-md cursor-pointer hover:bg-cream',
+        }, [cb, el('span', { text: name })])));
+    }
+
     return el('div', { class: 'space-y-3' }, [
       el('p', { class: 'text-[12px] text-ink-700' }, [
         `Editar `, el('strong', { class: 'text-navy', text: ev.title }),
@@ -684,11 +740,21 @@ async function editEventModal(ev, lot, reload) {
       dateInput,
       humInput ? el('label', { class: 'ctrm-label mt-2', text: cfg.humidityLabel || 'Humedad (%)' }) : null,
       humInput,
-      locCbs ? el('label', { class: 'ctrm-label mt-2', text: 'Marquesinas' }) : null,
+      locCbs ? el('label', { class: 'ctrm-label mt-2', text: 'Marquesinas / equipo de secado' }) : null,
       locCbs ? el('div', { class: 'flex flex-wrap gap-2' },
         locCbs.map(({ loc, cb }) => el('label', {
-          class: 'inline-flex items-center text-[12px] px-3 py-1.5 border border-sand rounded-md cursor-pointer',
+          class: 'inline-flex items-center text-[12px] px-3 py-1.5 border border-sand rounded-md cursor-pointer hover:bg-cream',
         }, [cb, el('span', { text: loc })]))) : null,
+      tankCbs ? el('label', { class: 'ctrm-label mt-2', text: 'Tanques de fermentación' }) : null,
+      tankCbs ? (tankCbs.length > 0
+        ? chipGroup(tankCbs)
+        : el('p', { class: 'text-[11px] text-ink-300 italic',
+            text: 'No hay tanques administrados. Añádelos en /admin/config.' })) : null,
+      typeCbs ? el('label', { class: 'ctrm-label mt-2', text: 'Tipos de fermentación' }) : null,
+      typeCbs ? (typeCbs.length > 0
+        ? chipGroup(typeCbs)
+        : el('p', { class: 'text-[11px] text-ink-300 italic',
+            text: 'No hay tipos administrados. Añádelos en /admin/config.' })) : null,
       kgInputs ? el('label', { class: 'ctrm-label mt-2', text: 'Peso seco (kg)' }) : null,
       kgInputs ? kgInputs.dried : null,
       kgInputs ? el('label', { class: 'ctrm-label mt-2', text: 'Factor de rendimiento' }) : null,
@@ -718,10 +784,19 @@ async function editEventModal(ev, lot, reload) {
               }
             }
             if (locCbs) {
-              lotFields.drying_locations = locCbs.filter(({ cb }) => cb.checked).map(({ loc }) => loc);
-              if (lotFields.drying_locations.length === 0) {
+              const picked = locCbs.filter(({ cb }) => cb.checked).map(({ loc }) => loc);
+              if (picked.length === 0) {
                 toast('Selecciona al menos una marquesina', 'warning'); return;
               }
+              const field = cfg.locationsField || 'drying_locations';
+              if (cfg.locationsTarget === 'cycle') cycleFields[field] = picked;
+              else                                 lotFields[field]   = picked;
+            }
+            if (tankCbs) {
+              lotFields.fermentation_tanks = tankCbs.filter(({ cb }) => cb.checked).map(({ name }) => name);
+            }
+            if (typeCbs) {
+              lotFields.fermentation_types = typeCbs.filter(({ cb }) => cb.checked).map(({ name }) => name);
             }
             if (kgInputs) {
               const parse = (s) => s === '' ? '' : Number(s);
