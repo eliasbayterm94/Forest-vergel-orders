@@ -12,10 +12,9 @@ const { ok, created, badReq, serverErr, conflict, methodNotAllowed, parseJson } 
  *   production_lot_id   uuid
  *   assignments         [{ demand_order_id, kg_green_allocated }]
  *
- * The DB trigger enforces:
- *   - reference_id match between lot & order
- *   - process_type match
- *   - sum of allocations per order ≤ order.kg_green_accepted
+ * Producción puede asignar CUALQUIER bache a CUALQUIER pedido activo.
+ * El único control DB es el de inventario por lote (trg_loa_lot_capacity)
+ * que impide asignar más kg verde de los que el bache produjo.
  *
  * Side effect: any Accepted/PartiallyAccepted order touched is promoted
  * to InProduction.
@@ -46,28 +45,9 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   const { data, error } = await sb
     .from('lot_order_assignments').insert(rows).select();
   if (error) {
-    if (/reference mismatch/i.test(error.message))    return conflict(error.message, 'REFERENCE_MISMATCH');
-    if (/process_type mismatch/i.test(error.message)) return conflict(error.message, 'PROCESS_MISMATCH');
-    // Sobrecupo de pedido: el trigger antiguo (migration 0019 lo
-    // relaja) podia disparar este mensaje. Si esa migracion no esta
-    // aplicada todavia, reformulamos el error en español; con 0019
-    // aplicada esta rama nunca se ejecuta.
-    const m = /Total allocated kg \(([\d.]+)\) exceeds order kg_green_accepted \(([\d.]+)\) for order ([a-f0-9-]+)/i
-      .exec(error.message);
-    if (m) {
-      const totalAfter = Number(m[1]);
-      const accepted   = Number(m[2]);
-      const orderId    = m[3];
-      const overflow   = Math.round((totalAfter - accepted) * 100) / 100;
-      const { data: o } = await sb
-        .from('demand_orders').select('order_code').eq('id', orderId).maybeSingle();
-      const code = (o && o.order_code) || orderId.slice(0, 8);
-      return conflict(
-        `Pedido ${code} ya tiene asignaciones por ${totalAfter} kg verde; ` +
-        `excede el aceptado (${accepted}) en ${overflow} kg. ` +
-        `Si esto es un excedente esperado aplica la migración 0019.`,
-        'OVER_ALLOCATED',
-      );
+    // Inventario por lote: el trigger trg_loa_lot_capacity sigue activo.
+    if (/exceed lot capacity/i.test(error.message)) {
+      return conflict(error.message, 'LOT_OVER_ALLOCATED');
     }
     return serverErr('Insert failed', error.message);
   }

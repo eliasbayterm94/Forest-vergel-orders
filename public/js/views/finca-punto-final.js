@@ -582,10 +582,9 @@ export async function fincaPuntoFinalView() {
   async function openAssignModal(lot) {
     const available = Number(lot.kg_green_available || 0);
     const ACTIVE = new Set(['Accepted', 'PartiallyAccepted', 'InProduction', 'Completed']);
-    const compatibleOrders = allOrders.filter((o) =>
-      ACTIVE.has(o.status) &&
-      o.process_type === lot.process_type &&
-      (!lot.reference_id || o.reference_id === lot.reference_id));
+    // Producción puede asignar cualquier bache a cualquier pedido activo.
+    // El único control es el de inventario en el backend.
+    const compatibleOrders = allOrders.filter((o) => ACTIVE.has(o.status));
 
     const out = await openModal(({ close }) => {
       let mode = 'directa'; // 'directa' | 'pedido'
@@ -614,7 +613,7 @@ export async function fincaPuntoFinalView() {
       ]);
       const pedidoBox = el('div', { class: 'space-y-2' }, [
         compatibleOrders.length === 0
-          ? el('p', { class: 'text-[12px] text-warn', text: 'No hay pedidos compatibles (mismo proceso/referencia).' })
+          ? el('p', { class: 'text-[12px] text-warn', text: 'No hay pedidos activos disponibles.' })
           : el('div', {}, [el('label', { class: 'ctrm-label', text: 'Pedido' }), orderSelect]),
       ]);
       pedidoBox.style.display = 'none';
