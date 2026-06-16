@@ -1189,12 +1189,6 @@ export async function fincaLotsView() {
         placeholder: '0 = entra directo a Secado',
         class: 'ctrm-input mono',
       });
-      // Hora exacta de inicio de fermentación (opcional). Default
-      // server-side = now() al crear si queda vacío.
-      const fermStartTimeInput = el('input', {
-        type: 'datetime-local',
-        class: 'ctrm-input mono text-[12px]',
-      });
       // Sección que aparece cuando fermentation_hours === 0
       // (skip-fermentation → lote nace en Drying directo).
       const dryingStartTimeInput = el('input', {
@@ -1445,10 +1439,7 @@ export async function fincaLotsView() {
         ]),
 
         labelled('Fecha de inicio', startInput),
-        el('div', { class: 'grid grid-cols-2 gap-2' }, [
-          labelled('Horas de fermentación *', fermInput),
-          labelled('Hora exacta inicio (opcional)', fermStartTimeInput),
-        ]),
+        labelled('Horas de fermentación *', fermInput),
         skipSection,
         el('div', {}, [
           el('label', { class: 'ctrm-label' }, [
@@ -1544,7 +1535,6 @@ export async function fincaLotsView() {
                   kg_input_amount: kg,
                   start_date: startInput.value,
                   fermentation_hours: fermHoursNum,
-                  fermentation_start_at: localToIso(fermStartTimeInput.value) || undefined,
                   variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
                   fermentation_tanks: tanksCombo.getValues().map((t) => t.name),
                   fermentation_types: fermTypesCombo.getValues().map((t) => t.name),
