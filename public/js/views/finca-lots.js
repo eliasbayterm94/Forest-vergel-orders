@@ -1574,23 +1574,14 @@ export async function fincaLotsView() {
   async function assignLot(lot) {
     let candidates = [];
     try {
-      // Pedimos las orders compatibles + TODOS los lots (incluyendo
-      // Delivered) para que allocByOrder cuente las asignaciones que
-      // ya cubrieron parte del pedido desde lotes ya entregados. Sin
-      // esto, remaining_kg sale inflado y el trigger de la BD rechaza
-      // la nueva asignacion por sobrecupo.
-      // Si el bache aún no tiene referencia (stock disponible), listamos
-      // todos los pedidos compatibles por proceso. Al asignarse al primero,
-      // el trigger de BD copia order.reference_id → lot.reference_id y
-      // partir de ahí la referencia queda fija.
-      const orderQuery = {
-        status: 'Accepted,PartiallyAccepted,InProduction,Completed',
-        process_type: lot.process_type,
-      };
-      if (lot.reference_id) orderQuery.reference_id = lot.reference_id;
-
+      // Producción puede asignar cualquier bache a cualquier pedido
+      // activo. Pedimos TODOS los pedidos activos sin filtrar por
+      // proceso/referencia. Pedimos también TODOS los lots
+      // (incluyendo Delivered) para que allocByOrder cuente las
+      // asignaciones ya cubiertas y mostrar remaining_kg real por
+      // pedido. El único control es el de capacidad del lote en la BD.
       const [r, allLotsRes] = await Promise.all([
-        api.ordersList(orderQuery),
+        api.ordersList({ status: 'Accepted,PartiallyAccepted,InProduction,Completed' }),
         api.lotsList({}),
       ]);
       const allLots = allLotsRes.lots || [];
@@ -1611,7 +1602,7 @@ export async function fincaLotsView() {
     } catch (e) { toast(e.message, 'error'); return; }
 
     if (candidates.length === 0) {
-      toast('No hay pedidos compatibles con kg disponibles para este lote.', 'warning', 4500);
+      toast('No hay pedidos activos disponibles.', 'warning', 4500);
       return;
     }
 
@@ -1784,7 +1775,7 @@ function assignModalBody(lot, candidates, close) {
       class: 'rounded-lg bg-yellow/10 border border-yellow p-3 text-[12px] text-ink-700',
     }, [
       el('strong', { text: 'Sin referencia · ' }),
-      'Este bache adoptará la referencia del pedido que le asignes. La elección queda fija después.',
+      'Este bache se asignará al pedido como stock libre.',
     ]) : null,
     el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] flex flex-wrap items-center gap-x-4 gap-y-1 font-mono' }, [
       el('span', {}, [
