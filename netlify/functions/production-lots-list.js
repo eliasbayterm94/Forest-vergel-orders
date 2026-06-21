@@ -156,6 +156,7 @@ exports.handler = requireAuth(async (event) => {
     infusion_name:  l.infusions && l.infusions.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
+    kg_dried_shipped:        Math.round((kgDriedShippedInPartials + kgDriedShippedWhole) * 100) / 100,
     kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
     blend_components: l.is_blend ? (componentsByBlend.get(l.id) || []) : [],
     kg_green_assigned_orders:    Math.round(assignedOrdersGreen * 100) / 100,

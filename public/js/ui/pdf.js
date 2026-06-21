@@ -418,15 +418,18 @@ export function generateInventoryPdf(items) {
   doc.setTextColor(255, 255, 255);
   doc.text(`Generado: ${new Date().toLocaleString('es-CO')}`, W - M, 36, { align: 'right' });
 
-  // Totales
+  // Totales — el seco mostrado es el DISPONIBLE en bodega (descontando
+  // despachos y kg consumido en mezclas), no el producido original.
+  const secoOf = (l) => Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0);
   let totalSeco = 0, totalVerde = 0, totalAsig = 0, totalDisp = 0;
   const byProc = { Natural: 0, Honey: 0, Lavado: 0 };
   for (const l of items) {
-    totalSeco  += Number(l.kg_dried_output || 0);
+    const seco = secoOf(l);
+    totalSeco  += seco;
     totalVerde += Number(l.kg_verde || 0);
     totalAsig  += Number(l.kg_green_assigned || 0);
     totalDisp  += Number(l.kg_green_available || 0);
-    if (byProc[l.process_type] != null) byProc[l.process_type] += Number(l.kg_dried_output || 0);
+    if (byProc[l.process_type] != null) byProc[l.process_type] += seco;
   }
 
   let y = 76;
@@ -463,7 +466,7 @@ export function generateInventoryPdf(items) {
       l.reference_name || '—',
       l.process_type || '—',
       (l._variety_names && l._variety_names.length ? l._variety_names.join(', ') : '—'),
-      { content: fmtKg(l.kg_dried_output || 0), styles: { halign: 'right' } },
+      { content: fmtKg(secoOf(l)), styles: { halign: 'right' } },
       { content: fmtKg(l.kg_verde || 0), styles: { halign: 'right' } },
       { content: fmtKg(l.kg_green_assigned || 0), styles: { halign: 'right' } },
       { content: fmtKg(l.kg_green_available || 0), styles: { halign: 'right', fontStyle: 'bold' } },
