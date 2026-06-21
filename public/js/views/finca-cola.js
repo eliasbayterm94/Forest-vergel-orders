@@ -597,6 +597,7 @@ function requestInfoBody(o) {
     ]);
   };
   return el('div', {}, [
+    row('Cliente', o.client_name),
     row('Aspecto físico', o.physical_aspect),
     row('Intensidad', fmtIntensity(o.intensity)),
     row('Comentario de Forest', o.comments, { wrap: true }),
