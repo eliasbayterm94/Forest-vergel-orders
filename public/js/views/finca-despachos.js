@@ -460,6 +460,9 @@ export async function fincaDespachosView() {
 
   function shipmentCard(s) {
     const t = s.totals || {};
+    const destinoLabel = s.destino_kind === 'Otro'
+      ? `Otro${s.destino_other ? ': ' + s.destino_other : ''}`
+      : (s.destino_kind || '—');
 
     return el('div', { class: 'ctrm-card ctrm-card-pad space-y-3', 'data-shipment-id': s.id }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2' }, [
@@ -483,42 +486,39 @@ export async function fincaDespachosView() {
             class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm text-crit',
             title: 'Cancelar despacho · revierte lotes y pedidos',
             onClick: () => cancelShipment(s),
-          }, ['Cancelar']),
+          }, ['× Cancelar']),
         ]),
       ]),
+      // Meta strip alineado con las columnas de la vista Tabla:
+      // Destino · Lotes · kg seco · kg verde esp. · Lonas
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
-        meta('Lotes',   String(t.lot_count ?? s.lots.length)),
-        meta('Pedidos', String(t.order_count ?? '—')),
-        meta('Verde',   fmtKg(t.kg_green ?? 0)),
-        meta('Asignado', fmtKg(t.kg_green_allocated ?? 0)),
+        meta('Destino',  destinoLabel),
+        meta('Lotes',    String(t.lot_count ?? s.lots.length)),
+        meta('kg seco',  fmtKg(t.kg_dried ?? 0)),
+        meta('kg verde esp.', fmtKg(t.kg_green ?? 0)),
+        meta('Lonas',    String(t.num_sacos || '—')),
       ]),
       // Per-lot tables
-      el('div', { class: 'space-y-3' }, s.lots.map((lot) => lotBlock(lot))),
+      el('div', { class: 'space-y-3' }, s.lots.map((lot) => lotBlock(s, lot))),
       s.notes
         ? el('p', { class: 'text-[11px] text-ink-500 italic border-t border-sand pt-2', text: s.notes })
         : null,
     ]);
   }
 
-  function lotBlock(lot) {
-    const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+  // Bloque por bache en la card. Muestra los MISMOS campos que la
+  // sub-tabla del dropdown de la vista Tabla (kg seco realmente
+  // despachado + kg verde en este shipment) + acciones idénticas
+  // (+ Asignar, × Cancelar línea).
+  function lotBlock(s, lot) {
     const partials = lot.partials_in_shipment || [];
-    // Cuando el lote se cerro via parciales, kg_dried_output ya es la
-    // suma de los parciales (lo guarda update-status). Si no hubo
-    // parciales, usamos el valor crudo de la BD. Para mostrar al
-    // operario preferimos siempre el dato del lote (autoritativo).
-    const sumDried = lot.kg_dried_output != null
-      ? Number(lot.kg_dried_output)
-      : (partials.length > 0
-          ? partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0)
-          : null);
-    // Verde "real" del lote: kg_green_actual cuando esta cerrado; si no,
-    // caemos al kg_green_expected (pre-proceso). El label cambia para
-    // que el operario sepa que esta viendo.
-    const verdeReal = lot.kg_green_actual != null ? Number(lot.kg_green_actual) : null;
-    const verdeEst  = lot.kg_green_expected != null ? Number(lot.kg_green_expected) : null;
-    const showVerde = verdeReal != null ? verdeReal : verdeEst;
-    const verdeLabel = verdeReal != null ? 'Verde' : 'Verde estimado';
+    // kg seco realmente despachado en ESTE shipment (no el total del
+    // bache). Para partials = suma de cada uno; para whole/by-kg =
+    // kg_dried_shipped que viene de shipments-list.
+    const kgSecoShipped = partials.length > 0
+      ? partials.reduce((sum, p) => sum + Number(p.kg_dried || 0), 0)
+      : Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0);
+    const kgVerdeShipped = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
 
     return el('div', { class: 'rounded-md border border-sand bg-white overflow-hidden' }, [
       // Lot header (navy strip, igual al PDF)
@@ -527,17 +527,30 @@ export async function fincaDespachosView() {
           el('span', { class: 'font-mono font-bold text-[12px]', style: 'color:#e7e244;', text: lot.bache_code || lot.lot_code }),
           el('span', { class: 'font-display font-semibold text-[12px] truncate', style: 'color:#fff;', text: lot.reference_name || '—' }),
         ]),
-        el('span', { class: 'font-mono text-[11px]', style: 'color:#cdd5dd;', text: `${lot.process_type} · ${fmtKg(kgInShipment)}` }),
+        el('span', { class: 'font-mono text-[11px]', style: 'color:#cdd5dd;', text: `${lot.process_type} · ${fmtKg(kgVerdeShipped)}` }),
       ]),
-      // Lot meta strip
-      el('div', { class: 'px-3 py-2 text-[11px] text-ink-500 flex flex-wrap gap-x-4 gap-y-1 border-b border-sand' }, [
-        lot.processing_stage ? el('span', {}, [`Etapa inicial: `, el('strong', { class: 'text-ink-700', text: lot.processing_stage })]) : null,
-        sumDried != null ? el('span', {}, [`Peso seco: `, el('strong', { class: 'text-ink-700', text: fmtKg(sumDried) })]) : null,
-        lot.factor_rendimiento != null ? el('span', {}, [`Factor: `, el('strong', { class: 'text-ink-700', text: String(lot.factor_rendimiento) })]) : null,
-        showVerde != null ? el('span', {}, [`${verdeLabel}: `, el('strong', { class: 'text-ink-700', text: fmtKg(showVerde) })]) : null,
+      // Meta strip alineado con sub-tabla del dropdown:
+      // Proceso · kg seco · kg verde · Variedades
+      el('div', { class: 'px-3 py-2 text-[11px] text-ink-500 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-sand' }, [
+        el('span', {}, [`Proceso: `, el('strong', { class: 'text-ink-700', text: lot.process_type || '—' })]),
+        el('span', {}, [`kg seco: `, el('strong', { class: 'text-ink-700', text: fmtKg(kgSecoShipped) })]),
+        el('span', {}, [`kg verde: `, el('strong', { class: 'text-ink-700', text: fmtKg(kgVerdeShipped) })]),
         lot.varieties && lot.varieties.length
           ? el('span', {}, [`Variedades: `, el('strong', { class: 'text-ink-700', text: lot.varieties.map((v) => v.name).join(', ') })])
           : null,
+        // Acciones por bache (mismas de la sub-tabla del dropdown)
+        el('span', { class: 'ml-auto flex items-center gap-1' }, [
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+            title: 'Asignar a un pedido o compra directa',
+            onClick: () => doAssign(lot),
+          }, ['+ Asignar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+            title: 'Cancelar esta línea del despacho',
+            onClick: () => cancelShipmentLine(s, lot),
+          }, ['× Cancelar línea']),
+        ]),
       ]),
       // Parciales en dropdown colapsable: por defecto solo se ve el
       // resumen total; el operario expande para ver fila por fila.
