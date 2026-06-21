@@ -21,7 +21,7 @@ exports.handler = requireAuth(async (event) => {
       destino_kind, destino_other,
       driver_cedula, driver_placas, driver_name,
       shipment_lots (
-        id, lot_partial_id,
+        id, lot_partial_id, kg_dried_shipped,
         codigo_trilladora, codigo_mezcla, num_sacos, partials_merged,
         lot_partials ( id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield ),
         production_lots (
@@ -100,6 +100,11 @@ exports.handler = requireAuth(async (event) => {
           })),
           partials_in_shipment: [],
           whole_lot_in_shipment: false,
+          // kg seco realmente despachado en este shipment (suma de
+          // shipment_lots.kg_dried_shipped para las filas whole/partial-by-kg
+          // de este bache). Puede ser menor que kg_dried_output si fue
+          // despacho parcial. Queda en null si todo va por partials.
+          kg_dried_shipped: null,
         };
         groups.set(l.id, g);
       }
@@ -118,26 +123,43 @@ exports.handler = requireAuth(async (event) => {
         });
       } else {
         g.whole_lot_in_shipment = true;
+        if (sl.kg_dried_shipped != null) {
+          g.kg_dried_shipped = (g.kg_dried_shipped || 0) + Number(sl.kg_dried_shipped);
+        }
       }
     }
 
     const lots = [...groups.values()].map((g) => {
       g.partials_in_shipment.sort((a, b) => a.parcial_letter.localeCompare(b.parcial_letter));
-      // kg_green effectively shipped for this lot in this despacho:
-      g.kg_green_in_shipment = g.whole_lot_in_shipment
-        ? Number(g.kg_green_actual ?? g.kg_green_expected ?? 0)
-        : g.partials_in_shipment.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+      // kg_green effectively shipped for this lot in this despacho.
+      // Para whole/partial-by-kg prorratea: si despachó 200 de 350,
+      // el verde shipping = totalGreen * (200/350).
+      if (g.whole_lot_in_shipment) {
+        const driedTotal = Number(g.kg_dried_output || 0);
+        const driedShipped = g.kg_dried_shipped != null ? Number(g.kg_dried_shipped) : driedTotal;
+        const greenTotal = Number(g.kg_green_actual ?? g.kg_green_expected ?? 0);
+        g.kg_green_in_shipment = driedTotal > 0
+          ? greenTotal * (driedShipped / driedTotal)
+          : greenTotal;
+      } else {
+        g.kg_green_in_shipment = g.partials_in_shipment.reduce((s, p) => s + Number(p.kg_green_yield || 0), 0);
+      }
       return g;
     });
 
     const totalKgGreen = lots.reduce((s, l) => s + Number(l.kg_green_in_shipment || 0), 0);
     const totalAllocated = lots.reduce((s, l) =>
       s + l.assignments.reduce((ss, a) => ss + Number(a.kg_green_allocated || 0), 0), 0);
-    // Kg seco efectivo en el despacho, prorrateado para parciales.
+    // Kg seco efectivo en el despacho:
+    //   whole/partial-by-kg → kg_dried_shipped (lo realmente sacado)
+    //                          o kg_dried_output como fallback
+    //   por parciales       → suma de kg_dried de cada parcial
     const totalKgDried = lots.reduce((sum, l) => {
       const dried = Number(l.kg_dried_output || 0);
       const greenAc = Number(l.kg_green_actual || l.kg_green_expected || 0);
-      if (l.whole_lot_in_shipment) return sum + dried;
+      if (l.whole_lot_in_shipment) {
+        return sum + (l.kg_dried_shipped != null ? Number(l.kg_dried_shipped) : dried);
+      }
       // Parciales: kg_dried directo de cada partial.
       const partialDried = (l.partials_in_shipment || []).reduce((s, p) => {
         if (p.kg_dried) return s + Number(p.kg_dried);

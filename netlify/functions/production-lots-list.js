@@ -66,6 +66,27 @@ exports.handler = requireAuth(async (event) => {
   const { data, error } = await query;
   if (error) return serverErr('Failed to load production lots', error.message);
 
+  // Despachos directos al bache (whole-lot o partial-by-kg, donde
+  // lot_partial_id IS NULL). El embedding lot_partials.shipment_lots
+  // SOLO captura los despachos hechos vía partials (P1, P2…) y por
+  // eso necesitamos esta segunda consulta para que kg_dried_available
+  // descuente también los partial-by-kg.
+  const lotIdsAll = (data || []).map((l) => l.id);
+  const wholeShipKgByLot = new Map();
+  if (lotIdsAll.length > 0) {
+    const { data: wholeShips, error: wsErr } = await sb
+      .from('shipment_lots')
+      .select('production_lot_id, kg_dried_shipped')
+      .in('production_lot_id', lotIdsAll)
+      .is('lot_partial_id', null);
+    if (!wsErr) {
+      for (const r of wholeShips || []) {
+        wholeShipKgByLot.set(r.production_lot_id,
+          (wholeShipKgByLot.get(r.production_lot_id) || 0) + Number(r.kg_dried_shipped || 0));
+      }
+    }
+  }
+
   // Para los lotes que son mezcla (is_blend=true), traemos sus
   // componentes (los baches padre que se combinaron) en una segunda
   // query. Evita un self-join complejo en PostgREST.
@@ -103,8 +124,16 @@ exports.handler = requireAuth(async (event) => {
     const kgDriedShippedInPartials = (l.lot_partials || [])
       .filter((p) => p.shipment_lots && p.shipment_lots.length > 0)
       .reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+    // kg seco ya despachado como whole-lot o partial-by-kg (filas de
+    // shipment_lots con lot_partial_id IS NULL). Sin esto, un
+    // despacho parcial de 200kg de un bache de 350kg dejaba al bache
+    // con kg_dried_available = 350 (debería ser 150).
+    const kgDriedShippedWhole = wholeShipKgByLot.get(l.id) || 0;
     const kgDriedAvailable = Math.max(0,
-      Number(l.kg_dried_output || 0) - kgDriedUsedInBlends - kgDriedShippedInPartials);
+      Number(l.kg_dried_output || 0)
+      - kgDriedUsedInBlends
+      - kgDriedShippedInPartials
+      - kgDriedShippedWhole);
 
     // ── Verde: total, comprometido (pedidos + compras) y disponible
     // neto real (descontando además lo que ya salió físicamente:
@@ -112,7 +141,8 @@ exports.handler = requireAuth(async (event) => {
     const totalGreen = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
     const totalDried = Number(l.kg_dried_output ?? 0);
     const greenPerDried = totalDried > 0 ? totalGreen / totalDried : 0;
-    const greenGone = (kgDriedUsedInBlends + kgDriedShippedInPartials) * greenPerDried;
+    const greenGone =
+      (kgDriedUsedInBlends + kgDriedShippedInPartials + kgDriedShippedWhole) * greenPerDried;
     const assignedOrdersGreen = (l.lot_order_assignments || [])
       .reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
     const assignedPurchasesGreen = (l.lot_purchases || [])

@@ -120,7 +120,11 @@ export function generateShipmentPdf(shipment) {
 
     const partialsHere = lot.partials_in_shipment || [];
     if (lot.whole_lot_in_shipment || partialsHere.length === 0) {
-      const kgSeco = Number(lot.kg_dried_output || 0);
+      // Despacho whole-lot o partial-by-kg: el kg realmente sacado
+      // está en lot.kg_dried_shipped (lo guarda shipments-list desde
+      // shipment_lots.kg_dried_shipped). Sin ese campo (shipments
+      // viejos) caemos al total del bache como fallback.
+      const kgSeco = Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0);
       const sacos  = Number(lot.num_sacos || 0);
       totalSeco  += kgSeco;
       totalSacos += sacos;
