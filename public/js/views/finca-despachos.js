@@ -193,7 +193,7 @@ export async function fincaDespachosView() {
                 onClick: (e) => { e.stopPropagation(); downloadAssignmentsPdf(s); },
               }, ['↓ Asign.']),
               el('button', {
-                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+                class: 'ctrm-btn ctrm-btn-danger ctrm-btn-xs',
                 title: 'Cancelar despacho completo',
                 onClick: (e) => { e.stopPropagation(); cancelShipment(s); },
               }, ['× Cancelar']),
@@ -301,12 +301,12 @@ export async function fincaDespachosView() {
       el('td', { class: 'px-3 py-2 text-right whitespace-nowrap' }, [
         el('div', { class: 'inline-flex items-center gap-1' }, [
           el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+            class: 'ctrm-btn ctrm-btn-action ctrm-btn-xs',
             title: 'Asignar a un pedido o compra directa',
             onClick: (e) => { e.stopPropagation(); doAssign(lot); },
           }, ['+ Asignar']),
           el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+            class: 'ctrm-btn ctrm-btn-danger ctrm-btn-xs',
             title: 'Cancelar esta línea del despacho',
             onClick: (e) => { e.stopPropagation(); cancelShipmentLine(s, lot); },
           }, ['× Cancelar línea']),
@@ -483,7 +483,7 @@ export async function fincaDespachosView() {
             onClick: () => downloadAssignmentsPdf(s),
           }, ['↓ Asignaciones']),
           el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm text-crit',
+            class: 'ctrm-btn ctrm-btn-danger ctrm-btn-sm',
             title: 'Cancelar despacho · revierte lotes y pedidos',
             onClick: () => cancelShipment(s),
           }, ['× Cancelar']),
@@ -548,12 +548,12 @@ export async function fincaDespachosView() {
         // Acciones por bache (mismas de la sub-tabla del dropdown)
         el('span', { class: 'ml-auto flex items-center gap-1' }, [
           el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+            class: 'ctrm-btn ctrm-btn-action ctrm-btn-xs',
             title: 'Asignar a un pedido o compra directa',
             onClick: () => doAssign(lot),
           }, ['+ Asignar']),
           el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+            class: 'ctrm-btn ctrm-btn-danger ctrm-btn-xs',
             title: 'Cancelar esta línea del despacho',
             onClick: () => cancelShipmentLine(s, lot),
           }, ['× Cancelar línea']),
