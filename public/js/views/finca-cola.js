@@ -7,7 +7,7 @@
 // kg verde ya esta en producción y cuanto falta.
 
 import { el } from '../ui/el.js';
-import { fmtKg, fmtDate, statusLabel, statusPillKind, relDate } from '../ui/format.js';
+import { fmtKg, fmtDate, fmtIntensity, statusLabel, statusPillKind, relDate } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate } from '../router.js';
@@ -15,6 +15,7 @@ import { sortableTable } from '../ui/sortable-table.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
+import { openPopover } from '../ui/popover.js';
 
 const FILTERS = [
   { key: 'all',         label: 'Todos' },
@@ -290,7 +291,11 @@ function queueTable(orders, today) {
         class: 'cursor-pointer hover:bg-cream',
         onClick: () => navigate('/finca/lots'),
       }, [
-        cell('Código', 'font-mono text-navy font-semibold', o.order_code),
+        cell('Código', 'font-mono text-navy font-semibold',
+          el('span', { class: 'inline-flex items-center gap-1.5' }, [
+            document.createTextNode(o.order_code || '—'),
+            requestInfoButton(o),
+          ])),
         cell('Referencia', '', o.reference_name || '—'),
         cell('Cliente', '', o.client_name || '—'),
         cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
@@ -403,6 +408,7 @@ function queueRow(o, today, earliest, latest) {
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
       el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
         el('span', { class: 'ctrm-code', text: o.order_code }),
+        requestInfoButton(o),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
         ...(o.infusion_names || []).map((n) => el('span', {
           class: 'ctrm-pill',
@@ -554,5 +560,45 @@ function meta(label, value) {
   return el('span', { class: 'inline-flex items-baseline gap-1' }, [
     el('span', { class: 'text-ink-300 uppercase tracking-loose text-[10px] font-sans font-semibold', text: label }),
     el('strong', { class: 'text-ink-700 font-mono', text: String(value) }),
+  ]);
+}
+
+// Botón mini "ⓘ" que abre un popover anclado con los datos de
+// solicitud del pedido (aspecto, intensidad, comentario de Forest).
+// Para uso en cards y filas de tabla en /finca/cola.
+function requestInfoButton(o) {
+  return el('button', {
+    type: 'button',
+    class: 'inline-flex items-center justify-center w-4 h-4 rounded-full border border-ink-300 text-ink-500 text-[9px] font-bold leading-none hover:bg-navy hover:text-yellow hover:border-navy shrink-0',
+    title: 'Ver detalles de la solicitud',
+    onClick: (e) => {
+      e.stopPropagation();
+      openPopover({
+        anchor: e.currentTarget,
+        title: 'Solicitud del pedido',
+        subtitle: o.order_code,
+        body: requestInfoBody(o),
+      });
+    },
+  }, ['i']);
+}
+
+function requestInfoBody(o) {
+  const row = (label, value, opts = {}) => {
+    const hasVal = value != null && value !== '';
+    return el('div', { class: 'mb-2 last:mb-0' }, [
+      el('p', { class: 'text-[9px] uppercase tracking-loose text-ink-500 mb-0.5 font-semibold', text: label }),
+      el('p', {
+        class: hasVal
+          ? `text-[12px] text-ink-700 ${opts.wrap ? 'whitespace-pre-line' : ''}`
+          : 'text-[12px] text-ink-300 italic',
+        text: hasVal ? String(value) : '—',
+      }),
+    ]);
+  };
+  return el('div', {}, [
+    row('Aspecto físico', o.physical_aspect),
+    row('Intensidad', fmtIntensity(o.intensity)),
+    row('Comentario de Forest', o.comments, { wrap: true }),
   ]);
 }
