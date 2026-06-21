@@ -73,16 +73,26 @@ exports.handler = requireAuth(async (event) => {
   // descuente también los partial-by-kg.
   const lotIdsAll = (data || []).map((l) => l.id);
   const wholeShipKgByLot = new Map();
+  const wholeShipDetailsByLot = new Map();   // lot_id → [{ shipment_id, shipment_code, shipment_date, kg }]
   if (lotIdsAll.length > 0) {
     const { data: wholeShips, error: wsErr } = await sb
       .from('shipment_lots')
-      .select('production_lot_id, kg_dried_shipped')
+      .select('production_lot_id, kg_dried_shipped, shipment_id, shipments(shipment_code, shipment_date)')
       .in('production_lot_id', lotIdsAll)
       .is('lot_partial_id', null);
     if (!wsErr) {
       for (const r of wholeShips || []) {
         wholeShipKgByLot.set(r.production_lot_id,
           (wholeShipKgByLot.get(r.production_lot_id) || 0) + Number(r.kg_dried_shipped || 0));
+        const arr = wholeShipDetailsByLot.get(r.production_lot_id) || [];
+        arr.push({
+          shipment_id: r.shipment_id,
+          shipment_code: r.shipments && r.shipments.shipment_code,
+          shipment_date: r.shipments && r.shipments.shipment_date,
+          kg_dried: Number(r.kg_dried_shipped || 0),
+          via: 'whole',
+        });
+        wholeShipDetailsByLot.set(r.production_lot_id, arr);
       }
     }
   }
@@ -158,6 +168,31 @@ exports.handler = requireAuth(async (event) => {
     kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
     kg_dried_shipped:        Math.round((kgDriedShippedInPartials + kgDriedShippedWhole) * 100) / 100,
     kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
+    // Detalle de despachos: cada elemento referencia un shipment con
+    // el kg seco que aportó este bache. Soporta tanto despachos por
+    // partials (P1, P2…) como whole/partial-by-kg. Para pintar pills
+    // clickeables en Punto Final.
+    shipments: (() => {
+      const out = [];
+      const wholeArr = wholeShipDetailsByLot.get(l.id) || [];
+      out.push(...wholeArr);
+      for (const p of l.lot_partials || []) {
+        for (const sl of p.shipment_lots || []) {
+          const s = sl.shipments || {};
+          out.push({
+            shipment_id: sl.shipment_id,
+            shipment_code: s.shipment_code,
+            shipment_date: s.shipment_date,
+            kg_dried: Number(p.kg_dried || 0),
+            via: 'partial',
+            parcial_letter: p.parcial_letter,
+          });
+        }
+      }
+      // Más recientes primero
+      out.sort((a, b) => (b.shipment_date || '').localeCompare(a.shipment_date || ''));
+      return out;
+    })(),
     blend_components: l.is_blend ? (componentsByBlend.get(l.id) || []) : [],
     kg_green_assigned_orders:    Math.round(assignedOrdersGreen * 100) / 100,
     kg_green_assigned_purchases: Math.round(assignedPurchasesGreen * 100) / 100,

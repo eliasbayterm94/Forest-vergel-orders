@@ -71,7 +71,9 @@ export async function fincaPuntoFinalView() {
     reference:    { label: 'Referencia',    getter: (l) => (l.reference_name || '').toLowerCase() },
     process:      { label: 'Proceso',       getter: (l) => l.process_type || '' },
     varieties:    { label: 'Variedades',    getter: (l) => (l._variety_names || []).join(',').toLowerCase() },
-    kg_seco:      { label: 'kg seco',       getter: (l) => Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0) },
+    kg_seco:      { label: 'Total seco',    getter: (l) => Number(l.kg_dried_output || 0) },
+    kg_despachado:{ label: 'Despachado',    getter: (l) => Number(l.kg_dried_shipped || 0) },
+    kg_bodega:    { label: 'En bodega',     getter: (l) => Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0) },
     kg_verde:     { label: 'kg verde',      getter: (l) => Number(l.kg_verde || 0) },
     asignado:     { label: 'Asignado v.',   getter: (l) => Number(l.kg_green_assigned || 0) },
     disponible:   { label: 'Disponible v.', getter: (l) => Number(l.kg_green_available || 0) },
@@ -334,7 +336,7 @@ export async function fincaPuntoFinalView() {
     const allShownSelected = items.length > 0 && items.every((l) => selected.has(l.id));
     if (allShownSelected) headerCb.checked = true;
 
-    const COLSPAN = 17;
+    const COLSPAN = 19;
     const tbody = el('tbody', {});
     for (const l of items) {
       const isSel = selected.has(l.id);
@@ -456,36 +458,46 @@ export async function fincaPuntoFinalView() {
         cellTxt('Referencia', '', l.reference_name || '—'),
         cellTxt('Proceso', 'text-[11px]', l.process_type),
         cellTxt('Variedades', 'text-[11px]', l._variety_names.length > 0 ? l._variety_names.join(', ') : '—'),
-        cellNode('kg seco', 'text-right font-mono',
-          l.kg_dried_output == null ? document.createTextNode('—')
-          : (() => {
-              // El número principal es el seco DISPONIBLE en bodega
-              // (lo despachado / mezclado ya no está). El total
-              // producido queda como hint pequeño para contexto.
-              const dispo  = Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output);
-              const total  = Number(l.kg_dried_output || 0);
-              const inMix  = Number(l.kg_dried_used_in_blends || 0);
-              const shipped = Number(l.kg_dried_shipped || 0);
-              const consumed = inMix + shipped;
-              return el('div', {}, [
-                el('div', {
-                  class: `font-semibold ${dispo > 0.01 ? 'text-navy' : 'text-ink-300'}`,
-                  text: fmtKg(dispo),
-                }),
-                consumed > 0.01
-                  ? el('div', { class: 'text-[9px] text-ink-500',
-                      text: `de ${fmtKg(total)} producido` })
-                  : null,
-                shipped > 0.01
-                  ? el('div', { class: 'text-[9px] text-roll',
-                      text: `${fmtKg(shipped)} despachado` })
-                  : null,
-                inMix > 0.01
-                  ? el('div', { class: 'text-[9px] text-ok',
-                      text: `${fmtKg(inMix)} en mezcla` })
-                  : null,
-              ]);
-            })()),
+        cellTxt('Total seco', 'text-right font-mono text-ink-700',
+          l.kg_dried_output != null ? fmtKg(l.kg_dried_output) : '—'),
+        cellNode('Despachado', 'text-right font-mono',
+          (() => {
+            const shipped = Number(l.kg_dried_shipped || 0);
+            const ships = (l.shipments || []).filter((s) => s.shipment_code);
+            if (shipped < 0.01) return document.createTextNode('—');
+            return el('div', {}, [
+              el('div', { class: 'font-semibold text-roll', text: fmtKg(shipped) }),
+              ships.length > 0
+                ? el('div', { class: 'flex flex-wrap gap-1 justify-end mt-1' },
+                    ships.map((s) => el('button', {
+                      type: 'button',
+                      class: 'ctrm-pill text-[9px] cursor-pointer hover:opacity-80',
+                      style: 'background:#dbeafe;color:#1a3a5c;',
+                      title: `${s.shipment_date || ''} · ${fmtKg(s.kg_dried)} kg${s.via === 'partial' ? ` · P${s.parcial_letter}` : ''}`,
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        navigate(`/finca/despachos?focus=${s.shipment_id}`);
+                      },
+                      text: s.shipment_code,
+                    })))
+                : null,
+            ]);
+          })()),
+        cellNode('En bodega', 'text-right font-mono',
+          (() => {
+            const dispo = Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0);
+            const inMix = Number(l.kg_dried_used_in_blends || 0);
+            return el('div', {}, [
+              el('div', {
+                class: `font-semibold ${dispo > 0.01 ? 'text-navy' : 'text-ink-300'}`,
+                text: fmtKg(dispo),
+              }),
+              inMix > 0.01
+                ? el('div', { class: 'text-[9px] text-ok',
+                    text: `${fmtKg(inMix)} en mezcla` })
+                : null,
+            ]);
+          })()),
         cellTxt('kg verde', 'text-right font-mono', fmtKg(l.kg_verde)),
         cellTxt('Asignado v.', 'text-right font-mono text-ink-700',
           (l.kg_green_assigned || 0) > 0 ? fmtKg(l.kg_green_assigned) : '—'),
@@ -511,7 +523,9 @@ export async function fincaPuntoFinalView() {
 
     // Totales sobre el set ya filtrado (items, no paged) para que el
     // operador vea la suma de lo que está mirando ahora.
-    const sumSeco  = items.reduce((s, l) =>
+    const sumTotalSeco = items.reduce((s, l) => s + Number(l.kg_dried_output || 0), 0);
+    const sumShipped   = items.reduce((s, l) => s + Number(l.kg_dried_shipped || 0), 0);
+    const sumBodega    = items.reduce((s, l) =>
       s + Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0), 0);
     const sumVerde = items.reduce((s, l) => s + Number(l.kg_verde || 0), 0);
     const sumAssigned = items.reduce((s, l) => s + Number(l.kg_green_assigned || 0), 0);
@@ -531,7 +545,9 @@ export async function fincaPuntoFinalView() {
           el('td', { class: 'w-8' }, []),
           el('td', { class: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700', text: `Total · ${items.length}` }),
           el('td', {}, []), el('td', {}, []), el('td', {}, []),
-          el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(sumSeco) }),
+          el('td', { class: 'text-right font-mono text-ink-700', text: fmtKg(sumTotalSeco) }),
+          el('td', { class: 'text-right font-mono font-semibold text-roll', text: sumShipped > 0.01 ? fmtKg(sumShipped) : '—' }),
+          el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(sumBodega) }),
           el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(sumVerde) }),
           el('td', { class: 'text-right font-mono text-ink-700', text: fmtKg(sumAssigned) }),
           el('td', { class: 'text-right font-mono font-semibold text-ok', text: fmtKg(sumAvail) }),
@@ -547,7 +563,9 @@ export async function fincaPuntoFinalView() {
         sortHeader('Referencia',    'reference'),
         sortHeader('Proceso',       'process'),
         sortHeader('Variedades',    'varieties'),
-        sortHeader('kg seco',       'kg_seco',     'text-right'),
+        sortHeader('Total seco',    'kg_seco',       'text-right'),
+        sortHeader('Despachado',    'kg_despachado', 'text-right'),
+        sortHeader('En bodega',     'kg_bodega',     'text-right'),
         sortHeader('kg verde',      'kg_verde',    'text-right'),
         sortHeader('Asignado v.',   'asignado',    'text-right'),
         sortHeader('Disponible v.', 'disponible',  'text-right'),

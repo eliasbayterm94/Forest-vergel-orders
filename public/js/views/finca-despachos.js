@@ -6,6 +6,7 @@ import { listView } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
+import { currentQuery } from '../router.js';
 import { generateShipmentPdf, generateShipmentAssignmentsPdf } from '../ui/pdf.js';
 import { emptyStateCard } from '../ui/empty.js';
 
@@ -31,6 +32,23 @@ export async function fincaDespachosView() {
       }
     }
   } catch { /* silent */ }
+
+  // Si llegamos desde una pill de Punto Final, scrolleamos y
+  // resaltamos la card del despacho señalado.
+  function focusFromQuery() {
+    try {
+      const target = currentQuery().get('focus');
+      if (!target) return;
+      setTimeout(() => {
+        const card = document.querySelector(`[data-shipment-id="${target}"]`);
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.style.transition = 'box-shadow 0.4s';
+        card.style.boxShadow = '0 0 0 3px rgba(231, 226, 68, 0.8)';
+        setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+      }, 50);
+    } catch { /* silent */ }
+  }
 
   function render() {
     clear(list);
@@ -82,6 +100,7 @@ export async function fincaDespachosView() {
     }));
   }
   render();
+  focusFromQuery();
 
   return chrome(el('div', {}, [
     pageTitle('Despachos', 'Mezcla lotes Listos en un despacho y genera PDF'),
@@ -109,7 +128,7 @@ export async function fincaDespachosView() {
   function shipmentCard(s) {
     const t = s.totals || {};
 
-    return el('div', { class: 'ctrm-card ctrm-card-pad space-y-3' }, [
+    return el('div', { class: 'ctrm-card ctrm-card-pad space-y-3', 'data-shipment-id': s.id }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           el('span', { class: 'ctrm-code', text: s.shipment_code }),
