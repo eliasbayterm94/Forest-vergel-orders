@@ -120,6 +120,7 @@ export const api = {
   shipmentsList:   ()        => request('GET',  '/api/shipments-list'),
   shipmentsCreate: (payload) => request('POST', '/api/shipments-create', { body: payload }),
   shipmentsCancel: (payload) => request('POST', '/api/shipments-cancel', { body: payload }),
+  shipmentLineCancel: (payload) => request('POST', '/api/shipment-line-cancel', { body: payload }),
 
   digestTrigger: () => request('POST', '/api/weekly-digest-trigger'),
 };

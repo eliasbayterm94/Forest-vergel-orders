@@ -9,6 +9,8 @@ import { chrome, pageTitle } from './_chrome.js';
 import { currentQuery } from '../router.js';
 import { generateShipmentPdf, generateShipmentAssignmentsPdf } from '../ui/pdf.js';
 import { emptyStateCard } from '../ui/empty.js';
+import { createViewMode } from '../ui/view-mode.js';
+import { openAssignModal } from './_assign-modal.js';
 
 export async function fincaDespachosView() {
   const [shipsRes, lotsRes] = await Promise.all([
@@ -50,67 +52,398 @@ export async function fincaDespachosView() {
     } catch { /* silent */ }
   }
 
+  const vm = createViewMode('finca-despachos', { onChange: () => render() });
+  // Filas expandidas por id de shipment (sólo aplica a vista tabla).
+  const expanded = new Set();
+  // Estado del search para la vista tabla (cards lo gestiona listView).
+  let tableSearch = '';
+
+  function matchSearch(s, q) {
+    if (!q) return true;
+    const lo = q.toLowerCase();
+    if ((s.shipment_code || '').toLowerCase().includes(lo)) return true;
+    if ((s.notes || '').toLowerCase().includes(lo)) return true;
+    if ((s.destino_kind || '').toLowerCase().includes(lo)) return true;
+    if ((s.destino_other || '').toLowerCase().includes(lo)) return true;
+    for (const l of s.lots || []) {
+      if ((l.bache_code || '').toLowerCase().includes(lo)) return true;
+      if ((l.lot_code || '').toLowerCase().includes(lo)) return true;
+      if ((l.reference_name || '').toLowerCase().includes(lo)) return true;
+      for (const a of l.assignments || []) {
+        if ((a.order?.order_code || '').toLowerCase().includes(lo)) return true;
+        if ((a.order?.client_name || '').toLowerCase().includes(lo)) return true;
+      }
+    }
+    return false;
+  }
+
   function render() {
     clear(list);
-    list.append(listView({
-      items: shipments,
-      renderItem: shipmentCard,
-      pageSize: 20,
-      emptyText: () => emptyStateCard({
-        title: 'Aún no se han creado despachos',
-        description: readyLots.length > 0
-          ? `Hay ${readyLots.length} lote(s) Listos esperando.`
-          : 'Cuando finca cierre el primer bache podrás crear el despacho.',
-        action: readyLots.length > 0
-          ? { label: '+ Nuevo despacho', onClick: () => openCreateModal() }
-          : null,
-      }),
-      searchPlaceholder: 'Buscar código de despacho, lote, pedido...',
-      searchMatch: (s, q) => {
-        const lo = q.toLowerCase();
-        if ((s.shipment_code || '').toLowerCase().includes(lo)) return true;
-        if ((s.notes || '').toLowerCase().includes(lo)) return true;
-        for (const l of s.lots || []) {
-          if ((l.bache_code || '').toLowerCase().includes(lo)) return true;
-          if ((l.lot_code || '').toLowerCase().includes(lo)) return true;
-          if ((l.reference_name || '').toLowerCase().includes(lo)) return true;
-          for (const a of l.assignments || []) {
-            if ((a.order?.order_code || '').toLowerCase().includes(lo)) return true;
-            if ((a.order?.client_name || '').toLowerCase().includes(lo)) return true;
-          }
-        }
-        return false;
-      },
-      sorts: [
-        { key: 'date_desc', label: 'Fecha: más reciente', getter: (s) => s.shipment_date, dir: 'desc' },
-        { key: 'date_asc',  label: 'Fecha: más antigua',  getter: (s) => s.shipment_date, dir: 'asc' },
-        { key: 'kg_desc',   label: 'Mayor kg verde',      getter: (s) => Number(s.totals?.kg_green || 0), dir: 'desc' },
-      ],
-      defaultSort: 'date_desc',
-      totals: [
-        { label: 'Despachos', value: (arr) => String(arr.length) },
-        { label: 'Lotes',     value: (arr) => String(arr.reduce((s, x) => s + (x.totals?.lot_count || x.lots.length), 0)) },
-        { label: 'Pedidos',   value: (arr) => {
-          const ids = new Set();
-          arr.forEach((s) => s.lots.forEach((l) => l.assignments.forEach((a) => a.order && ids.add(a.order.id))));
-          return String(ids.size);
-        } },
-        { label: 'Verde',     value: (arr) => fmtKg(arr.reduce((s, x) => s + Number(x.totals?.kg_green || 0), 0)) },
-      ],
-    }));
+    if (vm.mode() === 'table') {
+      list.append(renderTableView());
+    } else {
+      list.append(listView({
+        items: shipments,
+        renderItem: shipmentCard,
+        pageSize: 20,
+        emptyText: () => emptyStateCard({
+          title: 'Aún no se han creado despachos',
+          description: readyLots.length > 0
+            ? `Hay ${readyLots.length} lote(s) Listos esperando.`
+            : 'Cuando finca cierre el primer bache podrás crear el despacho.',
+          action: readyLots.length > 0
+            ? { label: '+ Nuevo despacho', onClick: () => openCreateModal() }
+            : null,
+        }),
+        searchPlaceholder: 'Buscar código de despacho, lote, pedido...',
+        searchMatch: matchSearch,
+        sorts: [
+          { key: 'date_desc', label: 'Fecha: más reciente', getter: (s) => s.shipment_date, dir: 'desc' },
+          { key: 'date_asc',  label: 'Fecha: más antigua',  getter: (s) => s.shipment_date, dir: 'asc' },
+          { key: 'kg_desc',   label: 'Mayor kg verde',      getter: (s) => Number(s.totals?.kg_green || 0), dir: 'desc' },
+        ],
+        defaultSort: 'date_desc',
+        totals: [
+          { label: 'Despachos', value: (arr) => String(arr.length) },
+          { label: 'Lotes',     value: (arr) => String(arr.reduce((s, x) => s + (x.totals?.lot_count || x.lots.length), 0)) },
+          { label: 'Pedidos',   value: (arr) => {
+            const ids = new Set();
+            arr.forEach((s) => s.lots.forEach((l) => l.assignments.forEach((a) => a.order && ids.add(a.order.id))));
+            return String(ids.size);
+          } },
+          { label: 'Verde',     value: (arr) => fmtKg(arr.reduce((s, x) => s + Number(x.totals?.kg_green || 0), 0)) },
+        ],
+      }));
+    }
   }
+
+  // ── Vista tabla ────────────────────────────────────────────────
+  function renderTableView() {
+    const wrap = el('div', { class: 'space-y-3' });
+    const searchInput = el('input', {
+      type: 'text', value: tableSearch,
+      placeholder: 'Buscar código, destino, lote, pedido…',
+      class: 'ctrm-input w-full sm:w-80',
+      onInput: (e) => { tableSearch = e.target.value; renderTableBody(); },
+    });
+    const tableEl = el('div', { class: 'overflow-x-auto ctrm-card' });
+    function renderTableBody() {
+      clear(tableEl);
+      const shown = shipments
+        .filter((s) => matchSearch(s, tableSearch))
+        .slice()
+        .sort((a, b) => (b.shipment_date || '').localeCompare(a.shipment_date || ''));
+      if (shown.length === 0) {
+        tableEl.append(emptyStateCard({
+          title: shipments.length === 0 ? 'Aún no se han creado despachos' : 'Sin resultados',
+          description: shipments.length === 0
+            ? (readyLots.length > 0 ? `Hay ${readyLots.length} lote(s) Listos esperando.` : 'Cuando finca cierre el primer bache podrás crear el despacho.')
+            : 'Ajusta la búsqueda.',
+        }));
+        return;
+      }
+
+      const tbody = el('tbody', {});
+      for (const s of shown) {
+        const t = s.totals || {};
+        const isExp = expanded.has(s.id);
+        const destinoLabel = s.destino_kind === 'Otro'
+          ? `Otro${s.destino_other ? ': ' + s.destino_other : ''}`
+          : (s.destino_kind || '—');
+
+        const expandBtn = el('button', {
+          type: 'button',
+          class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+          title: isExp ? 'Ocultar detalle' : 'Ver detalle por bache',
+          onClick: (e) => {
+            e.stopPropagation();
+            if (isExp) expanded.delete(s.id); else expanded.add(s.id);
+            renderTableBody();
+          },
+        }, [isExp ? '▾' : '▸']);
+
+        tbody.append(el('tr', {
+          class: 'hover:bg-cream cursor-pointer',
+          'data-shipment-id': s.id,
+          onClick: () => {
+            if (isExp) expanded.delete(s.id); else expanded.add(s.id);
+            renderTableBody();
+          },
+        }, [
+          el('td', { class: 'w-8 text-center' }, [expandBtn]),
+          el('td', { class: 'font-mono text-navy font-semibold' }, [
+            el('span', { class: 'ctrm-code', text: s.shipment_code || '—' }),
+          ]),
+          el('td', { class: 'font-mono text-[12px]', text: fmtDate(s.shipment_date) }),
+          el('td', { class: 'text-[12px]', text: destinoLabel }),
+          el('td', { class: 'text-right font-mono text-[12px]', text: String(t.lot_count ?? s.lots.length) }),
+          el('td', { class: 'text-right font-mono', text: fmtKg(t.kg_dried ?? 0) }),
+          el('td', { class: 'text-right font-mono', text: fmtKg(t.kg_green ?? 0) }),
+          el('td', { class: 'text-right font-mono text-[12px]', text: String(t.num_sacos || '—') }),
+          el('td', { class: 'whitespace-nowrap text-right' }, [
+            el('div', { class: 'inline-flex items-center gap-1' }, [
+              el('button', {
+                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+                title: 'Remisión para la trilladora',
+                onClick: (e) => { e.stopPropagation(); downloadPdf(s); },
+              }, ['↓ Remisión']),
+              el('button', {
+                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+                title: 'Documento interno · asignaciones',
+                onClick: (e) => { e.stopPropagation(); downloadAssignmentsPdf(s); },
+              }, ['↓ Asign.']),
+              el('button', {
+                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+                title: 'Cancelar despacho completo',
+                onClick: (e) => { e.stopPropagation(); cancelShipment(s); },
+              }, ['× Cancelar']),
+            ]),
+          ]),
+        ]));
+
+        if (isExp) {
+          tbody.append(el('tr', { class: 'bg-cream' }, [
+            el('td', { colspan: '9', class: 'p-3' }, [renderExpandedDetail(s)]),
+          ]));
+        }
+      }
+
+      // Totales
+      const totalLots  = shown.reduce((sum, x) => sum + (x.totals?.lot_count || x.lots.length), 0);
+      const totalSeco  = shown.reduce((sum, x) => sum + Number(x.totals?.kg_dried || 0), 0);
+      const totalVerde = shown.reduce((sum, x) => sum + Number(x.totals?.kg_green || 0), 0);
+      const totalSacos = shown.reduce((sum, x) => sum + Number(x.totals?.num_sacos || 0), 0);
+      const tfoot = el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
+        el('td', { class: 'w-8' }, []),
+        el('td', { class: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700',
+          text: `Total · ${shown.length}` }),
+        el('td', {}, []),
+        el('td', {}, []),
+        el('td', { class: 'text-right font-mono font-semibold text-navy', text: String(totalLots) }),
+        el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(totalSeco) }),
+        el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(totalVerde) }),
+        el('td', { class: 'text-right font-mono font-semibold text-navy', text: String(totalSacos) }),
+        el('td', {}, []),
+      ])]);
+
+      const table = el('table', { class: 'w-full text-[12px]' }, [
+        el('thead', {}, [el('tr', {}, [
+          el('th', { class: 'w-8' }, []),
+          th('Código'),
+          th('Fecha'),
+          th('Destino'),
+          th('Lotes', 'text-right'),
+          th('kg seco', 'text-right'),
+          th('kg verde esp.', 'text-right'),
+          th('Lonas', 'text-right'),
+          th('Acciones', 'text-right'),
+        ])]),
+        tbody,
+        tfoot,
+      ]);
+      tableEl.append(table);
+    }
+    renderTableBody();
+    wrap.append(searchInput, tableEl);
+    return wrap;
+  }
+
+  function th(label, extra = '') {
+    return el('th', { class: `text-left text-[10px] uppercase tracking-eyebrow text-ink-500 font-display ${extra}`, text: label });
+  }
+
+  // Sub-tabla por bache que aparece bajo cada fila expandida.
+  function renderExpandedDetail(s) {
+    const allRows = [];
+    for (const lot of (s.lots || [])) {
+      allRows.push(...lotSubRows(s, lot));
+    }
+    const subTable = el('table', { class: 'w-full text-[11px] bg-white border border-sand rounded-md overflow-hidden' }, [
+      el('thead', {}, [el('tr', { class: 'bg-navy', style: 'color:#e7e244;' }, [
+        el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Bache' }),
+        el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Referencia' }),
+        el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Proceso' }),
+        el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'kg seco' }),
+        el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'kg verde' }),
+        el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Variedades' }),
+        el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Acciones' }),
+      ])]),
+      el('tbody', {}, allRows),
+    ]);
+
+    // Notas del despacho debajo (si las hay)
+    const notesNode = s.notes
+      ? el('p', { class: 'text-[11px] text-ink-500 italic mt-2', text: s.notes })
+      : null;
+    return el('div', { class: 'space-y-2' }, [subTable, notesNode]);
+  }
+
+  // Devuelve array de <tr> para un bache: fila base + (opcional)
+  // parciales + (opcional) asignaciones. El padre (renderExpandedDetail)
+  // las mete todas en un mismo <tbody>.
+  function lotSubRows(s, lot) {
+    const partials = lot.partials_in_shipment || [];
+    const kgSeco = partials.length > 0
+      ? partials.reduce((sum, p) => sum + Number(p.kg_dried || 0), 0)
+      : Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0);
+    const kgVerde = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    const varieties = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
+    const baseRow = el('tr', { class: 'border-t border-sand' }, [
+      el('td', { class: 'px-3 py-2 font-mono font-semibold text-navy' }, [
+        lot.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MZ' }) : null,
+        document.createTextNode(lot.bache_code || lot.blend_code || lot.lot_code || '—'),
+      ]),
+      el('td', { class: 'px-3 py-2 text-ink-700', text: lot.reference_name || '—' }),
+      el('td', { class: 'px-3 py-2 text-[11px]', text: lot.process_type || '—' }),
+      el('td', { class: 'px-3 py-2 text-right font-mono', text: fmtKg(kgSeco) }),
+      el('td', { class: 'px-3 py-2 text-right font-mono', text: fmtKg(kgVerde) }),
+      el('td', { class: 'px-3 py-2 text-[11px] text-ink-500', text: varieties }),
+      el('td', { class: 'px-3 py-2 text-right whitespace-nowrap' }, [
+        el('div', { class: 'inline-flex items-center gap-1' }, [
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+            title: 'Asignar a un pedido o compra directa',
+            onClick: (e) => { e.stopPropagation(); doAssign(lot); },
+          }, ['+ Asignar']),
+          el('button', {
+            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs text-crit',
+            title: 'Cancelar esta línea del despacho',
+            onClick: (e) => { e.stopPropagation(); cancelShipmentLine(s, lot); },
+          }, ['× Cancelar línea']),
+        ]),
+      ]),
+    ]);
+    const rows = [baseRow];
+    if (partials.length > 0) {
+      rows.push(el('tr', { class: 'bg-cream' }, [
+        el('td', { colspan: '7', class: 'px-3 py-2' }, [partialsInline(partials)]),
+      ]));
+    }
+    if (lot.assignments && lot.assignments.length > 0) {
+      rows.push(el('tr', { class: 'bg-cream' }, [
+        el('td', { colspan: '7', class: 'px-3 py-2' }, [assignmentsInline(lot.assignments)]),
+      ]));
+    }
+    return rows;
+  }
+
+  function partialsInline(partials) {
+    return el('div', { class: 'space-y-1' }, [
+      el('p', { class: 'eyebrow text-[9px] text-ink-500', text: `Parciales (${partials.length})` }),
+      el('table', { class: 'w-full text-[10px]' }, [
+        el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+          el('th', { class: 'text-left px-2 py-1' }, ['Parcial']),
+          el('th', { class: 'text-right px-2 py-1' }, ['kg seco']),
+          el('th', { class: 'text-right px-2 py-1' }, ['Factor']),
+          el('th', { class: 'text-right px-2 py-1' }, ['kg verde']),
+        ])]),
+        el('tbody', {}, partials.map((p) => el('tr', { class: 'border-t border-sand' }, [
+          el('td', { class: 'px-2 py-1 font-mono', text: `P${p.parcial_letter}` }),
+          el('td', { class: 'px-2 py-1 text-right font-mono', text: fmtKg(p.kg_dried) }),
+          el('td', { class: 'px-2 py-1 text-right font-mono', text: String(p.factor_rendimiento || '—') }),
+          el('td', { class: 'px-2 py-1 text-right font-mono', text: fmtKg(p.kg_green_yield) }),
+        ]))),
+      ]),
+    ]);
+  }
+
+  function assignmentsInline(assignments) {
+    return el('div', { class: 'space-y-1' }, [
+      el('p', { class: 'eyebrow text-[9px] text-ink-500', text: `Asignaciones (${assignments.length})` }),
+      el('table', { class: 'w-full text-[10px]' }, [
+        el('thead', {}, [el('tr', { class: 'text-ink-300 uppercase tracking-loose' }, [
+          el('th', { class: 'text-left px-2 py-1' }, ['Pedido']),
+          el('th', { class: 'text-left px-2 py-1' }, ['Cliente']),
+          el('th', { class: 'text-left px-2 py-1' }, ['Tipo']),
+          el('th', { class: 'text-right px-2 py-1' }, ['kg verde']),
+        ])]),
+        el('tbody', {}, assignments.map((a) => {
+          const o = a.order || {};
+          return el('tr', { class: 'border-t border-sand' }, [
+            el('td', { class: 'px-2 py-1 font-mono text-navy font-semibold', text: o.order_code || '—' }),
+            el('td', { class: 'px-2 py-1', text: o.client_name || '—' }),
+            el('td', { class: 'px-2 py-1', text: o.order_type || '—' }),
+            el('td', { class: 'px-2 py-1 text-right font-mono font-bold', text: fmtKg(a.kg_green_allocated) }),
+          ]);
+        })),
+      ]),
+    ]);
+  }
+
+  async function doAssign(lot) {
+    try {
+      const out = await openAssignModal(lot);
+      if (out && out.ok) {
+        toast('Asignación registrada', 'success');
+        await reload();
+      }
+    } catch (e) { toast(e.message || 'Error al asignar', 'error'); }
+  }
+
+  async function cancelShipmentLine(shipment, lot) {
+    const reasonInput = el('textarea', {
+      rows: '3', class: 'ctrm-textarea w-full',
+      placeholder: 'Motivo de la cancelación de esta línea…',
+    });
+    const out = await openModal(({ close }) => el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `Cancelar la línea del bache `,
+        el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+        ` del despacho `,
+        el('strong', { class: 'text-navy', text: shipment.shipment_code }),
+        `. El bache vuelve a Listo y los pedidos completados que ya no cumplan vuelven a InProduction.`,
+      ]),
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Motivo *' }),
+        reasonInput,
+      ]),
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-ghost', onClick: () => close(null) }, ['Cancelar']),
+        el('button', {
+          type: 'button', class: 'ctrm-btn ctrm-btn-danger',
+          onClick: () => {
+            const reason = reasonInput.value.trim();
+            if (!reason) { toast('Indica el motivo', 'warning'); return; }
+            close({ reason });
+          },
+        }, ['Cancelar línea']),
+      ]),
+    ]), { title: 'Cancelar línea del despacho' });
+
+    if (!out) return;
+    try {
+      const r = await api.shipmentLineCancel({
+        shipment_id: shipment.id,
+        production_lot_id: lot.id,
+        reason: out.reason,
+      });
+      const c = r.cancelled || {};
+      const parts = [`Línea cancelada`];
+      if (c.lot_reverted_to_ready) parts.push('Bache → Listo');
+      if (c.shipment_deleted) parts.push('Despacho borrado (sin más líneas)');
+      if ((c.orders_reverted_to_in_production || []).length > 0) {
+        parts.push(`${c.orders_reverted_to_in_production.length} pedido(s) → InProduction`);
+      }
+      toast(parts.join(' · '), 'success', 6000);
+      await reload();
+    } catch (e) { toast(e.message || 'Error al cancelar línea', 'error', 6000); }
+  }
+
   render();
   focusFromQuery();
 
   return chrome(el('div', {}, [
     pageTitle('Despachos', 'Mezcla lotes Listos en un despacho y genera PDF'),
-    el('div', { class: 'mb-4 flex items-center justify-between gap-2' }, [
+    el('div', { class: 'mb-4 flex items-center justify-between gap-2 flex-wrap' }, [
       el('p', { class: 'text-[12px] text-ink-500' },
         [`${readyLots.length} lote(s) Listos esperando despacho`]),
-      el('button', {
-        class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
-        onClick: () => openCreateModal(),
-      }, ['+ Nuevo despacho']),
+      el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+        vm.toggleEl,
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-yellow uppercase tracking-eyebrow text-[11px] py-2.5 px-5',
+          onClick: () => openCreateModal(),
+        }, ['+ Nuevo despacho']),
+      ]),
     ]),
     list,
   ]));
