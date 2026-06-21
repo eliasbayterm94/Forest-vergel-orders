@@ -498,8 +498,15 @@ export async function fincaDespachosView() {
         meta('kg verde esp.', fmtKg(t.kg_green ?? 0)),
         meta('Lonas',    String(t.num_sacos || '—')),
       ]),
-      // Per-lot tables
-      el('div', { class: 'space-y-3' }, s.lots.map((lot) => lotBlock(s, lot))),
+      // Baches en dropdown colapsable. Por defecto cerrado para que
+      // la card sea compacta en móvil; se expande al hacer click en
+      // el summary "Ver baches (N)".
+      el('details', { class: 'border-t border-sand pt-3' }, [
+        el('summary', {
+          class: 'cursor-pointer text-[11px] font-display uppercase tracking-eyebrow text-ink-500 hover:text-navy',
+        }, [`Ver baches (${s.lots.length})`]),
+        el('div', { class: 'space-y-3 mt-3' }, s.lots.map((lot) => lotBlock(s, lot))),
+      ]),
       s.notes
         ? el('p', { class: 'text-[11px] text-ink-500 italic border-t border-sand pt-2', text: s.notes })
         : null,
