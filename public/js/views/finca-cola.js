@@ -293,7 +293,13 @@ function queueTable(orders, today) {
       }, [
         cell('Código', 'font-mono text-navy font-semibold',
           el('span', { class: 'inline-flex items-center gap-1.5' }, [
-            document.createTextNode(o.order_code || '—'),
+            el('button', {
+              type: 'button',
+              class: 'font-mono text-navy font-semibold hover:underline',
+              style: 'background:none;border:none;padding:0;cursor:pointer;',
+              onClick: (e) => { e.stopPropagation(); navigate(`/pedido?id=${o.id}`); },
+              text: o.order_code || '—',
+            }),
             requestInfoButton(o),
           ])),
         cell('Referencia', '', o.reference_name || '—'),
@@ -407,7 +413,13 @@ function queueRow(o, today, earliest, latest) {
     // Header
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
       el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
-        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('button', {
+          type: 'button',
+          class: 'ctrm-code hover:underline',
+          style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
+          onClick: () => navigate(`/pedido?id=${o.id}`),
+          text: o.order_code,
+        }),
         requestInfoButton(o),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
         ...(o.infusion_names || []).map((n) => el('span', {

@@ -243,7 +243,15 @@ export async function fincaBacheDetailView() {
               const o = a.order || {};
               return el('div', { class: 'px-3 py-2 flex items-center justify-between gap-2 text-[12px]' }, [
                 el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
-                  el('span', { class: 'ctrm-code text-[10px]', text: o.order_code || '—' }),
+                  o.id
+                    ? el('button', {
+                        type: 'button',
+                        class: 'ctrm-code text-[10px] hover:underline',
+                        style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
+                        onClick: () => navigate(`/pedido?id=${o.id}`),
+                        text: o.order_code || '—',
+                      })
+                    : el('span', { class: 'ctrm-code text-[10px]', text: o.order_code || '—' }),
                   o.status ? el('span', { class: `ctrm-pill text-[10px] ${statusPillKind(o.status)}`, text: statusLabel(o.status) }) : null,
                   o.max_delivery_date ? el('span', { class: 'text-[10px] text-ink-500 font-mono', text: `Entrega ${fmtDate(o.max_delivery_date)}` }) : null,
                 ]),

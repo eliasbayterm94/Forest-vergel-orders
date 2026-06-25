@@ -451,8 +451,15 @@ function ordersTable(orders, rollupMap, shipmentsMap, opts = {}) {
         bachesCell = cell('Baches', 'text-center text-ink-300', '—');
       }
 
+      const codeBtn = el('button', {
+        type: 'button',
+        class: 'font-mono text-navy font-semibold hover:underline',
+        style: 'background:none;border:none;padding:0;cursor:pointer;',
+        onClick: (e) => { e.stopPropagation(); navigate(`/pedido?id=${o.id}`); },
+        text: o.order_code || '—',
+      });
       tbody.append(el('tr', {}, [
-        cell('Código', 'font-mono text-navy font-semibold', o.order_code),
+        cell('Código', 'font-mono text-navy font-semibold', codeBtn),
         cell('Referencia', '', o.reference_name || '—'),
         cell('Cliente', '', o.client_name || '—'),
         cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
@@ -597,7 +604,13 @@ export function orderRow(o, opts = {}) {
   return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
     el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
       el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
-        el('span', { class: 'ctrm-code', text: o.order_code }),
+        el('button', {
+          type: 'button',
+          class: 'ctrm-code hover:underline',
+          style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
+          onClick: () => navigate(`/pedido?id=${o.id}`),
+          text: o.order_code,
+        }),
         el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
         o.order_type ? el('span', { class: 'ctrm-pill dark', text: o.order_type }) : null,
         el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
@@ -1169,7 +1182,13 @@ function seguimientoCard(r, rollupMap, shipmentsMap, expandedSet, onToggle) {
     el('div', { class: 'ctrm-card-pad' }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
-          el('span', { class: 'ctrm-code', text: o.order_code }),
+          el('button', {
+            type: 'button',
+            class: 'ctrm-code hover:underline',
+            style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
+            onClick: () => navigate(`/pedido?id=${o.id}`),
+            text: o.order_code,
+          }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
           el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
         ]),

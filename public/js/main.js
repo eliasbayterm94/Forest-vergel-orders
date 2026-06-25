@@ -21,6 +21,7 @@ import { fincaColaView }            from './views/finca-cola.js';
 import { fincaTableroView }         from './views/finca-tablero.js';
 import { adminDashboardView }       from './views/admin-dashboard.js';
 import { adminConfigView }          from './views/admin-config.js';
+import { orderDetailView }          from './views/order-detail.js';
 
 const FOREST_OR_ADMIN = ['forest', 'admin'];
 const FINCA_OR_ADMIN  = ['finca',  'admin'];
@@ -46,6 +47,9 @@ defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitore
 defineRoute('/finca/planeacion',   { roles: FINCA_OR_ADMIN,  view: fincaPlaneacionView });
 defineRoute('/admin/dashboard',    { roles: ['admin'],       view: adminDashboardView });
 defineRoute('/admin/config',       { roles: ['admin'],       view: adminConfigView });
+
+// Detalle compartido de pedido (forest + finca + admin)
+defineRoute('/pedido',             { roles: ['forest', 'finca', 'admin'], view: orderDetailView });
 
 window.addEventListener('app:unauthorized', () => {
   setSession(null);

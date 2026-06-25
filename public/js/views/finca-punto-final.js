@@ -365,7 +365,15 @@ export async function fincaPuntoFinalView() {
         // Pedidos FV
         ...l.enriched_assignments.map((a) =>
           el('div', { class: 'text-[11px] font-mono' }, [
-            el('span', { class: 'text-navy font-semibold', text: a.order_code || '?' }),
+            a.order_id
+              ? el('button', {
+                  type: 'button',
+                  class: 'text-navy font-semibold hover:underline',
+                  style: 'background:none;border:none;padding:0;cursor:pointer;',
+                  onClick: (e) => { e.stopPropagation(); navigate(`/pedido?id=${a.order_id}`); },
+                  text: a.order_code || '?',
+                })
+              : el('span', { class: 'text-navy font-semibold', text: a.order_code || '?' }),
             a.client_name ? el('span', { class: 'text-ink-500', text: ` · ${a.client_name}` }) : null,
             el('span', { class: 'text-ink-300', text: ` · ${fmtKg(a.kg_green_allocated)}` }),
           ])),

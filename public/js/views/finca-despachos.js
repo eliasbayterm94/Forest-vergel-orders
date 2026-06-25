@@ -6,7 +6,7 @@ import { listView } from '../ui/list.js';
 import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
-import { currentQuery } from '../router.js';
+import { currentQuery, navigate } from '../router.js';
 import { generateShipmentPdf, generateShipmentAssignmentsPdf } from '../ui/pdf.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { createViewMode } from '../ui/view-mode.js';
@@ -360,7 +360,17 @@ export async function fincaDespachosView() {
         el('tbody', {}, assignments.map((a) => {
           const o = a.order || {};
           return el('tr', { class: 'border-t border-sand' }, [
-            el('td', { class: 'px-2 py-1 font-mono text-navy font-semibold', text: o.order_code || '—' }),
+            el('td', { class: 'px-2 py-1' }, [
+              o.id
+                ? el('button', {
+                    type: 'button',
+                    class: 'font-mono text-navy font-semibold hover:underline',
+                    style: 'background:none;border:none;padding:0;cursor:pointer;',
+                    onClick: (e) => { e.stopPropagation(); navigate(`/pedido?id=${o.id}`); },
+                    text: o.order_code || '—',
+                  })
+                : document.createTextNode(o.order_code || '—'),
+            ]),
             el('td', { class: 'px-2 py-1', text: o.client_name || '—' }),
             el('td', { class: 'px-2 py-1', text: o.order_type || '—' }),
             el('td', { class: 'px-2 py-1 text-right font-mono font-bold', text: fmtKg(a.kg_green_allocated) }),
@@ -572,8 +582,17 @@ export async function fincaDespachosView() {
               ['Pedido', 'Cliente', 'Tipo', 'Contrato', 'Región', 'Entrega', 'kg verde'],
               lot.assignments.map((a) => {
                 const o = a.order || {};
+                const codeBtn = o.id
+                  ? el('button', {
+                      type: 'button',
+                      class: 'font-mono text-navy font-semibold hover:underline',
+                      style: 'background:none;border:none;padding:0;cursor:pointer;',
+                      onClick: () => navigate(`/pedido?id=${o.id}`),
+                      text: o.order_code || '—',
+                    })
+                  : (o.order_code || '—');
                 return [
-                  o.order_code || '—',
+                  codeBtn,
                   o.client_name || '—',
                   o.order_type || '—',
                   o.contract_code || '—',
@@ -635,7 +654,8 @@ export async function fincaDespachosView() {
           headers.map((h, i) =>
             el('th', { class: `px-2 py-1 ${(cellClasses[i] || '').includes('text-right') ? 'text-right' : 'text-left'}` }, [h])))]),
         el('tbody', {}, rows.map((r) => el('tr', { class: 'border-t border-sand' },
-          r.map((cell, i) => el('td', { class: `px-2 py-1 ${cellClasses[i] || ''} text-ink-700` }, [String(cell)]))))),
+          r.map((cell, i) => el('td', { class: `px-2 py-1 ${cellClasses[i] || ''} text-ink-700` },
+            [cell instanceof Node ? cell : document.createTextNode(String(cell))]))))),
       ]),
     ]);
   }

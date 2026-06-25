@@ -67,6 +67,7 @@ export const api = {
   orderCreateBulk: (payload) => request('POST', '/api/demand-orders-create-bulk', { body: payload }),
   orderUpdate:   (payload) => request('POST', '/api/demand-orders-update', { body: payload }),
   orderCancel:   (payload) => request('POST', '/api/demand-orders-cancel', { body: payload }),
+  orderMarkComplete: (payload) => request('POST', '/api/demand-orders-mark-complete', { body: payload }),
   orderAccept:   (payload) => request('POST', '/api/demand-orders-accept', { body: payload }),
   orderReject:   (payload) => request('POST', '/api/demand-orders-reject', { body: payload }),
   orderUpdatePo: (payload) => request('POST', '/api/demand-orders-update-po', { body: payload }),
