@@ -113,17 +113,72 @@ export async function forestDashboardView() {
     }
   }
 
-  const buckets = {
-    pending:    orders.filter((o) => o.status === 'Pending'),
-    inFlight:   orders.filter((o) => ['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status)),
-    completed:  orders.filter((o) => o.status === 'Completed'),
-    rejected:   orders.filter((o) => o.status === 'Rejected'),
-    partial:    orders.filter((o) => o.status === 'PartiallyAccepted'),
-  };
+  // ── 3 buckets centrales (UX-B) ───────────────────────────────
+  // Reemplazan los 5 tabs anteriores (Urgencias / Listos / En
+  // curso / Pendientes / Seguimiento). Forest entra y ve en 3
+  // pills cuántos están listos, por presionar o cerrados.
+  //
+  // LISTOS         = activos con café ya producido (Ready o
+  //                  Delivered) que aún no se han cerrado.
+  //                  Forest puede confirmar recepción → Cerrar.
+  // POR PRESIONAR  = pedidos que necesitan acción/atención:
+  //                  · Pending > 5 días sin que Finca acepte
+  //                  · drying_urgency red/past
+  //                  · delivery_urgency red/past
+  //                  · activos con entrega ≤ 15 d y cobertura < 100%
+  // CERRADOS       = Completed, Cancelled, Rejected. Filtro
+  //                  temporal default 30 d (toggle a 90 d / todo).
+  function bucketize(o) {
+    const t = orderRollup.get(o.id) || { ready: 0, drying: 0, fermentation: 0, delivered: 0, total: 0 };
+    const isHistorical = ['Completed', 'Cancelled', 'Rejected'].includes(o.status);
+    if (isHistorical) return 'cerrados';
 
-  const urgencies = orders
-    .filter((o) => !['Completed', 'Cancelled', 'Rejected'].includes(o.status))
-    .filter((o) => o.delivery_urgency === 'red' || o.delivery_urgency === 'past' || o.drying_urgency === 'red' || o.drying_urgency === 'past');
+    const accepted = Number(o.kg_green_accepted || 0);
+    const totalProduced = t.delivered + t.ready;
+    if (totalProduced > 0.01 && !['Completed', 'Cancelled', 'Rejected'].includes(o.status)) {
+      return 'listos';
+    }
+
+    if (o.status === 'Pending') {
+      const createdDays = o.created_at
+        ? daysBetween(today, String(o.created_at).slice(0, 10))
+        : 0;
+      if (createdDays >= 5) return 'por_presionar';
+    }
+    if (['Accepted', 'PartiallyAccepted', 'InProduction'].includes(o.status)) {
+      if (o.drying_urgency === 'red' || o.drying_urgency === 'past') return 'por_presionar';
+      if (o.delivery_urgency === 'red' || o.delivery_urgency === 'past') return 'por_presionar';
+      const pendingKg = Math.max(0, accepted - t.total);
+      const daysToDelivery = o.max_delivery_date
+        ? daysBetween(today, o.max_delivery_date)
+        : 999;
+      if (pendingKg > 0.01 && daysToDelivery <= 15) return 'por_presionar';
+    }
+    // Default: activo pero no requiere atención inmediata. Va en "por presionar"
+    // como "en curso normal" — mejor que esconderlo. Si está activo y nada urgente,
+    // ponemos en por_presionar pero con flag de "ok".
+    return 'por_presionar';
+  }
+
+  const bucketed = { listos: [], por_presionar: [], cerrados: [] };
+  for (const o of orders) bucketed[bucketize(o)].push(o);
+
+  // Sort interno por bucket:
+  //   listos        → entrega más cercana primero (que se cierren los más viejos)
+  //   por_presionar → drying-start vencido primero, luego entrega más cercana
+  //   cerrados      → completados más recientes primero
+  bucketed.listos.sort((a, b) => (a.max_delivery_date || '').localeCompare(b.max_delivery_date || ''));
+  bucketed.por_presionar.sort((a, b) => {
+    const aDry = a.latest_drying_start_date || '9999';
+    const bDry = b.latest_drying_start_date || '9999';
+    if (aDry !== bDry) return aDry.localeCompare(bDry);
+    return (a.max_delivery_date || '').localeCompare(b.max_delivery_date || '');
+  });
+  bucketed.cerrados.sort((a, b) => {
+    const aT = a.completed_at || a.cancelled_at || a.rejected_at || a.created_at || '';
+    const bT = b.completed_at || b.cancelled_at || b.rejected_at || b.created_at || '';
+    return bT.localeCompare(aT);
+  });
 
   // Renderer factory: editar / cancelar disponibles para pedidos en
   // estados activos (Pending, Accepted, PartiallyAccepted, InProduction).
@@ -146,144 +201,79 @@ export async function forestDashboardView() {
     return el('div', { class: 'space-y-2' }, items.map(rowFor));
   }
 
-  // ── Selector de seccion (focus en una a la vez) ─────────────────
+  // ── 3 tabs (UX-B) ────────────────────────────────────────────
   const SECTIONS = [
-    { key: 'urgencias',   label: 'Urgencias',   count: urgencies.length },
-    { key: 'listos',      label: 'Lotes Listos',count: readyLots.length },
-    { key: 'inflight',    label: 'En curso',    count: buckets.inFlight.length },
-    { key: 'pending',     label: 'Pendientes',  count: buckets.pending.length },
-    { key: 'seguimiento', label: 'Seguimiento', count: buckets.inFlight.length + buckets.pending.length },
+    { key: 'listos',        label: '✅ Listos',        count: bucketed.listos.length },
+    { key: 'por_presionar', label: '⚠ Por presionar',  count: bucketed.por_presionar.length },
+    { key: 'cerrados',      label: '🏁 Cerrados',       count: bucketed.cerrados.length },
   ];
   const initialSection = (currentQuery().get('section') && SECTIONS.find((s) => s.key === currentQuery().get('section')))
     ? currentQuery().get('section')
-    : (urgencies.length > 0 ? 'urgencias' : 'inflight');
+    : (bucketed.por_presionar.length > 0 ? 'por_presionar' : 'listos');
   let activeSection = initialSection;
 
+  // Filtro temporal sólo para Cerrados
+  let cerradosWindow = '30';   // '30' | '90' | 'all'
+  function filterCerrados(arr) {
+    if (cerradosWindow === 'all') return arr;
+    const limit = cerradosWindow === '30' ? 30 : 90;
+    return arr.filter((o) => {
+      const ts = o.completed_at || o.cancelled_at || o.rejected_at || '';
+      if (!ts) return true;
+      return daysBetween(String(ts).slice(0, 10), today) <= limit;
+    });
+  }
+
   function renderSectionContent() {
-    if (activeSection === 'urgencias') {
-      return urgencies.length === 0
-        ? emptyStateCard({ title: 'Todo al día', description: 'Ningún pedido está en zona crítica.' })
-        : renderList(urgencies);
-    }
     if (activeSection === 'listos') {
-      return readyLots.length === 0
-        ? emptyStateCard({ title: 'Sin lotes Listos', description: 'Aparecerán aquí cuando finca cierre el bache.' })
-        : (vm.mode() === 'table' ? lotsTable(readyLots) : el('div', { class: 'space-y-2' }, readyLots.map(lotRow)));
-    }
-    if (activeSection === 'inflight') {
-      return buckets.inFlight.length === 0
+      return bucketed.listos.length === 0
         ? emptyStateCard({
-            title: 'Sin pedidos activos',
-            description: 'Crea uno para que finca lo revise.',
+            title: 'No hay pedidos listos',
+            description: 'Acá aparecerán los pedidos cuyos baches ya estén Listo o despachados, esperando que confirmes la entrega.',
+          })
+        : renderList(bucketed.listos);
+    }
+    if (activeSection === 'por_presionar') {
+      return bucketed.por_presionar.length === 0
+        ? emptyStateCard({
+            title: 'Nada por presionar',
+            description: 'Todos los pedidos activos están en zona segura.',
             action: { label: '+ Nuevo pedido', onClick: () => navigate('/forest/demand') },
           })
-        : renderList(buckets.inFlight);
+        : renderList(bucketed.por_presionar);
     }
-    if (activeSection === 'pending') {
-      return buckets.pending.length === 0
-        ? emptyStateCard({ title: 'Sin pendientes', description: 'Todos los pedidos creados ya fueron contestados por finca.' })
-        : renderList(buckets.pending, { withActions: true });
-    }
-    if (activeSection === 'seguimiento') {
-      return renderSeguimiento();
+    if (activeSection === 'cerrados') {
+      const filtered = filterCerrados(bucketed.cerrados);
+      const winToggle = el('div', { class: 'flex items-center gap-2 mb-3' }, [
+        el('span', { class: 'text-[11px] text-ink-500 uppercase tracking-eyebrow', text: 'Ventana:' }),
+        ...['30', '90', 'all'].map((w) => el('button', {
+          type: 'button',
+          class: w === cerradosWindow ? 'ctrm-btn ctrm-btn-primary ctrm-btn-xs' : 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+          onClick: () => { cerradosWindow = w; redraw(); },
+        }, [w === 'all' ? 'Todo' : `${w} días`])),
+        el('span', { class: 'text-[11px] text-ink-500 ml-auto font-mono',
+          text: `${filtered.length} de ${bucketed.cerrados.length} cerrados` }),
+      ]);
+      return el('div', {}, [
+        winToggle,
+        filtered.length === 0
+          ? emptyStateCard({
+              title: 'Sin pedidos cerrados en esta ventana',
+              description: cerradosWindow === 'all'
+                ? 'Aún no hay pedidos cerrados.'
+                : 'Ningún pedido fue cerrado en el rango seleccionado.',
+            })
+          : renderList(filtered),
+      ]);
     }
     return null;
   }
 
-  // ── Seguimiento section ──────────────────────────────────────────
-  let seguimientoFilters = {};
-  let showHistorical = false;
-  const expandedSeg = new Set();   // order_ids expandidos para ver lotes
-  const toggleSeg = (orderId) => {
-    if (expandedSeg.has(orderId)) expandedSeg.delete(orderId);
-    else expandedSeg.add(orderId);
-    redraw();
-  };
-  const clientOptions = [...new Set(orders.map((o) => o.client_name).filter(Boolean))].sort();
-  const regionOptions = [...new Set(orders.flatMap((o) => o.regions || []).filter(Boolean))].sort();
-  const refOptions    = [...new Set(orders.map((o) => o.reference_name).filter(Boolean))].sort();
+  // (Sección "Seguimiento" removida en UX-B. Los 3 buckets de
+  // arriba reemplazan el flujo de seguimiento + urgencias + tabs
+  // por estado.)
 
-  const ACTIVE_STATUSES = ['Accepted', 'PartiallyAccepted', 'InProduction'];
-  const HISTORICAL_STATUSES = ['Completed', 'Cancelled', 'Rejected'];
-
-  const SEG_FILTERS = [
-    { key: 'client_name', label: 'Cliente',    multi: true,  options: clientOptions, getter: (o) => o.client_name || '' },
-    { key: 'region',      label: 'Región',     multi: true,  options: regionOptions, getter: (o) => (o.regions || []).join(',') }, // see below
-    { key: 'reference',   label: 'Referencia', multi: true,  options: refOptions,    getter: (o) => o.reference_name || '' },
-    { key: 'status',      label: 'Status',     multi: true,  options: ['Accepted','PartiallyAccepted','InProduction','Completed','Cancelled','Rejected'],
-      optionLabels: { Accepted:'Aceptado', PartiallyAccepted:'Aceptado parcial', InProduction:'En producción',
-                      Completed:'Completado', Cancelled:'Cancelado', Rejected:'Rechazado' },
-      getter: (o) => o.status },
-  ];
-
-  function passesSeg(o) {
-    for (const f of SEG_FILTERS) {
-      const v = seguimientoFilters[f.key];
-      if (!v || v.length === 0) continue;
-      if (f.key === 'region') {
-        // Coincide si alguna region del pedido esta seleccionada
-        if (!(o.regions || []).some((r) => v.includes(r))) return false;
-      } else {
-        if (!v.includes(f.getter(o))) return false;
-      }
-    }
-    return true;
-  }
-
-  function renderSeguimiento() {
-    const statusPool = showHistorical
-      ? [...ACTIVE_STATUSES, ...HISTORICAL_STATUSES]
-      : ACTIVE_STATUSES;
-    const rows = orders
-      .filter((o) => statusPool.includes(o.status))
-      .filter(passesSeg)
-      .map((o) => {
-        const t = trackingByOrder.get(o.id) || { enProceso: 0, readyOrDelivered: 0 };
-        const ships = shipmentsByOrder.get(o.id) || [];
-        const despachado = ships.reduce((s, x) => s + Number(x.kg || 0), 0);
-        const listo = Math.max(0, t.readyOrDelivered - despachado);
-        const aceptado = Number(o.kg_green_accepted || 0);
-        const saldo = aceptado - (t.enProceso + listo + despachado);
-        const isClosed = o.status === 'Completed' || o.status === 'Cancelled' || o.status === 'Rejected'
-          || (aceptado > 0 && despachado + 0.001 >= aceptado);
-        return { o, aceptado, enProceso: t.enProceso, listo, despachado, saldo, isClosed };
-      })
-      .sort((a, b) => {
-        // Activos primero por max_delivery_date asc, luego histórico
-        const aHist = HISTORICAL_STATUSES.includes(a.o.status);
-        const bHist = HISTORICAL_STATUSES.includes(b.o.status);
-        if (aHist !== bHist) return aHist ? 1 : -1;
-        return (a.o.max_delivery_date || '').localeCompare(b.o.max_delivery_date || '');
-      });
-
-    const fb = renderFilterButton({
-      filters: SEG_FILTERS,
-      values: seguimientoFilters,
-      onChange: (v) => { seguimientoFilters = v; redraw(); },
-    });
-    const histBtn = el('button', {
-      type: 'button',
-      class: showHistorical
-        ? 'ctrm-btn ctrm-btn-primary ctrm-btn-sm'
-        : 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
-      onClick: () => { showHistorical = !showHistorical; redraw(); },
-    }, [showHistorical ? '✓ Histórico visible' : 'Mostrar histórico']);
-
-    return el('div', {}, [
-      el('div', { class: 'flex flex-wrap items-center gap-2 mb-3' }, [fb.el, histBtn]),
-      rows.length === 0
-        ? emptyStateCard({
-            title: 'Sin pedidos que mostrar',
-            description: showHistorical
-              ? 'Ningún pedido coincide con el filtro actual.'
-              : 'Cuando se acepten pedidos los verás aquí. Activa "Mostrar histórico" para ver pedidos cerrados.',
-          })
-        : (vm.mode() === 'table'
-            ? seguimientoTable(rows, orderRollup, shipmentsByOrder, expandedSeg, toggleSeg)
-            : el('div', { class: 'space-y-2' }, rows.map((r) =>
-                seguimientoCard(r, orderRollup, shipmentsByOrder, expandedSeg, toggleSeg)))),
-    ]);
-  }
+  // renderSeguimiento eliminado en UX-B.
 
   function redraw() {
     clear(root);
@@ -311,12 +301,6 @@ export async function forestDashboardView() {
 
     root.append(
       pageTitle('Tablero Forest', `Hoy: ${today}`, ctaGroup),
-      statRow([
-        stat('Pendientes',  buckets.pending.length,  'Esperando finca'),
-        stat('En curso',    buckets.inFlight.length, 'Aceptados / producción'),
-        stat('Listos',      readyLots.length,        'Lotes para envío', { kind: 'ok' }),
-        stat('Externos',    buckets.rejected.length + buckets.partial.length, 'Requieren PO', { kind: buckets.rejected.length + buckets.partial.length > 0 ? 'crit' : 'ok' }),
-      ]),
       el('div', { class: 'flex justify-end mb-2' }, [vm.toggleEl]),
       tabbar.el,
       tabbar.panel,
@@ -1232,4 +1216,13 @@ function kpiBlock(label, value, color) {
     el('p', { class: 'font-display font-semibold text-navy text-[13px]',
       style: color ? `color:${color};` : null, text: value }),
   ]);
+}
+
+// daysBetween: diferencia en días entre dos fechas YYYY-MM-DD.
+// Usado por bucketize para "Pending > 5 d" y "Entrega ≤ 15 d".
+function daysBetween(fromYmd, toYmd) {
+  if (!fromYmd || !toYmd) return 0;
+  const a = new Date(fromYmd + "T00:00:00Z").getTime();
+  const b = new Date(toYmd   + "T00:00:00Z").getTime();
+  return Math.floor((b - a) / 86400000);
 }
