@@ -10,6 +10,7 @@ import { emptyStateCard } from '../ui/empty.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createTabBar } from '../ui/tab-bar.js';
+import { renderOrderCard } from './_order-card.js';
 
 const PHYSICAL_ASPECTS = ['Verde', 'Verde amarillo', 'Amarillo', 'Amarillo-Marrón', 'Parduzco'];
 const PROCESS_TYPES    = ['Natural', 'Honey', 'Lavado'];
@@ -560,37 +561,23 @@ function emptyText(t) {
 }
 
 export function orderRow(o, opts = {}) {
-  const urg = pickUrgency(o);
-  const actionButtons = (opts.actions || []).map((a) =>
-    el('button', {
-      class: `ctrm-btn ctrm-btn-${a.variant === 'danger' ? 'danger' : 'soft'} ctrm-btn-xs`,
-      onClick: a.onClick,
-    }, [a.label]),
-  );
+  // Card unificada compartida con /finca/cola. Forest sólo agrega
+  // (1) un dropdown con los baches asignados (lista detallada) y
+  // (2) chips de despachos que cubrieron el pedido.
+  const rollup = opts.rollup || { ready: 0, drying: 0, fermentation: 0, delivered: 0, total: 0, lots: [] };
 
-  const rollup = opts.rollup || { ready: 0, drying: 0, fermentation: 0, total: 0, lots: [] };
-  const accepted = Number(o.kg_green_accepted ?? o.kg_green_required ?? 0);
-  // Mostrar cobertura para pedidos ya aceptados o en producción, incluso
-  // cuando no hay ningún lote todavía (asi Forest ve el "0 cubierto").
-  const showProgress = accepted > 0
-    && ['Accepted', 'PartiallyAccepted', 'InProduction', 'Completed'].includes(o.status);
-
-  // Dropdown expandible con los baches asignados. Sólo se monta si el
-  // pedido tiene al menos un lote.
   const assignedLots = rollup.lots || [];
-  let lotsWrap = null;
   let lotsToggle = null;
+  let lotsWrap = null;
   if (assignedLots.length > 0) {
-    lotsWrap = el('div', {
-      class: 'mt-2 pt-2 border-t border-sand',
-      hidden: 'true',
-    }, [assignedLotsDetail(assignedLots)]);
+    lotsWrap = el('div', { class: 'mt-2 pt-2 border-t border-sand', hidden: 'true' },
+      [assignedLotsDetail(assignedLots)]);
     let expanded = false;
     const collapsedLabel = `▾ ${assignedLots.length} ${assignedLots.length === 1 ? 'bache asignado' : 'baches asignados'}`;
     const expandedLabel  = `▴ Ocultar baches`;
     lotsToggle = el('button', {
       type: 'button',
-      class: 'mt-2 text-[11px] font-display uppercase tracking-eyebrow text-ink-500 hover:text-navy inline-flex items-center gap-1',
+      class: 'text-[11px] font-display uppercase tracking-eyebrow text-ink-500 hover:text-navy inline-flex items-center gap-1',
       style: 'background:none;border:none;padding:4px 0;cursor:pointer;',
       onClick: (e) => {
         e.stopPropagation();
@@ -601,48 +588,36 @@ export function orderRow(o, opts = {}) {
     }, [collapsedLabel]);
   }
 
-  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
-    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
-      el('div', { class: 'flex items-center gap-2 min-w-0 flex-wrap' }, [
-        el('button', {
-          type: 'button',
-          class: 'ctrm-code hover:underline',
-          style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
-          onClick: () => navigate(`/pedido?id=${o.id}`),
-          text: o.order_code,
-        }),
-        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
-        o.order_type ? el('span', { class: 'ctrm-pill dark', text: o.order_type }) : null,
-        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
-      ]),
-      urg ? el('span', { class: `ctrm-pill urgency-${urg.kind}`, text: urg.label }) : null,
-    ]),
-    (o.client_name || (o.regions && o.regions.length) || o.contract_code)
-      ? el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-3 gap-y-0.5 mb-1.5' }, [
-          o.client_name  ? meta('Cliente', o.client_name) : null,
-          o.regions && o.regions.length ? meta('Regiones', o.regions.join(' · ')) : null,
-          o.contract_code ? meta('Contrato', o.contract_code) : null,
-        ])
-      : null,
-    el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
-      meta('Verde', fmtKg(o.kg_green_required)),
-      o.kg_green_accepted != null ? meta('Aceptado', fmtKg(o.kg_green_accepted)) : null,
-      showProgress ? meta('Asignado', fmtKg(rollup.total)) : null,
-      meta('Cereza', fmtKg(o.kg_cherry_required)),
-      meta('Entrega', `${fmtDate(o.max_delivery_date)} (${relDate(o.max_delivery_date)})`),
-      meta('Drying-start', fmtDate(o.latest_drying_start_date)),
-      meta('Proceso', o.process_type),
-    ]),
-    showProgress ? coverageBar(rollup, accepted) : null,
-    (opts.shipments && opts.shipments.length > 0)
-      ? shippedChips(opts.shipments)
-      : null,
+  const secondaryActions = [
+    ...(opts.actions || []).map((a) => ({
+      label: a.label,
+      onClick: a.onClick,
+      danger: a.variant === 'danger',
+    })),
+    { label: 'Ver detalle', onClick: () => navigate(`/pedido?id=${o.id}`) },
+  ];
+
+  // Rollup esperado por la card unificada
+  const cardRollup = {
+    assigned_kg: rollup.total,
+    shipped_kg:  rollup.delivered,
+    pending_kg:  Math.max(0, Number(o.kg_green_accepted || 0) - Number(rollup.total || 0)),
+  };
+
+  const card = renderOrderCard(o, {
+    role: 'forest',
+    rollup: cardRollup,
+    secondaryActions,
+  });
+
+  // Agregar al final: chips de despachos + dropdown de baches
+  const extras = el('div', { class: 'px-3 pb-3 space-y-1' }, [
+    (opts.shipments && opts.shipments.length > 0) ? shippedChips(opts.shipments) : null,
     lotsToggle,
     lotsWrap,
-    actionButtons.length > 0
-      ? el('div', { class: 'flex gap-2 mt-3 pt-2 border-t border-sand' }, actionButtons)
-      : null,
   ]);
+  card.append(extras);
+  return card;
 }
 
 // Lista compacta de baches asignados al pedido. Se renderiza como

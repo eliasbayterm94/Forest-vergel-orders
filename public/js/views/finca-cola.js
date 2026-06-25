@@ -16,6 +16,7 @@ import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { openPopover } from '../ui/popover.js';
+import { renderOrderCard } from './_order-card.js';
 
 const FILTERS = [
   { key: 'all',         label: 'Todos' },
@@ -393,71 +394,57 @@ function matches(o, filter, today) {
 }
 
 // ─── Row + timeline ─────────────────────────────────────────────────
+// La card unificada vive en _order-card.js (compartida con Forest).
+// Aquí encima/abajo le agregamos los hints específicos de la cola:
+// timeline horizontal de fechas + pills de urgencia/sobrecarga.
 function queueRow(o, today, earliest, latest) {
-  const accepted  = Number(o.kg_green_accepted || 0);
-  const allocated = Number(o.allocated_kg || 0);
-  const pending   = Number(o.pending_kg || 0);
-  const shipped   = Number(o.shipped_kg || 0);
-  const coverPct  = accepted > 0 ? Math.min(100, (allocated / accepted) * 100) : 0;
   const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
   const dryingPos = posOn(earliest, latest, o.latest_drying_start_date);
   const delivPos  = posOn(earliest, latest, o.max_delivery_date);
-
-  // Status del timeline. Rojo si pasó drying-start; warn si <5d.
   const dryDelta = daysBetween(today, o.latest_drying_start_date);
   const dryColor = isOverdue ? '#c45a4f'
                   : (dryDelta != null && dryDelta < 5) ? '#8a5100'
                   : '#7e9ec1';
 
-  return el('div', { class: 'ctrm-card ctrm-card-pad' }, [
-    // Header
-    el('div', { class: 'flex flex-wrap items-center justify-between gap-2 mb-2' }, [
-      el('div', { class: 'flex items-center gap-2 flex-wrap min-w-0' }, [
-        el('button', {
-          type: 'button',
-          class: 'ctrm-code hover:underline',
-          style: 'background:none;border:none;padding:2px 6px;cursor:pointer;',
-          onClick: () => navigate(`/pedido?id=${o.id}`),
-          text: o.order_code,
-        }),
-        requestInfoButton(o),
-        el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
-        ...(o.infusion_names || []).map((n) => el('span', {
-          class: 'ctrm-pill',
-          style: 'background:#fbe6c2;color:#8a5100;',
-          text: n,
-        })),
-        el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) }),
-        isOverdue ? el('span', { class: 'ctrm-pill urgency-red', text: 'Drying vencido' }) : null,
-        o.week_bucket && o.week_bucket.is_overloaded
-          ? el('span', {
-              class: 'ctrm-pill urgency-red',
-              title: `Semana ${o.week_bucket.iso_week_key} con ${fmtKg(o.week_bucket.total_cherry_kg)} cereza (capacidad ${fmtKg(o.week_bucket.capacity_kg)})`,
-              text: 'Semana sobrecargada',
-            })
-          : null,
-      ]),
-      noLotOrPartialButton(o, allocated, pending),
-    ]),
-
-    // Meta
-    el('div', { class: 'flex flex-wrap text-[11px] text-ink-500 gap-x-4 gap-y-0.5 font-mono mb-2' }, [
-      meta('Verde aceptado', fmtKg(accepted)),
-      meta('Asignado',       fmtKg(allocated)),
-      shipped > 0 ? meta('Despachado', fmtKg(shipped)) : null,
-      meta('Pendiente',      fmtKg(pending)),
-      meta('Proceso',        o.process_type),
-      o.client_name ? meta('Cliente', o.client_name) : null,
-    ]),
-
-    // Coverage bar
-    el('div', { class: 'h-1.5 rounded-full bg-sand overflow-hidden mb-3' }, [
-      el('div', { class: 'h-full bg-forest', style: `width:${coverPct}%;` }),
-    ]),
-
-    // Timeline
-    timeline(today, earliest, latest, dryingPos, delivPos, dryColor, o),
+  // Pills específicos de la cola (no van en el componente unificado)
+  const colaPills = el('div', { class: 'flex flex-wrap items-center gap-1.5 px-3 pb-1' }, [
+    ...(o.infusion_names || []).map((n) => el('span', {
+      class: 'ctrm-pill',
+      style: 'background:#fbe6c2;color:#8a5100;',
+      text: n,
+    })),
+    isOverdue ? el('span', { class: 'ctrm-pill urgency-red', text: 'Drying vencido' }) : null,
+    o.week_bucket && o.week_bucket.is_overloaded
+      ? el('span', {
+          class: 'ctrm-pill urgency-red',
+          title: `Semana ${o.week_bucket.iso_week_key} con ${fmtKg(o.week_bucket.total_cherry_kg)} cereza (capacidad ${fmtKg(o.week_bucket.capacity_kg)})`,
+          text: 'Semana sobrecargada',
+        })
+      : null,
   ]);
+  const hasColaPills = colaPills.children.length > 0;
+
+  const card = renderOrderCard(o, {
+    role: 'finca',
+    rollup: {
+      assigned_kg: Number(o.allocated_kg || 0),
+      shipped_kg:  Number(o.shipped_kg || 0),
+      pending_kg:  Number(o.pending_kg || 0),
+    },
+    callbacks: {
+      onAssign: () => navigate('/finca/lots'),
+    },
+    secondaryActions: [
+      { label: 'Ver detalle', onClick: () => navigate(`/pedido?id=${o.id}`) },
+    ],
+  });
+
+  // Agregamos pills de cola + timeline después del cuerpo de la card.
+  if (hasColaPills) card.append(colaPills);
+  card.append(el('div', { class: 'px-3 pb-3' }, [
+    timeline(today, earliest, latest, dryingPos, delivPos, dryColor, o),
+  ]));
+  return card;
 }
 
 function noLotOrPartialButton(o, allocated, pending) {

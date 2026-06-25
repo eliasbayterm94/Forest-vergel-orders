@@ -271,6 +271,14 @@ export async function orderDetailView({ session }) {
         ]),
       ]) : null,
 
+      // ── Bitácora cronológica ──
+      el('div', { class: 'ctrm-card overflow-hidden mb-4' }, [
+        el('div', { class: 'px-3 py-2 bg-cream border-b border-sand' }, [
+          el('p', { class: 'eyebrow text-[10px]', text: 'Historial del pedido' }),
+        ]),
+        el('div', { class: 'p-3' }, [renderTimeline(o, assignments, coveringList)]),
+      ]),
+
       // ── Comentario de Forest + datos extra ──
       (o.comments || o.completed_at) ? el('div', { class: 'ctrm-card ctrm-card-pad mb-4' }, [
         o.comments
@@ -369,4 +377,125 @@ function coverageBar(label, pct, color) {
 
 function th2(label, extra = '') {
   return el('th', { class: `px-3 py-2 text-left ${extra}`, text: label });
+}
+
+// Bitácora cronológica del pedido. Combina:
+//   · created_at        (Forest creó)
+//   · accepted_at       (Finca aceptó)
+//   · in_production_at  (primer bache empezó a procesarse)
+//   · cada despacho que cubrió el pedido (shipment_date)
+//   · completed_at / cancelled_at / rejected_at
+// Si hay un texto de "[Cerrado manualmente...]" en comments, lo
+// incluimos en el evento de cierre.
+function renderTimeline(o, assignments, coveringList) {
+  const events = [];
+
+  if (o.created_at) {
+    events.push({
+      ts:    String(o.created_at).slice(0, 10),
+      date:  fmtDate(String(o.created_at).slice(0, 10)),
+      title: 'Pedido creado',
+      detail: `Forest pidió ${fmtKg(o.kg_green_required || 0)} verde, entrega ${o.max_delivery_date ? fmtDate(o.max_delivery_date) : '—'}`,
+      color: '#7e9ec1',
+      icon:  'C',
+    });
+  }
+  if (o.accepted_at) {
+    events.push({
+      ts:    String(o.accepted_at).slice(0, 10),
+      date:  fmtDate(String(o.accepted_at).slice(0, 10)),
+      title: o.status === 'PartiallyAccepted' ? 'Aceptado parcial' : 'Aceptado',
+      detail: `Finca aceptó ${fmtKg(o.kg_green_accepted || 0)} verde`,
+      color: '#5d8b66',
+      icon:  'A',
+    });
+  }
+  if (o.rejected_at) {
+    events.push({
+      ts:    String(o.rejected_at).slice(0, 10),
+      date:  fmtDate(String(o.rejected_at).slice(0, 10)),
+      title: 'Rechazado',
+      detail: o.rejection_reason || '—',
+      color: '#a8351c',
+      icon:  '×',
+    });
+  }
+  if (o.in_production_at) {
+    events.push({
+      ts:    String(o.in_production_at).slice(0, 10),
+      date:  fmtDate(String(o.in_production_at).slice(0, 10)),
+      title: 'En producción',
+      detail: `Primer bache asignado · ${assignments.length} asignación(es) en total`,
+      color: '#1b203d',
+      icon:  'P',
+    });
+  }
+  // Cada despacho que cubrió el pedido
+  for (const s of coveringList) {
+    events.push({
+      ts:    s.shipment_date || '',
+      date:  fmtDate(s.shipment_date),
+      title: `Despacho ${s.shipment_code}`,
+      detail: `${fmtKg(s.kg_green)} verde · baches ${s.bache_codes.join(' · ')}`,
+      color: '#dbeafe',
+      iconColor: '#1a3a5c',
+      icon:  '↑',
+      onClick: () => navigate(`/finca/despachos?focus=${s.shipment_id}`),
+    });
+  }
+  if (o.completed_at) {
+    const manualMark = (o.comments || '').match(/\[Cerrado manualmente.*?\]\s*([^\n]+)/);
+    events.push({
+      ts:    String(o.completed_at).slice(0, 10),
+      date:  fmtDate(String(o.completed_at).slice(0, 10)),
+      title: manualMark ? 'Cerrado manualmente' : 'Cerrado',
+      detail: manualMark ? manualMark[1] : 'Pedido completado al 100%',
+      color: '#5d8b66',
+      icon:  '✓',
+    });
+  }
+  if (o.cancelled_at) {
+    events.push({
+      ts:    String(o.cancelled_at).slice(0, 10),
+      date:  fmtDate(String(o.cancelled_at).slice(0, 10)),
+      title: 'Cancelado',
+      detail: '—',
+      color: '#9aa3ae',
+      icon:  '×',
+    });
+  }
+  // Orden cronológico ascendente
+  events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+  if (events.length === 0) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Sin eventos registrados todavía.' });
+  }
+
+  return el('div', { class: 'space-y-3' }, events.map((ev, i) => {
+    const isLast = i === events.length - 1;
+    const iconColor = ev.iconColor || '#fff';
+    return el('div', { class: 'flex gap-3' }, [
+      // Columna del bullet + línea vertical
+      el('div', { class: 'flex flex-col items-center shrink-0', style: 'width:24px;' }, [
+        el('div', {
+          class: 'flex items-center justify-center font-display font-bold text-[10px] leading-none rounded-full',
+          style: `width:22px;height:22px;background:${ev.color};color:${iconColor};`,
+        }, [ev.icon]),
+        !isLast ? el('div', { class: 'flex-1 w-px bg-sand mt-1', style: 'min-height:24px;' }) : null,
+      ]),
+      // Contenido
+      el('div', { class: 'flex-1 min-w-0 pb-2' }, [
+        el('div', { class: 'flex items-baseline justify-between gap-2 flex-wrap' }, [
+          ev.onClick ? el('button', {
+            type: 'button',
+            class: 'font-display font-semibold text-navy text-[13px] hover:underline',
+            style: 'background:none;border:none;padding:0;cursor:pointer;text-align:left;',
+            onClick: ev.onClick, text: ev.title,
+          }) : el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: ev.title }),
+          el('span', { class: 'font-mono text-[11px] text-ink-500', text: ev.date }),
+        ]),
+        el('p', { class: 'text-[11px] text-ink-500 mt-0.5', text: ev.detail }),
+      ]),
+    ]);
+  }));
 }
