@@ -116,12 +116,16 @@ export function pieChart(slices, opts = {}) {
 //   series: [{ label, color, values }]   values alineadas con categories
 // ─────────────────────────────────────────────────────────────────
 export function groupedBarChart(categories, series, opts = {}) {
-  const W = 640, H = 240;
-  const PADL = 50, PADR = 16, PADT = 12, PADB = 36;
+  const W = 640, H = 260;
+  const PADL = 50, PADR = 16, PADT = 18, PADB = 50;
   const innerW = W - PADL - PADR;
   const innerH = H - PADT - PADB;
+  const showDataLabels = opts.showDataLabels !== false;
+  const subLabels = opts.subLabels || [];          // texto chico debajo de cada categoría (ej. eficiencia %)
+  const overlayLine = opts.overlayLine || null;    // { label, color, values }
 
   const allValues = series.flatMap((s) => s.values || []);
+  if (overlayLine) allValues.push(...(overlayLine.values || []));
   const max = Math.max(1, ...allValues);
   // Round up to nice tick
   const niceMax = niceCeil(max);
@@ -165,6 +169,19 @@ export function groupedBarChart(categories, series, opts = {}) {
       fill: '#5a5a55',
       text: cat,
     }));
+    // Sub label (eficiencia, etc.)
+    if (subLabels[i] != null && subLabels[i] !== '') {
+      elements.push(svgEl('text', {
+        x: gx + groupW / 2,
+        y: H - PADB + 28,
+        'text-anchor': 'middle',
+        'font-family': 'JetBrains Mono, monospace',
+        'font-size': '9',
+        'font-weight': 'bold',
+        fill: '#3a6f4a',
+        text: subLabels[i],
+      }));
+    }
     series.forEach((s, si) => {
       const v = Number((s.values || [])[i] || 0);
       const h = niceMax > 0 ? (v / niceMax) * innerH : 0;
@@ -174,13 +191,62 @@ export function groupedBarChart(categories, series, opts = {}) {
         x: bx, y: by, width: barW, height: h,
         fill: s.color, rx: 1.5,
       });
-      // tooltip on hover
+      // tooltip on hover (Esc en SVG nativo)
       const titleNode = svgEl('title', {});
       titleNode.textContent = `${s.label} · ${cat}: ${fmtKg(v)}`;
       rect.appendChild(titleNode);
       elements.push(rect);
+      // Data label arriba de la barra
+      if (showDataLabels && v > 0 && h > 14) {
+        elements.push(svgEl('text', {
+          x: bx + barW / 2,
+          y: by - 3,
+          'text-anchor': 'middle',
+          'font-family': 'JetBrains Mono, monospace',
+          'font-size': '8.5',
+          'font-weight': 'bold',
+          fill: s.color,
+          text: fmtShortKg(v),
+        }));
+      }
     });
   });
+
+  // Overlay line (ej. media móvil)
+  if (overlayLine && overlayLine.values && overlayLine.values.length > 0) {
+    const points = [];
+    overlayLine.values.forEach((v, i) => {
+      if (v == null || !isFinite(v)) return;
+      const gx = PADL + i * groupW + groupW / 2;
+      const gy = PADT + innerH - (niceMax > 0 ? (v / niceMax) * innerH : 0);
+      points.push(`${gx},${gy}`);
+    });
+    if (points.length >= 2) {
+      elements.push(svgEl('polyline', {
+        points: points.join(' '),
+        fill: 'none',
+        stroke: overlayLine.color || '#1b203d',
+        'stroke-width': '2',
+        'stroke-dasharray': '4 3',
+        'stroke-linecap': 'round',
+      }));
+      // Dots con tooltip
+      overlayLine.values.forEach((v, i) => {
+        if (v == null || !isFinite(v)) return;
+        const gx = PADL + i * groupW + groupW / 2;
+        const gy = PADT + innerH - (niceMax > 0 ? (v / niceMax) * innerH : 0);
+        const dot = svgEl('circle', {
+          cx: gx, cy: gy, r: 3,
+          fill: overlayLine.color || '#1b203d',
+          stroke: '#fff', 'stroke-width': '1.5',
+        });
+        const t = svgEl('title', {});
+        t.textContent = `${overlayLine.label} · ${categories[i]}: ${fmtKg(v)}`;
+        dot.appendChild(t);
+        elements.push(dot);
+      });
+    }
+  }
 
   const node = svg({
     viewBox: `0 0 ${W} ${H}`,
@@ -188,11 +254,19 @@ export function groupedBarChart(categories, series, opts = {}) {
     style: 'width:100%;height:auto;display:block;',
   }, elements);
 
-  const legend = el('div', { class: 'flex flex-wrap items-center gap-4 mt-2 justify-center' },
-    series.map((s) => el('div', { class: 'flex items-center gap-1.5 text-[11px]' }, [
-      el('span', { style: `width:10px;height:10px;background:${s.color};display:inline-block;border-radius:2px;` }),
-      el('span', { class: 'text-ink-700', text: s.label }),
-    ])));
+  const legendItems = series.map((s) => el('div', { class: 'flex items-center gap-1.5 text-[11px]' }, [
+    el('span', { style: `width:10px;height:10px;background:${s.color};display:inline-block;border-radius:2px;` }),
+    el('span', { class: 'text-ink-700', text: s.label }),
+  ]));
+  if (overlayLine) {
+    legendItems.push(el('div', { class: 'flex items-center gap-1.5 text-[11px]' }, [
+      el('span', {
+        style: `width:14px;height:0;border-top:2px dashed ${overlayLine.color || '#1b203d'};display:inline-block;`,
+      }),
+      el('span', { class: 'text-ink-700', text: overlayLine.label }),
+    ]));
+  }
+  const legend = el('div', { class: 'flex flex-wrap items-center gap-4 mt-2 justify-center' }, legendItems);
 
   return el('div', {}, [node, legend]);
 }
