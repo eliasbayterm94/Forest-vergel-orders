@@ -22,6 +22,7 @@ import { fincaTableroView }         from './views/finca-tablero.js';
 import { adminDashboardView }       from './views/admin-dashboard.js';
 import { adminConfigView }          from './views/admin-config.js';
 import { orderDetailView }          from './views/order-detail.js';
+import { fincaAnalyticsView }       from './views/finca-analytics.js';
 
 const FOREST_OR_ADMIN = ['forest', 'admin'];
 const FINCA_OR_ADMIN  = ['finca',  'admin'];
@@ -43,6 +44,7 @@ defineRoute('/finca/bache',        { roles: FINCA_OR_ADMIN,  view: fincaBacheDet
 defineRoute('/finca/tablero',       { roles: FINCA_OR_ADMIN,  view: fincaTableroView });
 defineRoute('/finca/punto-final',  { roles: FINCA_OR_ADMIN,  view: fincaPuntoFinalView });
 defineRoute('/finca/despachos',    { roles: FINCA_OR_ADMIN,  view: fincaDespachosView });
+defineRoute('/finca/analytics',    { roles: FINCA_OR_ADMIN,  view: fincaAnalyticsView });
 defineRoute('/finca/monitoreo',    { roles: FINCA_OR_ADMIN,  view: fincaMonitoreoView });
 defineRoute('/finca/planeacion',   { roles: FINCA_OR_ADMIN,  view: fincaPlaneacionView });
 defineRoute('/admin/dashboard',    { roles: ['admin'],       view: adminDashboardView });

@@ -51,6 +51,7 @@ const FINCA_NAV = [
   { path: '/finca/tablero',   label: 'Tablero Control',   icon: 'dashboard' },
   { path: '/finca/punto-final', label: 'Punto Final',     icon: 'box' },
   { path: '/finca/despachos', label: 'Despachos',         icon: 'truck' },
+  { path: '/finca/analytics', label: 'Analytics',         icon: 'chart' },
   { path: '/reports',         label: 'Reportes',          icon: 'chart' },
 ];
 
