@@ -33,6 +33,13 @@ const PROCESS_COLORS = {
   Honey:   '#ddae3e',
   Lavado:  '#7e9ec1',
 };
+// Variante con menos saturación para los stripes laterales de cards
+// chicas — el color crudo distrae cuando hay 9 cards juntas.
+const PROCS_FAINT = {
+  Natural: '#5a8a6a',
+  Honey:   '#e0b955',
+  Lavado:  '#94afc8',
+};
 
 const ACTIVE_STATUSES = new Set(['InFermentation', 'Drying', 'Resting']);
 
@@ -194,9 +201,9 @@ export async function fincaAnalyticsView() {
     const stageAvgs = computeStageAverages(allLots);
 
     // ── Conversión promedio por proceso (closed in range) ──
-    root.append(chartCard('Conversión promedio por proceso',
+    root.append(chartCard('Conversión promedio por stage de entrada × proceso',
       renderConversionByProcess(closedInRange),
-      'Solo lotes cerrados (Ready/Delivered) en el rango. Conversión = kg_input_initial / kg_dried_output.'));
+      'Solo lotes cerrados en el rango. Conversión = kg_input_initial / kg_dried_output. Por stage: cereza objetivo ≤ 3.6 (Nat) o ≤ 5.2 (H/L) · despulpado ≤ 3.0 · seco ≤ 1.05. Cards apagados = sin baches en esa combinación.'));
 
     // ── Tiempo promedio por etapa (Tier 2 #7) ─────────────
     root.append(chartCard('Tiempo promedio por etapa',
@@ -222,31 +229,61 @@ export async function fincaAnalyticsView() {
   }
 
   function renderConversionByProcess(closedLots) {
-    const byProc = { Natural: [], Honey: [], Lavado: [] };
+    // Segmenta por (stage de entrada, proceso). Cada celda muestra
+    // promedio ponderado por kg seco + cuenta + objetivo.
+    // Mostramos solo las celdas que tienen al menos 1 bache.
+    const STAGES = [
+      { key: 'cereza',     label: 'Entró como CEREZA' },
+      { key: 'despulpado', label: 'Entró DESPULPADO' },
+      { key: 'seco',       label: 'Entró SECO' },
+    ];
+    const PROCS = ['Natural', 'Honey', 'Lavado'];
+    const buckets = {};
+    for (const s of STAGES) {
+      buckets[s.key] = {};
+      for (const p of PROCS) buckets[s.key][p] = [];
+    }
     for (const l of closedLots) {
       if (l.conversion_factor == null) continue;
       const cf = Number(l.conversion_factor);
       if (!Number.isFinite(cf) || cf <= 0) continue;
-      if (byProc[l.process_type]) byProc[l.process_type].push({ cf, kg: Number(l.kg_dried_output || 0) });
+      const stage = l.processing_stage || 'cereza';
+      if (!buckets[stage] || !buckets[stage][l.process_type]) continue;
+      buckets[stage][l.process_type].push({ cf, kg: Number(l.kg_dried_output || 0) });
     }
-    const cards = ['Natural', 'Honey', 'Lavado'].map((p) => {
-      const arr = byProc[p];
-      // Promedio ponderado por kg seco final (más representativo
-      // que promedio simple — un lote de 5 kg pesa igual que uno
-      // de 500).
-      const totalKg = arr.reduce((s, x) => s + x.kg, 0);
-      let avg = null;
-      if (totalKg > 0) avg = arr.reduce((s, x) => s + x.cf * x.kg, 0) / totalKg;
-      const target = p === 'Natural' ? '≤ 3.6' : '≤ 5.2';
-      return el('div', { class: 'stat-card', style: `border-left:4px solid ${PROCESS_COLORS[p]};` }, [
-        el('p', { class: 'stat-label', text: p }),
-        el('p', { class: 'stat-val', text: avg != null ? `${roundN(avg, 2)}×` : '—' }),
-        el('p', { class: 'stat-sub' }, [
-          arr.length === 0 ? 'sin baches cerrados' : `${arr.length} baches · ${fmtKg(totalKg)} seco · objetivo ${target}`,
-        ]),
+
+    const sections = STAGES.map((s) => {
+      const cards = PROCS.map((p) => {
+        const arr = buckets[s.key][p];
+        const totalKg = arr.reduce((sum, x) => sum + x.kg, 0);
+        const avg = totalKg > 0
+          ? arr.reduce((sum, x) => sum + x.cf * x.kg, 0) / totalKg
+          : null;
+        const target = conversionTarget(s.key, p);
+        return el('div', {
+          class: 'stat-card',
+          style: `border-left:4px solid ${PROCS_FAINT[p] || '#9aa3ae'};${arr.length === 0 ? 'opacity:0.45;' : ''}`,
+        }, [
+          el('p', { class: 'stat-label', text: p }),
+          el('p', { class: 'stat-val',
+            text: avg != null ? `${roundN(avg, 2)}×` : '—' }),
+          el('p', { class: 'stat-sub' }, [
+            arr.length === 0
+              ? 'sin baches'
+              : `${arr.length} baches · ${fmtKg(totalKg)} seco · obj ${target}`,
+          ]),
+        ]);
+      });
+      // Total cuenta para el header de la sección
+      const stageTotal = PROCS.reduce((sum, p) => sum + buckets[s.key][p].length, 0);
+      return el('div', { class: 'space-y-1' }, [
+        el('p', { class: 'eyebrow text-[10px] text-ink-500',
+          text: `${s.label} · ${stageTotal} bache(s)` }),
+        el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, cards),
       ]);
     });
-    return el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, cards);
+
+    return el('div', { class: 'space-y-3' }, sections);
   }
 
   function renderAlertsSection(active, closedInRange, stageAvgs) {
@@ -315,11 +352,12 @@ export async function fincaAnalyticsView() {
       el('div', { class: 'p-3 space-y-2' }, [
         alertTable(
           'Baches en SECADO por más de 10 días',
-          ['Bache', 'Proceso', 'kg cereza', 'Equipo', 'Días en secado'],
+          ['Bache', 'Proceso', 'Variedad', 'kg cereza', 'Equipo', 'Días en secado'],
           slowDrying,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
+            varietyNames(l),
             fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
             (l.drying_locations || []).join(' · ') || '—',
             { text: `${l._days}d`, alert: true },
@@ -328,11 +366,12 @@ export async function fincaAnalyticsView() {
         ),
         alertTable(
           'Baches en FERMENTACIÓN por más de 5 días',
-          ['Bache', 'Proceso', 'kg cereza', 'Tipo / Tanque', 'Días en ferm.'],
+          ['Bache', 'Proceso', 'Variedad', 'kg cereza', 'Tipo / Tanque', 'Días en ferm.'],
           slowFerm,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
+            varietyNames(l),
             fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
             [
               (l.fermentation_types || []).join(' · '),
@@ -344,11 +383,12 @@ export async function fincaAnalyticsView() {
         ),
         alertTable(
           'Baches ACTIVOS con > 20 días sin llegar a Punto Final',
-          ['Bache', 'Proceso', 'Etapa actual', 'kg cereza', 'Inicio', 'Días en proceso'],
+          ['Bache', 'Proceso', 'Variedad', 'Etapa actual', 'kg cereza', 'Inicio', 'Días en proceso'],
           slowE2E,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
+            varietyNames(l),
             statusLabel(l.status),
             fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
             fmtDate(l.start_date),
@@ -358,11 +398,12 @@ export async function fincaAnalyticsView() {
         ),
         alertTable(
           'ATRASADOS — más días en su etapa que el promedio del proceso',
-          ['Bache', 'Proceso', 'Etapa actual', 'Días en etapa', 'Promedio', 'Atraso'],
+          ['Bache', 'Proceso', 'Variedad', 'Etapa actual', 'Días en etapa', 'Promedio', 'Atraso'],
           overdue,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
+            varietyNames(l),
             l._stage,
             { text: `${roundN(l._dInStage, 1)}d`, alert: true },
             { text: `${roundN(l._expected, 1)}d` },
@@ -372,11 +413,12 @@ export async function fincaAnalyticsView() {
         ),
         alertTable(
           'Alertas por CONVERSIÓN (lotes cerrados en el rango)',
-          ['Bache', 'Proceso', 'Stage inicial', 'kg cereza', 'kg seco', 'Conversión', 'Motivo'],
+          ['Bache', 'Proceso', 'Variedad', 'Stage inicial', 'kg cereza', 'kg seco', 'Conversión', 'Motivo'],
           convRows,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
+            varietyNames(l),
             l.processing_stage || '—',
             fmtKg(l.kg_input_initial ?? 0),
             fmtKg(l.kg_dried_output ?? 0),
@@ -1117,25 +1159,53 @@ function fmtShortKg(n) {
   return `${Math.round(v)}`;
 }
 
-// Reglas de conversión por proceso. Devuelve el motivo de alerta
-// o null si está OK.
+// Devuelve los nombres de variedades del lote separados por coma,
+// o "—" si no tiene. Para las tablas de alertas.
+function varietyNames(lot) {
+  const arr = (lot.varieties || []).map((v) => v.name).filter(Boolean);
+  return arr.length > 0 ? arr.join(', ') : '—';
+}
+
+// Reglas de conversión según el stage DE ENTRADA del bache.
+// La etapa inicial manda: si arrancó ya despulpado o ya seco no
+// tiene sentido aplicar el umbral de Lavado-cereza (5.2). Cada
+// stage tiene su propio rango esperado:
+//
+//   cereza     → Natural ≤ 3.6 · Honey/Lavado ≤ 5.2
+//   despulpado → todos los procesos ≤ 3.0  (rango típico 2.5-3.0)
+//   seco       → todos los procesos ≤ 1.05 (debe estar ≈ 1)
+//
+// Devuelve el motivo de alerta o null si está OK.
 function conversionAlert(lot) {
   const cf = Number(lot.conversion_factor);
   if (!Number.isFinite(cf) || cf <= 0) return null;
-  // Si el bache nació en stage 'seco', conversión real ≈ 1.
-  // Cualquier desviación significativa (>1.05) sugiere problemas
-  // de captura o pérdidas inusuales.
-  if (lot.processing_stage === 'seco') {
-    if (cf > 1.05) return `> 1.05 (stage seco)`;
+  const stage = lot.processing_stage;
+
+  if (stage === 'seco') {
+    if (cf > 1.05) return `> 1.05 (entró seco)`;
     return null;
   }
-  if (lot.process_type === 'Natural') {
-    if (cf > 3.6) return `> 3.6 (Natural)`;
+  if (stage === 'despulpado') {
+    if (cf > 3.0) return `> 3.0 (entró despulpado)`;
+    return null;
   }
-  if (lot.process_type === 'Honey' || lot.process_type === 'Lavado') {
-    if (cf > 5.2) return `> 5.2 (${lot.process_type})`;
+  // Stage = cereza (o no informado): aplica el umbral por proceso.
+  if (lot.process_type === 'Natural' && cf > 3.6) {
+    return `> 3.6 (Natural / cereza)`;
+  }
+  if ((lot.process_type === 'Honey' || lot.process_type === 'Lavado') && cf > 5.2) {
+    return `> 5.2 (${lot.process_type} / cereza)`;
   }
   return null;
+}
+
+// Umbral esperado por (stage, proceso) — sirve para mostrar el
+// objetivo en cada card de conversión KPI.
+function conversionTarget(stage, processType) {
+  if (stage === 'seco') return '≤ 1.05';
+  if (stage === 'despulpado') return '≤ 3.0';
+  if (processType === 'Natural') return '≤ 3.6';
+  return '≤ 5.2';   // Honey / Lavado / default
 }
 
 // Renderiza una tabla compacta de alertas en <details> colapsable.
