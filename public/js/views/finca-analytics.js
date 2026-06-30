@@ -187,13 +187,32 @@ export async function fincaAnalyticsView() {
       renderDryingDistribution(filteredAll),
       'Suma kg cereza inicial de baches en Drying agrupados por marquesina/equipo. "Descanso" agrupa los lotes en Resting.'));
 
+    // Stage averages se calculan SIEMPRE con TODO el histórico
+    // (Ready/Delivered, sin filtro de fecha) — esto pidió el
+    // usuario para el forecast. Sin esto, rangos cortos darían
+    // promedios poco confiables.
+    const stageAvgs = computeStageAverages(allLots);
+
     // ── Conversión promedio por proceso (closed in range) ──
     root.append(chartCard('Conversión promedio por proceso',
       renderConversionByProcess(closedInRange),
       'Solo lotes cerrados (Ready/Delivered) en el rango. Conversión = kg_input_initial / kg_dried_output.'));
 
-    // ── Alertas operativas (timing + conversión) ─────────
-    root.append(renderAlertsSection(filteredAll, closedInRange));
+    // ── Tiempo promedio por etapa (Tier 2 #7) ─────────────
+    root.append(chartCard('Tiempo promedio por etapa',
+      renderStageSplits(stageAvgs),
+      'Calculado con TODOS los lotes Ready/Delivered del histórico (ignora el filtro de período).'));
+
+    // ── Antigüedad en bodega de lotes Ready (Tier 2 #8) ──
+    root.append(chartCard('Antigüedad en bodega · lotes Ready',
+      renderReadyAging(allLots),
+      'Snapshot HOY de baches Ready (no Delivered). Sobre 20d hay riesgo de degradación de taza.'));
+
+    // ── Forecast 7d (Tier 4 #15) ──────────────────────────
+    root.append(renderForecastSection(allLots, stageAvgs));
+
+    // ── Alertas operativas (timing + conversión + atrasados) ─
+    root.append(renderAlertsSection(filteredAll, closedInRange, stageAvgs));
 
     // ── Timeline del bache (solo si hay 1 seleccionado) ──
     if (state.bacheId) {
@@ -230,7 +249,7 @@ export async function fincaAnalyticsView() {
     return el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, cards);
   }
 
-  function renderAlertsSection(active, closedInRange) {
+  function renderAlertsSection(active, closedInRange, stageAvgs) {
     // 1. Baches en SECADO > 10 días (status=Drying, today - drying_start_date)
     const slowDrying = active
       .filter((l) => l.status === 'Drying' && l.drying_start_date)
@@ -245,20 +264,44 @@ export async function fincaAnalyticsView() {
       .filter((l) => l._days > 5)
       .sort((a, b) => b._days - a._days);
 
-    // 3. Baches con END-TO-END > 20 días (cerrados, ready_date - start_date)
-    const slowE2E = closedInRange
-      .filter((l) => l.start_date && l.ready_date)
-      .map((l) => ({ ...l, _days: daysBetween(l.start_date, l.ready_date) }))
+    // 3. Baches ACTIVOS (sin llegar a Punto Final) con start_date
+    //    > 20 días — antes mostraba cerrados, ajustado para solo
+    //    los que siguen en proceso y no han cerrado.
+    const slowE2E = active
+      .filter((l) => l.start_date && ACTIVE_STATUSES.has(l.status))
+      .map((l) => ({ ...l, _days: daysBetween(l.start_date, today) }))
       .filter((l) => l._days > 20)
       .sort((a, b) => b._days - a._days);
 
-    // 4. Alertas de conversión (todos los closedInRange, marca rojo
+    // 4. ATRASADOS — baches activos cuyo tiempo en su etapa actual
+    //    supera el promedio histórico del proceso (por proceso). Si
+    //    no hay histórico para ese proceso, no entra en la lista.
+    const overdue = [];
+    for (const l of active) {
+      if (!ACTIVE_STATUSES.has(l.status)) continue;
+      const exp = expectedStageDays(l, stageAvgs);
+      if (exp == null) continue;
+      const dInStage = daysInCurrentStage(l, today);
+      if (dInStage == null || exp <= 0) continue;
+      const delay = dInStage - exp;
+      if (delay > 0.5) {
+        overdue.push({
+          ...l,
+          _stage: stageName(l.status),
+          _dInStage: dInStage,
+          _expected: exp,
+          _delay: delay,
+        });
+      }
+    }
+    overdue.sort((a, b) => b._delay - a._delay);
+
+    // 5. Alertas de conversión (todos los closedInRange, marca rojo
     //    los que se salen de rango por proceso o stage 'seco').
     const convRows = closedInRange
       .filter((l) => l.conversion_factor != null)
       .map((l) => ({ ...l, _alert: conversionAlert(l) }))
       .sort((a, b) => {
-        // Rojos primero, luego por mayor conversión
         if (!!a._alert !== !!b._alert) return a._alert ? -1 : 1;
         return Number(b.conversion_factor) - Number(a.conversion_factor);
       });
@@ -267,9 +310,9 @@ export async function fincaAnalyticsView() {
       el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-baseline justify-between gap-2' }, [
         el('p', { class: 'eyebrow text-[10px]', text: 'Alertas operativas' }),
         el('p', { class: 'text-[10px] text-ink-300 italic',
-          text: 'Detección automática de baches lentos o con conversión fuera de rango.' }),
+          text: 'Cada tabla es desplegable. Conteo en el header.' }),
       ]),
-      el('div', { class: 'p-3 space-y-3' }, [
+      el('div', { class: 'p-3 space-y-2' }, [
         alertTable(
           'Baches en SECADO por más de 10 días',
           ['Bache', 'Proceso', 'kg cereza', 'Equipo', 'Días en secado'],
@@ -281,7 +324,7 @@ export async function fincaAnalyticsView() {
             (l.drying_locations || []).join(' · ') || '—',
             { text: `${l._days}d`, alert: true },
           ],
-          slowDrying.length === 0 ? '✓ Ningún bache excede 10 días en secado.' : null,
+          '✓ Ningún bache excede 10 días en secado.',
         ),
         alertTable(
           'Baches en FERMENTACIÓN por más de 5 días',
@@ -297,21 +340,35 @@ export async function fincaAnalyticsView() {
             ].filter(Boolean).join(' · ') || '—',
             { text: `${l._days}d`, alert: true },
           ],
-          slowFerm.length === 0 ? '✓ Ningún bache excede 5 días en fermentación.' : null,
+          '✓ Ningún bache excede 5 días en fermentación.',
         ),
         alertTable(
-          'Baches con proceso ENTRADA → LISTO por más de 20 días',
-          ['Bache', 'Proceso', 'kg seco', 'Inicio', 'Cierre', 'Total'],
+          'Baches ACTIVOS con > 20 días sin llegar a Punto Final',
+          ['Bache', 'Proceso', 'Etapa actual', 'kg cereza', 'Inicio', 'Días en proceso'],
           slowE2E,
           (l) => [
             bacheLink(l),
             l.process_type || '—',
-            fmtKg(l.kg_dried_output ?? 0),
+            statusLabel(l.status),
+            fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
             fmtDate(l.start_date),
-            fmtDate(l.ready_date),
             { text: `${l._days}d`, alert: true },
           ],
-          slowE2E.length === 0 ? '✓ Ningún bache cerrado en el rango supera 20 días end-to-end.' : null,
+          '✓ Ningún bache activo lleva más de 20 días sin cerrar.',
+        ),
+        alertTable(
+          'ATRASADOS — más días en su etapa que el promedio del proceso',
+          ['Bache', 'Proceso', 'Etapa actual', 'Días en etapa', 'Promedio', 'Atraso'],
+          overdue,
+          (l) => [
+            bacheLink(l),
+            l.process_type || '—',
+            l._stage,
+            { text: `${roundN(l._dInStage, 1)}d`, alert: true },
+            { text: `${roundN(l._expected, 1)}d` },
+            { text: `+${roundN(l._delay, 1)}d`, alert: true, danger: true },
+          ],
+          '✓ Ningún bache excede el promedio del proceso en su etapa actual.',
         ),
         alertTable(
           'Alertas por CONVERSIÓN (lotes cerrados en el rango)',
@@ -328,8 +385,7 @@ export async function fincaAnalyticsView() {
               ? { text: l._alert, alert: true, danger: true }
               : { text: 'OK', alert: false },
           ],
-          convRows.length === 0 ? 'Sin lotes cerrados en el rango.' : null,
-          { showAll: true },   // mostramos todos, no solo los rojos
+          'Sin lotes cerrados en el rango.',
         ),
       ]),
     ]);
@@ -343,6 +399,173 @@ export async function fincaAnalyticsView() {
       onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${l.id}`); },
       text: l.bache_code || l.lot_code || '—',
     });
+  }
+
+  // ── Tiempo promedio por etapa (Tier 2 #7) ─────────────────
+  function renderStageSplits(stageAvgs) {
+    const procs = ['Natural', 'Honey', 'Lavado'];
+    const procCount = stageAvgs.__counts || {};
+    return el('div', { class: 'overflow-x-auto' }, [
+      el('table', { class: 'w-full text-[12px]' }, [
+        el('thead', {}, [el('tr', { class: 'text-ink-500 uppercase tracking-eyebrow text-[10px] bg-cream' }, [
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Proceso' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'Fermentación' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'Secado' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'Descanso' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'Total' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'n' }),
+        ])]),
+        el('tbody', {}, procs.map((p) => {
+          const a = stageAvgs[p] || {};
+          const total = (a.ferm || 0) + (a.drying || 0) + (a.resting || 0);
+          return el('tr', { class: 'border-t border-sand' }, [
+            el('td', { class: 'px-3 py-2' }, [
+              el('span', { style: `display:inline-block;width:8px;height:8px;background:${PROCESS_COLORS[p]};border-radius:2px;margin-right:6px;` }),
+              document.createTextNode(p),
+            ]),
+            el('td', { class: 'px-3 py-2 text-right font-mono', text: a.ferm    != null ? `${roundN(a.ferm, 1)}d` : '—' }),
+            el('td', { class: 'px-3 py-2 text-right font-mono', text: a.drying  != null ? `${roundN(a.drying, 1)}d` : '—' }),
+            el('td', { class: 'px-3 py-2 text-right font-mono', text: a.resting != null ? `${roundN(a.resting, 1)}d` : '—' }),
+            el('td', { class: 'px-3 py-2 text-right font-mono font-bold text-navy',
+              text: total > 0 ? `${roundN(total, 1)}d` : '—' }),
+            el('td', { class: 'px-3 py-2 text-right font-mono text-ink-500',
+              text: String(procCount[p] || 0) }),
+          ]);
+        })),
+      ]),
+    ]);
+  }
+
+  // ── Antigüedad en bodega de lotes Ready (Tier 2 #8) ──────
+  function renderReadyAging(lots) {
+    const readyLots = lots.filter((l) => l.status === 'Ready' && l.ready_date);
+    const buckets = [
+      { label: '0–10 días',  min: 0,  max: 10, color: '#5d8b66', desc: 'fresco' },
+      { label: '11–20 días', min: 11, max: 20, color: '#ddae3e', desc: 'atención' },
+      { label: '> 20 días',  min: 21, max: 9999, color: '#a8351c', desc: 'crítico' },
+    ];
+    const enriched = readyLots.map((l) => ({
+      ...l,
+      _days: daysBetween(l.ready_date, today),
+      _kgDry: Number(l.kg_dried_output || 0),
+    }));
+    const bars = buckets.map((b) => {
+      const inBucket = enriched.filter((l) => l._days >= b.min && l._days <= b.max);
+      const kg = inBucket.reduce((s, l) => s + l._kgDry, 0);
+      return {
+        label: b.label,
+        value: kg,
+        color: b.color,
+        sublabel: `${inBucket.length} ${inBucket.length === 1 ? 'lote' : 'lotes'} · ${b.desc}`,
+      };
+    });
+    if (readyLots.length === 0) {
+      return el('p', { class: 'text-[12px] text-ink-300 italic text-center py-6',
+        text: 'No hay lotes Ready en bodega.' });
+    }
+    return horizontalBarChart(bars);
+  }
+
+  // ── Forecast 7d (Tier 4 #15) ───────────────────────────────
+  function renderForecastSection(lots, stageAvgs) {
+    const active = lots.filter((l) => ACTIVE_STATUSES.has(l.status));
+    const projections = active
+      .map((l) => ({ l, proj: forecastCloseDate(l, today, stageAvgs) }))
+      .filter((x) => x.proj != null);
+
+    // Buckets +0..+7, "+7d a +30d" agrupa, vencidos = lleva más
+    // días en su etapa que el promedio.
+    const buckets = [];
+    for (let i = 0; i <= 7; i++) {
+      const date = addDays(today, i);
+      buckets.push({ key: String(i), label: i === 0 ? 'Hoy' : `+${i}d`, date, items: [] });
+    }
+    const over7 = { key: 'over7', label: '+7 a +30d', date: null, items: [] };
+    const overdue = { key: 'overdue', label: 'Vencidos', date: null, items: [] };
+
+    for (const { l, proj } of projections) {
+      const d = proj.daysFromNow;
+      if (proj.overdue) overdue.items.push({ l, proj });
+      else if (d <= 7) buckets[d].items.push({ l, proj });
+      else if (d <= 30) over7.items.push({ l, proj });
+      else over7.items.push({ l, proj });
+    }
+
+    const allBuckets = [...buckets, over7, overdue];
+    const totalKg = allBuckets.reduce((s, b) =>
+      s + b.items.reduce((ss, x) => ss + estimateClosingKg(x.l), 0), 0);
+    const totalLots = allBuckets.reduce((s, b) => s + b.items.length, 0);
+
+    // Calendar visual: barras verticales por bucket con conteo + kg
+    const maxKgBar = Math.max(1, ...allBuckets.map((b) =>
+      b.items.reduce((s, x) => s + estimateClosingKg(x.l), 0)));
+
+    const calendarRow = el('div', { class: 'grid grid-cols-10 gap-1' },
+      allBuckets.map((b) => {
+        const kg = b.items.reduce((s, x) => s + estimateClosingKg(x.l), 0);
+        const barH = maxKgBar > 0 ? (kg / maxKgBar) * 60 : 0;
+        const isOver = b.key === 'overdue';
+        const color = isOver ? '#a8351c' : b.key === 'over7' ? '#9aa3ae' : '#3a6f4a';
+        return el('div', { class: 'flex flex-col items-center gap-1 text-center' }, [
+          el('div', { class: 'h-[70px] flex items-end justify-center w-full' }, [
+            el('div', {
+              style: `width:80%;height:${Math.max(2, barH)}px;background:${color};border-radius:2px 2px 0 0;`,
+              title: `${b.label}: ${b.items.length} lotes · ${fmtKg(kg)}`,
+            }),
+          ]),
+          el('p', { class: 'text-[10px] text-ink-500 font-mono', text: b.label }),
+          el('p', { class: 'text-[10px] font-mono text-ink-700 font-semibold', text: `${b.items.length}` }),
+          el('p', { class: 'text-[9px] text-ink-300 font-mono', text: fmtShortKg(kg) }),
+        ]);
+      }));
+
+    // Lotes que cierran en los próximos 7 días
+    const next7 = projections
+      .filter((x) => !x.proj.overdue && x.proj.daysFromNow <= 7)
+      .sort((a, b) => a.proj.daysFromNow - b.proj.daysFromNow);
+
+    return el('div', { class: 'ctrm-card overflow-hidden mb-3' }, [
+      el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-baseline justify-between gap-2 flex-wrap' }, [
+        el('p', { class: 'eyebrow text-[10px]', text: 'Forecast 7 días' }),
+        el('p', { class: 'text-[10px] text-ink-500 font-mono' }, [
+          `${totalLots} lotes activos · `,
+          el('strong', { class: 'text-navy', text: fmtKg(totalKg) }),
+          ` proyectado (estimación con promedios históricos)`,
+        ]),
+      ]),
+      el('div', { class: 'p-3 space-y-3' }, [
+        calendarRow,
+        next7.length === 0
+          ? el('p', { class: 'text-[12px] text-ink-300 italic text-center py-3',
+              text: 'Ningún lote cierra en los próximos 7 días según la proyección.' })
+          : el('div', { class: 'overflow-x-auto' }, [
+              el('table', { class: 'w-full text-[12px]' }, [
+                el('thead', {}, [el('tr', { class: 'text-ink-500 uppercase tracking-eyebrow text-[10px] bg-cream' }, [
+                  el('th', { class: 'px-3 py-1.5 text-left', text: 'Bache' }),
+                  el('th', { class: 'px-3 py-1.5 text-left', text: 'Proceso' }),
+                  el('th', { class: 'px-3 py-1.5 text-left', text: 'Etapa actual' }),
+                  el('th', { class: 'px-3 py-1.5 text-right', text: 'Días aquí' }),
+                  el('th', { class: 'px-3 py-1.5 text-left', text: 'Cierre proyectado' }),
+                  el('th', { class: 'px-3 py-1.5 text-right', text: 'kg seco est.' }),
+                ])]),
+                el('tbody', {}, next7.map(({ l, proj }) => el('tr', { class: 'border-t border-sand hover:bg-cream' }, [
+                  el('td', { class: 'px-3 py-2' }, [bacheLink(l)]),
+                  el('td', { class: 'px-3 py-2', text: l.process_type || '—' }),
+                  el('td', { class: 'px-3 py-2 text-[11px]', text: proj.stage }),
+                  el('td', { class: 'px-3 py-2 text-right font-mono',
+                    text: `${proj.daysInStage != null ? roundN(proj.daysInStage, 1) : '?'}d` }),
+                  el('td', { class: 'px-3 py-2 font-mono text-[11px]' }, [
+                    document.createTextNode(fmtDate(proj.date)),
+                    el('span', { class: 'text-ink-500 ml-1',
+                      text: `(${proj.daysFromNow === 0 ? 'hoy' : '+' + proj.daysFromNow + 'd'})` }),
+                  ]),
+                  el('td', { class: 'px-3 py-2 text-right font-mono',
+                    text: fmtKg(estimateClosingKg(l)) }),
+                ]))),
+              ]),
+            ]),
+      ]),
+    ]);
   }
 
   function selectedLotCard(lot) {
@@ -731,6 +954,169 @@ function metaCell(label, value, valueClass = '') {
   ]);
 }
 
+// ── Forecast / Splits helpers ─────────────────────────────────
+
+// Para cada proceso, calcula promedios de días en cada etapa
+// (Fermentación, Secado, Descanso) usando TODOS los lotes
+// Ready/Delivered del histórico. El usuario eligió usar todo el
+// histórico para evitar promedios poco confiables con ventanas
+// cortas.
+function computeStageAverages(allLots) {
+  const procs = ['Natural', 'Honey', 'Lavado'];
+  const groups = {};
+  const counts = {};
+  for (const p of procs) {
+    groups[p] = { ferm: [], drying: [], resting: [] };
+    counts[p] = 0;
+  }
+  for (const l of allLots) {
+    if (!(l.status === 'Ready' || l.status === 'Delivered')) continue;
+    if (!groups[l.process_type]) continue;
+    counts[l.process_type] += 1;
+    const g = groups[l.process_type];
+    // Fermentación: start_date → drying_start_date
+    if (l.start_date && l.drying_start_date) {
+      g.ferm.push(daysBetween(l.start_date, l.drying_start_date));
+    }
+    // Secado total: drying_start_date → primer resting.start_date
+    // o ready_date si no hubo descanso.
+    if (l.drying_start_date) {
+      const cycles = (l.resting_cycles || []).slice()
+        .sort((a, b) => a.cycle_number - b.cycle_number);
+      const dryEnd = cycles.length > 0 ? cycles[0].start_date : l.ready_date;
+      if (dryEnd) g.drying.push(daysBetween(l.drying_start_date, dryEnd));
+    }
+    // Descanso: por cada ciclo cerrado.
+    for (const c of (l.resting_cycles || [])) {
+      if (c.start_date && c.end_date) {
+        g.resting.push(daysBetween(c.start_date, c.end_date));
+      }
+    }
+  }
+  const out = { __counts: counts };
+  for (const p of procs) {
+    out[p] = {
+      ferm:    mean(groups[p].ferm),
+      drying:  mean(groups[p].drying),
+      resting: mean(groups[p].resting),
+    };
+  }
+  return out;
+}
+
+function mean(arr) {
+  if (!arr || arr.length === 0) return null;
+  return arr.reduce((s, x) => s + x, 0) / arr.length;
+}
+
+// Días que el bache lleva en su ETAPA ACTUAL (no en el proceso
+// total). Para Drying usa drying_start_date; para Resting usa
+// start_date del ciclo activo; para InFermentation usa
+// start_date del bache.
+function daysInCurrentStage(lot, today) {
+  if (lot.status === 'InFermentation' && lot.start_date) {
+    return daysBetween(lot.start_date, today);
+  }
+  if (lot.status === 'Drying' && lot.drying_start_date) {
+    return daysBetween(lot.drying_start_date, today);
+  }
+  if (lot.status === 'Resting') {
+    const cycles = (lot.resting_cycles || []).slice()
+      .sort((a, b) => b.cycle_number - a.cycle_number);
+    const active = cycles.find((c) => !c.end_date) || cycles[0];
+    if (active && active.start_date) return daysBetween(active.start_date, today);
+  }
+  return null;
+}
+
+// Promedio histórico de la etapa actual del lote (días que se
+// espera que dure esa etapa según promedio del proceso).
+function expectedStageDays(lot, stageAvgs) {
+  if (!stageAvgs || !stageAvgs[lot.process_type]) return null;
+  const a = stageAvgs[lot.process_type];
+  if (lot.status === 'InFermentation') return a.ferm;
+  if (lot.status === 'Drying')         return a.drying;
+  if (lot.status === 'Resting')        return a.resting;
+  return null;
+}
+
+function stageName(status) {
+  if (status === 'InFermentation') return 'Fermentación';
+  if (status === 'Drying')         return 'Secado';
+  if (status === 'Resting')        return 'Descanso';
+  return status;
+}
+
+// Proyecta fecha de cierre (llegada a Ready) sumando los días que
+// le faltan en la etapa actual + las siguientes etapas según
+// promedios. Si está atrasado en su etapa actual (más días de lo
+// esperado), marca overdue=true y cierre proyectado = HOY.
+function forecastCloseDate(lot, today, stageAvgs) {
+  if (!stageAvgs || !stageAvgs[lot.process_type]) return null;
+  const a = stageAvgs[lot.process_type];
+  const inStage = daysInCurrentStage(lot, today);
+  let remaining = 0;
+  let overdue = false;
+  let stageLabelText = '';
+  if (lot.status === 'InFermentation') {
+    stageLabelText = 'Fermentación';
+    if (a.ferm == null) return null;
+    if (inStage > a.ferm) overdue = true;
+    remaining += Math.max(0, (a.ferm || 0) - (inStage || 0));
+    remaining += a.drying  || 0;
+    remaining += a.resting || 0;
+  } else if (lot.status === 'Drying') {
+    stageLabelText = 'Secado';
+    if (a.drying == null) return null;
+    if (inStage > a.drying) overdue = true;
+    remaining += Math.max(0, (a.drying || 0) - (inStage || 0));
+    remaining += a.resting || 0;
+  } else if (lot.status === 'Resting') {
+    stageLabelText = 'Descanso';
+    if (a.resting == null) return null;
+    if (inStage > a.resting) overdue = true;
+    remaining += Math.max(0, (a.resting || 0) - (inStage || 0));
+  } else {
+    return null;
+  }
+  const daysFromNow = Math.round(remaining);
+  const dateMs = new Date(today + 'T00:00:00Z').getTime() + daysFromNow * 86400000;
+  return {
+    daysFromNow,
+    date: new Date(dateMs).toISOString().slice(0, 10),
+    stage: stageLabelText,
+    daysInStage: inStage,
+    overdue,
+  };
+}
+
+// Estima kg seco final del bache aplicando la conversión promedio
+// de su proceso (más conservador que asumir factor 1).
+function estimateClosingKg(lot) {
+  if (lot.kg_dried_output != null && Number(lot.kg_dried_output) > 0) {
+    return Number(lot.kg_dried_output);
+  }
+  const cereza = Number(lot.kg_input_initial ?? lot.kg_cherry_input ?? 0);
+  if (cereza <= 0) return 0;
+  // Divisores típicos por proceso (factor de conversión cereza→seco)
+  const divisor = lot.process_type === 'Natural' ? 3.4
+                : lot.process_type === 'Honey'   ? 1.7
+                : lot.process_type === 'Lavado'  ? 1.34
+                : 3.0;
+  return cereza / divisor;
+}
+
+function addDays(ymd, days) {
+  const ms = new Date(ymd + 'T00:00:00Z').getTime() + days * 86400000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function fmtShortKg(n) {
+  const v = Number(n || 0);
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}t`;
+  return `${Math.round(v)}`;
+}
+
 // Reglas de conversión por proceso. Devuelve el motivo de alerta
 // o null si está OK.
 function conversionAlert(lot) {
@@ -752,42 +1138,55 @@ function conversionAlert(lot) {
   return null;
 }
 
-// Renderiza una tabla compacta de alertas con columnas y filas.
+// Renderiza una tabla compacta de alertas en <details> colapsable.
+// Por defecto se abre si tiene resultados, se cierra si está vacía.
 // `rows` es el array de objetos; `rowFn` mapea cada uno a la lista
 // de celdas (string o { text, alert, danger }).
-function alertTable(title, headers, rows, rowFn, emptyMessage, opts = {}) {
-  return el('div', { class: 'bg-white border border-sand rounded-md overflow-hidden' }, [
-    el('div', { class: 'px-3 py-2 border-b border-sand flex items-baseline justify-between gap-2' }, [
-      el('p', { class: 'font-display font-semibold text-[12px] text-navy', text: title }),
-      el('span', { class: 'text-[10px] text-ink-500 font-mono', text: `${rows.length} lote(s)` }),
-    ]),
-    rows.length === 0
-      ? el('p', { class: 'px-3 py-3 text-[11px] text-ok italic', text: emptyMessage || 'Sin resultados.' })
-      : el('div', { class: 'overflow-x-auto' }, [
-          el('table', { class: 'w-full text-[12px]' }, [
-            el('thead', {}, [el('tr', { class: 'bg-cream text-ink-500 uppercase tracking-eyebrow text-[10px]' },
-              headers.map((h, i) => el('th', {
-                class: `px-3 py-1.5 text-${i === headers.length - 1 ? 'right' : 'left'}`,
-                text: h,
-              })))]),
-            el('tbody', {}, rows.map((r) => {
-              const cells = rowFn(r);
-              const isRedRow = cells.some((c) => c && typeof c === 'object' && c.danger);
-              return el('tr', {
-                class: `border-t border-sand ${isRedRow ? 'bg-crit-bg/50' : 'hover:bg-cream'}`,
-              }, cells.map((c, i) => {
-                if (c instanceof Node) {
-                  return el('td', { class: 'px-3 py-1.5' }, [c]);
-                }
-                const cell = (c && typeof c === 'object') ? c : { text: c };
-                const isLast = i === cells.length - 1;
-                const cls = `px-3 py-1.5 ${isLast ? 'text-right' : 'text-left'} ${cell.alert ? 'font-mono font-semibold ' + (cell.danger ? 'text-crit' : 'text-warn') : 'text-ink-700'}`;
-                return el('td', { class: cls, text: String(cell.text == null ? '—' : cell.text) });
-              }));
-            })),
-          ]),
-        ]),
+function alertTable(title, headers, rows, rowFn, emptyMessage) {
+  const hasRows = rows.length > 0;
+  const summary = el('summary', {
+    class: 'px-3 py-2 cursor-pointer flex items-baseline justify-between gap-2 hover:bg-cream',
+  }, [
+    el('p', { class: 'font-display font-semibold text-[12px] text-navy', text: title }),
+    el('span', {
+      class: `text-[10px] font-mono ${hasRows ? 'text-crit font-bold' : 'text-ok'}`,
+      text: hasRows ? `${rows.length} lote(s) ▾` : '✓ sin alertas',
+    }),
   ]);
+
+  const body = hasRows
+    ? el('div', { class: 'overflow-x-auto border-t border-sand' }, [
+        el('table', { class: 'w-full text-[12px]' }, [
+          el('thead', {}, [el('tr', { class: 'bg-cream text-ink-500 uppercase tracking-eyebrow text-[10px]' },
+            headers.map((h, i) => el('th', {
+              class: `px-3 py-1.5 text-${i === headers.length - 1 ? 'right' : 'left'}`,
+              text: h,
+            })))]),
+          el('tbody', {}, rows.map((r) => {
+            const cells = rowFn(r);
+            const isRedRow = cells.some((c) => c && typeof c === 'object' && c.danger);
+            return el('tr', {
+              class: `border-t border-sand ${isRedRow ? 'bg-crit-bg/50' : 'hover:bg-cream'}`,
+            }, cells.map((c, i) => {
+              if (c instanceof Node) {
+                return el('td', { class: 'px-3 py-1.5' }, [c]);
+              }
+              const cell = (c && typeof c === 'object') ? c : { text: c };
+              const isLast = i === cells.length - 1;
+              const cls = `px-3 py-1.5 ${isLast ? 'text-right' : 'text-left'} ${cell.alert ? 'font-mono font-semibold ' + (cell.danger ? 'text-crit' : 'text-warn') : 'text-ink-700'}`;
+              return el('td', { class: cls, text: String(cell.text == null ? '—' : cell.text) });
+            }));
+          })),
+        ]),
+      ])
+    : el('p', { class: 'px-3 py-3 text-[11px] text-ok italic border-t border-sand',
+        text: emptyMessage || 'Sin resultados.' });
+
+  const det = el('details', {
+    class: 'bg-white border border-sand rounded-md overflow-hidden',
+  }, [summary, body]);
+  if (hasRows) det.setAttribute('open', 'true');
+  return det;
 }
 
 // Convierte preset → { from, to } YYYY-MM-DD. `today` es la base.
