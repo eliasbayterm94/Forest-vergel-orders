@@ -26,6 +26,7 @@ import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { pieChart, groupedBarChart, horizontalBarChart } from '../ui/charts.js';
 import { createCombobox } from '../ui/combobox.js';
+import { navigate } from '../router.js';
 
 const PROCESS_COLORS = {
   Natural: '#3a6f4a',
@@ -186,11 +187,162 @@ export async function fincaAnalyticsView() {
       renderDryingDistribution(filteredAll),
       'Suma kg cereza inicial de baches en Drying agrupados por marquesina/equipo. "Descanso" agrupa los lotes en Resting.'));
 
+    // ── Conversión promedio por proceso (closed in range) ──
+    root.append(chartCard('Conversión promedio por proceso',
+      renderConversionByProcess(closedInRange),
+      'Solo lotes cerrados (Ready/Delivered) en el rango. Conversión = kg_input_initial / kg_dried_output.'));
+
+    // ── Alertas operativas (timing + conversión) ─────────
+    root.append(renderAlertsSection(filteredAll, closedInRange));
+
     // ── Timeline del bache (solo si hay 1 seleccionado) ──
     if (state.bacheId) {
       const lot = allLots.find((l) => l.id === state.bacheId);
       if (lot) root.append(renderLotTimeline(lot, earliestShipByLot.get(lot.id)));
     }
+  }
+
+  function renderConversionByProcess(closedLots) {
+    const byProc = { Natural: [], Honey: [], Lavado: [] };
+    for (const l of closedLots) {
+      if (l.conversion_factor == null) continue;
+      const cf = Number(l.conversion_factor);
+      if (!Number.isFinite(cf) || cf <= 0) continue;
+      if (byProc[l.process_type]) byProc[l.process_type].push({ cf, kg: Number(l.kg_dried_output || 0) });
+    }
+    const cards = ['Natural', 'Honey', 'Lavado'].map((p) => {
+      const arr = byProc[p];
+      // Promedio ponderado por kg seco final (más representativo
+      // que promedio simple — un lote de 5 kg pesa igual que uno
+      // de 500).
+      const totalKg = arr.reduce((s, x) => s + x.kg, 0);
+      let avg = null;
+      if (totalKg > 0) avg = arr.reduce((s, x) => s + x.cf * x.kg, 0) / totalKg;
+      const target = p === 'Natural' ? '≤ 3.6' : '≤ 5.2';
+      return el('div', { class: 'stat-card', style: `border-left:4px solid ${PROCESS_COLORS[p]};` }, [
+        el('p', { class: 'stat-label', text: p }),
+        el('p', { class: 'stat-val', text: avg != null ? `${roundN(avg, 2)}×` : '—' }),
+        el('p', { class: 'stat-sub' }, [
+          arr.length === 0 ? 'sin baches cerrados' : `${arr.length} baches · ${fmtKg(totalKg)} seco · objetivo ${target}`,
+        ]),
+      ]);
+    });
+    return el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, cards);
+  }
+
+  function renderAlertsSection(active, closedInRange) {
+    // 1. Baches en SECADO > 10 días (status=Drying, today - drying_start_date)
+    const slowDrying = active
+      .filter((l) => l.status === 'Drying' && l.drying_start_date)
+      .map((l) => ({ ...l, _days: daysBetween(l.drying_start_date, today) }))
+      .filter((l) => l._days > 10)
+      .sort((a, b) => b._days - a._days);
+
+    // 2. Baches en FERMENTACIÓN > 5 días (status=InFermentation)
+    const slowFerm = active
+      .filter((l) => l.status === 'InFermentation' && l.start_date)
+      .map((l) => ({ ...l, _days: daysBetween(l.start_date, today) }))
+      .filter((l) => l._days > 5)
+      .sort((a, b) => b._days - a._days);
+
+    // 3. Baches con END-TO-END > 20 días (cerrados, ready_date - start_date)
+    const slowE2E = closedInRange
+      .filter((l) => l.start_date && l.ready_date)
+      .map((l) => ({ ...l, _days: daysBetween(l.start_date, l.ready_date) }))
+      .filter((l) => l._days > 20)
+      .sort((a, b) => b._days - a._days);
+
+    // 4. Alertas de conversión (todos los closedInRange, marca rojo
+    //    los que se salen de rango por proceso o stage 'seco').
+    const convRows = closedInRange
+      .filter((l) => l.conversion_factor != null)
+      .map((l) => ({ ...l, _alert: conversionAlert(l) }))
+      .sort((a, b) => {
+        // Rojos primero, luego por mayor conversión
+        if (!!a._alert !== !!b._alert) return a._alert ? -1 : 1;
+        return Number(b.conversion_factor) - Number(a.conversion_factor);
+      });
+
+    return el('div', { class: 'ctrm-card overflow-hidden mb-3' }, [
+      el('div', { class: 'px-3 py-2 bg-cream border-b border-sand flex items-baseline justify-between gap-2' }, [
+        el('p', { class: 'eyebrow text-[10px]', text: 'Alertas operativas' }),
+        el('p', { class: 'text-[10px] text-ink-300 italic',
+          text: 'Detección automática de baches lentos o con conversión fuera de rango.' }),
+      ]),
+      el('div', { class: 'p-3 space-y-3' }, [
+        alertTable(
+          'Baches en SECADO por más de 10 días',
+          ['Bache', 'Proceso', 'kg cereza', 'Equipo', 'Días en secado'],
+          slowDrying,
+          (l) => [
+            bacheLink(l),
+            l.process_type || '—',
+            fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
+            (l.drying_locations || []).join(' · ') || '—',
+            { text: `${l._days}d`, alert: true },
+          ],
+          slowDrying.length === 0 ? '✓ Ningún bache excede 10 días en secado.' : null,
+        ),
+        alertTable(
+          'Baches en FERMENTACIÓN por más de 5 días',
+          ['Bache', 'Proceso', 'kg cereza', 'Tipo / Tanque', 'Días en ferm.'],
+          slowFerm,
+          (l) => [
+            bacheLink(l),
+            l.process_type || '—',
+            fmtKg(l.kg_input_initial ?? l.kg_cherry_input ?? 0),
+            [
+              (l.fermentation_types || []).join(' · '),
+              (l.fermentation_tanks || []).join(' · '),
+            ].filter(Boolean).join(' · ') || '—',
+            { text: `${l._days}d`, alert: true },
+          ],
+          slowFerm.length === 0 ? '✓ Ningún bache excede 5 días en fermentación.' : null,
+        ),
+        alertTable(
+          'Baches con proceso ENTRADA → LISTO por más de 20 días',
+          ['Bache', 'Proceso', 'kg seco', 'Inicio', 'Cierre', 'Total'],
+          slowE2E,
+          (l) => [
+            bacheLink(l),
+            l.process_type || '—',
+            fmtKg(l.kg_dried_output ?? 0),
+            fmtDate(l.start_date),
+            fmtDate(l.ready_date),
+            { text: `${l._days}d`, alert: true },
+          ],
+          slowE2E.length === 0 ? '✓ Ningún bache cerrado en el rango supera 20 días end-to-end.' : null,
+        ),
+        alertTable(
+          'Alertas por CONVERSIÓN (lotes cerrados en el rango)',
+          ['Bache', 'Proceso', 'Stage inicial', 'kg cereza', 'kg seco', 'Conversión', 'Motivo'],
+          convRows,
+          (l) => [
+            bacheLink(l),
+            l.process_type || '—',
+            l.processing_stage || '—',
+            fmtKg(l.kg_input_initial ?? 0),
+            fmtKg(l.kg_dried_output ?? 0),
+            { text: `${roundN(Number(l.conversion_factor), 2)}×`, alert: !!l._alert },
+            l._alert
+              ? { text: l._alert, alert: true, danger: true }
+              : { text: 'OK', alert: false },
+          ],
+          convRows.length === 0 ? 'Sin lotes cerrados en el rango.' : null,
+          { showAll: true },   // mostramos todos, no solo los rojos
+        ),
+      ]),
+    ]);
+  }
+
+  function bacheLink(l) {
+    return el('button', {
+      type: 'button',
+      class: 'font-mono text-navy font-semibold hover:underline',
+      style: 'background:none;border:none;padding:0;cursor:pointer;',
+      onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${l.id}`); },
+      text: l.bache_code || l.lot_code || '—',
+    });
   }
 
   function selectedLotCard(lot) {
@@ -576,6 +728,65 @@ function metaCell(label, value, valueClass = '') {
   return el('div', { class: 'min-w-0' }, [
     el('p', { class: 'text-[9px] uppercase tracking-loose text-ink-500 mb-0.5 font-semibold', text: label }),
     el('p', { class: `text-[13px] text-ink-700 truncate ${valueClass}`, text: String(value) }),
+  ]);
+}
+
+// Reglas de conversión por proceso. Devuelve el motivo de alerta
+// o null si está OK.
+function conversionAlert(lot) {
+  const cf = Number(lot.conversion_factor);
+  if (!Number.isFinite(cf) || cf <= 0) return null;
+  // Si el bache nació en stage 'seco', conversión real ≈ 1.
+  // Cualquier desviación significativa (>1.05) sugiere problemas
+  // de captura o pérdidas inusuales.
+  if (lot.processing_stage === 'seco') {
+    if (cf > 1.05) return `> 1.05 (stage seco)`;
+    return null;
+  }
+  if (lot.process_type === 'Natural') {
+    if (cf > 3.6) return `> 3.6 (Natural)`;
+  }
+  if (lot.process_type === 'Honey' || lot.process_type === 'Lavado') {
+    if (cf > 5.2) return `> 5.2 (${lot.process_type})`;
+  }
+  return null;
+}
+
+// Renderiza una tabla compacta de alertas con columnas y filas.
+// `rows` es el array de objetos; `rowFn` mapea cada uno a la lista
+// de celdas (string o { text, alert, danger }).
+function alertTable(title, headers, rows, rowFn, emptyMessage, opts = {}) {
+  return el('div', { class: 'bg-white border border-sand rounded-md overflow-hidden' }, [
+    el('div', { class: 'px-3 py-2 border-b border-sand flex items-baseline justify-between gap-2' }, [
+      el('p', { class: 'font-display font-semibold text-[12px] text-navy', text: title }),
+      el('span', { class: 'text-[10px] text-ink-500 font-mono', text: `${rows.length} lote(s)` }),
+    ]),
+    rows.length === 0
+      ? el('p', { class: 'px-3 py-3 text-[11px] text-ok italic', text: emptyMessage || 'Sin resultados.' })
+      : el('div', { class: 'overflow-x-auto' }, [
+          el('table', { class: 'w-full text-[12px]' }, [
+            el('thead', {}, [el('tr', { class: 'bg-cream text-ink-500 uppercase tracking-eyebrow text-[10px]' },
+              headers.map((h, i) => el('th', {
+                class: `px-3 py-1.5 text-${i === headers.length - 1 ? 'right' : 'left'}`,
+                text: h,
+              })))]),
+            el('tbody', {}, rows.map((r) => {
+              const cells = rowFn(r);
+              const isRedRow = cells.some((c) => c && typeof c === 'object' && c.danger);
+              return el('tr', {
+                class: `border-t border-sand ${isRedRow ? 'bg-crit-bg/50' : 'hover:bg-cream'}`,
+              }, cells.map((c, i) => {
+                if (c instanceof Node) {
+                  return el('td', { class: 'px-3 py-1.5' }, [c]);
+                }
+                const cell = (c && typeof c === 'object') ? c : { text: c };
+                const isLast = i === cells.length - 1;
+                const cls = `px-3 py-1.5 ${isLast ? 'text-right' : 'text-left'} ${cell.alert ? 'font-mono font-semibold ' + (cell.danger ? 'text-crit' : 'text-warn') : 'text-ink-700'}`;
+                return el('td', { class: cls, text: String(cell.text == null ? '—' : cell.text) });
+              }));
+            })),
+          ]),
+        ]),
   ]);
 }
 
