@@ -61,14 +61,45 @@ export async function fincaColaView() {
   // "pendiente" la diferencia, induciendo a sobre-asignar.
   const allocByOrder = new Map();
   const infusionsByOrder = new Map();   // order_id → Set<infusion_name>
+  // Baches asignados a cada pedido con kg específico y despachos
+  // (para el dropdown de la vista Tabla).
+  //   lotsByOrder: order_id → [{ lot, kg_green_allocated, shipments[] }]
+  //   shipments[] = pills clickeables { shipment_id, shipment_code, shipment_date, kg }
+  const lotsByOrder = new Map();
   for (const lot of allLots) {
     for (const a of lot.assignments || []) {
-      allocByOrder.set(a.demand_order_id,
-        (allocByOrder.get(a.demand_order_id) || 0) + Number(a.kg_green_allocated || 0));
+      const oid = a.demand_order_id;
+      allocByOrder.set(oid,
+        (allocByOrder.get(oid) || 0) + Number(a.kg_green_allocated || 0));
       if (lot.infusion_name) {
-        if (!infusionsByOrder.has(a.demand_order_id)) infusionsByOrder.set(a.demand_order_id, new Set());
-        infusionsByOrder.get(a.demand_order_id).add(lot.infusion_name);
+        if (!infusionsByOrder.has(oid)) infusionsByOrder.set(oid, new Set());
+        infusionsByOrder.get(oid).add(lot.infusion_name);
       }
+      // Buscar despachos que llevaron ESTE bache específicamente al
+      // pedido oid (kg del despacho pueden ser < kg total del lote
+      // si es despacho parcial).
+      const shipmentPills = [];
+      for (const s of shipments) {
+        for (const sl of s.lots || []) {
+          if (sl.id !== lot.id) continue;
+          for (const sa of sl.assignments || []) {
+            const soid = sa.order ? sa.order.id : null;
+            if (soid !== oid) continue;
+            shipmentPills.push({
+              shipment_id: s.id,
+              shipment_code: s.shipment_code,
+              shipment_date: s.shipment_date,
+              kg: Number(sa.kg_green_allocated || 0),
+            });
+          }
+        }
+      }
+      if (!lotsByOrder.has(oid)) lotsByOrder.set(oid, []);
+      lotsByOrder.get(oid).push({
+        lot,
+        kg_green_allocated: Number(a.kg_green_allocated || 0),
+        shipments: shipmentPills,
+      });
     }
   }
 
@@ -108,6 +139,8 @@ export async function fincaColaView() {
 
   let currentFilter = 'all';
   let sheetValues = {};   // { client_name?: [...], process_type?: [...] }
+  // Pedidos expandidos en la vista Tabla (dropdown con lotes asignados).
+  const expandedOrders = new Set();
 
   // Filtros del sheet: cliente + proceso. Las opciones se derivan de
   // los pedidos in-flight cargados.
@@ -185,7 +218,7 @@ export async function fincaColaView() {
       return;
     }
     if (vm.mode() === 'table') {
-      list.append(queueTable(shown, today));
+      list.append(queueTable(shown, today, lotsByOrder, expandedOrders, redraw));
     } else {
       for (const o of shown) list.append(queueRow(o, today, earliest, latest));
     }
@@ -251,7 +284,8 @@ export async function fincaColaView() {
 }
 
 // ─── Table renderer ────────────────────────────────────────────────
-function queueTable(orders, today) {
+// COLSPAN = 12 (chevron + 11 columnas de datos)
+function queueTable(orders, today, lotsByOrder, expanded, redraw) {
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
     td.setAttribute('data-label', label);
@@ -261,6 +295,7 @@ function queueTable(orders, today) {
   };
   return sortableTable({
     headers: [
+      { label: '', cls: 'w-8' },   // chevron
       { label: 'Código',     sortGetter: (o) => o.order_code || '' },
       { label: 'Referencia', sortGetter: (o) => o.reference_name || '' },
       { label: 'Cliente',    sortGetter: (o) => o.client_name || '' },
@@ -274,6 +309,7 @@ function queueTable(orders, today) {
       { label: 'Entrega',    sortGetter: (o) => o.max_delivery_date },
     ],
     totals: [
+      null,
       { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
       null, null, null, null,
       { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.kg_green_accepted || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
@@ -288,10 +324,20 @@ function queueTable(orders, today) {
       const dryColor = isOverdue ? 'text-crit'
         : (daysBetween(today, o.latest_drying_start_date) <= 5 ? 'text-warn'
         : 'text-ink-700');
-      return el('tr', {
-        class: 'cursor-pointer hover:bg-cream',
-        onClick: () => navigate('/finca/lots'),
+      const isExp = expanded.has(o.id);
+      const toggle = () => {
+        if (isExp) expanded.delete(o.id); else expanded.add(o.id);
+        redraw();
+      };
+
+      const mainRow = el('tr', {
+        class: `cursor-pointer hover:bg-cream ${isExp ? 'bg-cream' : ''}`,
+        onClick: toggle,
       }, [
+        cell('Expand', 'w-8 text-center', el('span', {
+          class: 'text-ink-500 font-mono text-[11px]',
+          text: isExp ? '▾' : '▸',
+        })),
         cell('Código', 'font-mono text-navy font-semibold',
           el('span', { class: 'inline-flex items-center gap-1.5' }, [
             el('button', {
@@ -320,8 +366,84 @@ function queueTable(orders, today) {
         cell('Entrega', 'font-mono text-[11px]',
           o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
       ]);
+
+      if (!isExp) return mainRow;
+
+      const lots = lotsByOrder.get(o.id) || [];
+      const subRow = el('tr', { class: 'bg-cream' }, [
+        el('td', { colspan: '12', class: 'p-3' }, [assignmentsBlock(lots)]),
+      ]);
+      const frag = document.createDocumentFragment();
+      frag.append(mainRow, subRow);
+      return frag;
     },
   }).el;
+}
+
+// Mini-tabla con los baches asignados a un pedido específico. Cada
+// fila: bache · status · proceso · variedad · kg verde asignado a
+// ESTE pedido · pills de despachos que lo cubrieron para este pedido.
+function assignmentsBlock(lots) {
+  if (lots.length === 0) {
+    return el('p', { class: 'text-[12px] text-ink-300 italic px-1',
+      text: 'Este pedido no tiene baches asignados todavía.' });
+  }
+  const total = lots.reduce((s, x) => s + Number(x.kg_green_allocated || 0), 0);
+  return el('div', { class: 'space-y-2' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: `Asignaciones (${lots.length})` }),
+    el('div', { class: 'overflow-x-auto bg-white rounded-md border border-sand' }, [
+      el('table', { class: 'w-full text-[11px]' }, [
+        el('thead', {}, [el('tr', { class: 'bg-cream text-ink-500 uppercase tracking-eyebrow text-[9px]' }, [
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Bache' }),
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Status' }),
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Proceso' }),
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Variedad' }),
+          el('th', { class: 'px-3 py-1.5 text-right', text: 'kg verde asignado' }),
+          el('th', { class: 'px-3 py-1.5 text-left', text: 'Despacho(s)' }),
+        ])]),
+        el('tbody', {}, lots.map(({ lot, kg_green_allocated, shipments: shipPills }) => {
+          const varieties = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
+          return el('tr', { class: 'border-t border-sand hover:bg-cream' }, [
+            el('td', { class: 'px-3 py-1.5' }, [
+              el('button', {
+                type: 'button',
+                class: 'font-mono text-navy font-semibold hover:underline',
+                style: 'background:none;border:none;padding:0;cursor:pointer;',
+                onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${lot.id}`); },
+                text: lot.bache_code || lot.blend_code || lot.lot_code || '—',
+              }),
+            ]),
+            el('td', { class: 'px-3 py-1.5' }, [
+              el('span', { class: `ctrm-pill text-[9px] ${statusPillKind(lot.status)}`, text: statusLabel(lot.status) }),
+            ]),
+            el('td', { class: 'px-3 py-1.5', text: lot.process_type || '—' }),
+            el('td', { class: 'px-3 py-1.5 text-ink-500', text: varieties }),
+            el('td', { class: 'px-3 py-1.5 text-right font-mono font-bold text-navy',
+              text: fmtKg(kg_green_allocated) }),
+            el('td', { class: 'px-3 py-1.5' }, [
+              shipPills.length === 0
+                ? el('span', { class: 'text-ink-300 italic', text: '—' })
+                : el('div', { class: 'flex flex-wrap gap-1' },
+                    shipPills.map((s) => el('button', {
+                      type: 'button',
+                      class: 'ctrm-pill text-[9px] cursor-pointer hover:opacity-80',
+                      style: 'background:#dbeafe;color:#1a3a5c;',
+                      title: `${fmtDate(s.shipment_date)} · ${fmtKg(s.kg)}`,
+                      onClick: (e) => { e.stopPropagation(); navigate(`/finca/despachos?focus=${s.shipment_id}`); },
+                      text: s.shipment_code,
+                    }))),
+            ]),
+          ]);
+        })),
+        el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
+          el('td', { colspan: '4', class: 'px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow text-ink-700 text-right',
+            text: 'Total asignado a este pedido' }),
+          el('td', { class: 'px-3 py-1.5 text-right font-mono font-bold text-navy', text: fmtKg(total) }),
+          el('td', {}, []),
+        ])]),
+      ]),
+    ]),
+  ]);
 }
 
 function kpiCard(label, value, hint, kind) {
