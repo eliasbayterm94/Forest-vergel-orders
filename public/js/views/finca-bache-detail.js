@@ -198,6 +198,16 @@ export async function fincaBacheDetailView() {
                   },
                 }, ['Ajustar peso seco'])
               : null,
+            lot.status === 'Ready'
+              ? el('button', {
+                  class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+                  title: 'Agregar retroactivamente un ciclo de descanso que se omitió',
+                  onClick: async () => {
+                    const r = await addRestingCycleModal(lot);
+                    if (r && r.ok) await reload();
+                  },
+                }, ['+ Descanso retroactivo'])
+              : null,
             isLocked
               ? el('span', { class: 'text-[11px] italic text-ink-300',
                   text: 'Bache despachado · edición limitada. Usa "Ajustar peso seco" para correcciones.' })
@@ -1068,4 +1078,142 @@ async function adjustDriedModal(lot) {
       ]),
     ]);
   }, { title: 'Ajustar peso seco de entrada a Punto Final' });
+}
+
+// Modal para agregar un ciclo de descanso retroactivamente a un
+// bache ya cerrado (Ready). Caso típico: se olvidó registrar el
+// descanso durante el proceso.
+async function addRestingCycleModal(lot) {
+  return openModal(({ close }) => {
+    const startDateInput = el('input', { type: 'date', class: 'ctrm-input' });
+    const endDateInput   = el('input', { type: 'date', class: 'ctrm-input' });
+    const startHumInput  = el('input', {
+      type: 'number', step: '0.1', min: '8', max: '40', placeholder: 'Ej: 19',
+      class: 'ctrm-input mono',
+    });
+    const endHumInput = el('input', {
+      type: 'number', step: '0.1', min: '8', max: '40', placeholder: 'Ej: 14',
+      class: 'ctrm-input mono',
+    });
+    const endReasonSelect = el('select', { class: 'ctrm-select' }, [
+      el('option', { value: 'to_ready', selected: 'true' }, ['Pasó a Listo']),
+      el('option', { value: 'back_to_drying' }, ['Volvió a Secado']),
+    ]);
+    const reasonInput = el('textarea', {
+      rows: '3', class: 'ctrm-textarea',
+      placeholder: 'Motivo del registro retroactivo — mínimo 10 caracteres · queda en notas del bache',
+    });
+
+    // Advertencia reactiva si las fechas no encajan con las etapas
+    // del bache
+    const warnBox = el('div', { class: 'text-[11px] text-warn' });
+    function refreshWarnings() {
+      warnBox.textContent = '';
+      const sd = startDateInput.value;
+      const ed = endDateInput.value;
+      const messages = [];
+      if (lot.drying_start_date && sd && sd < lot.drying_start_date) {
+        messages.push(`⚠ Inicio (${sd}) es antes del secado (${lot.drying_start_date}).`);
+      }
+      if (lot.ready_date && ed && ed > lot.ready_date) {
+        messages.push(`⚠ Fin (${ed}) es después del cierre (${lot.ready_date}).`);
+      }
+      if (sd && ed && ed <= sd) {
+        messages.push('⚠ El fin debe ser posterior al inicio.');
+      }
+      warnBox.textContent = messages.join('  ');
+    }
+    startDateInput.addEventListener('input', refreshWarnings);
+    endDateInput.addEventListener('input', refreshWarnings);
+
+    return el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `Agregar un ciclo de descanso al bache `,
+        el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+        `. El bache sigue en Listo — no cambia peso, status ni fecha de cierre. El motivo queda en las notas.`,
+      ]),
+      el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[11px] text-ink-500 space-y-0.5 font-mono' }, [
+        el('p', {}, [`Secado inició: `, el('strong', { text: fmtDate(lot.drying_start_date) })]),
+        el('p', {}, [`Bache cerró:  `, el('strong', { text: fmtDate(lot.ready_date) })]),
+      ]),
+
+      el('div', { class: 'grid grid-cols-2 gap-3' }, [
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Inicio del descanso *' }),
+          startDateInput,
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Humedad de entrada (%) *' }),
+          startHumInput,
+        ]),
+      ]),
+      el('div', { class: 'grid grid-cols-2 gap-3' }, [
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Fin del descanso *' }),
+          endDateInput,
+        ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Humedad de salida (%) *' }),
+          endHumInput,
+        ]),
+      ]),
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Motivo del fin *' }),
+        endReasonSelect,
+      ]),
+
+      warnBox,
+
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Motivo del registro retroactivo *' }),
+        reasonInput,
+      ]),
+
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-action', type: 'button',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            const start_date = startDateInput.value;
+            const end_date = endDateInput.value;
+            const startHum = Number(startHumInput.value);
+            const endHum = Number(endHumInput.value);
+            const end_reason = endReasonSelect.value;
+            const reason = reasonInput.value.trim();
+
+            if (!start_date || !end_date) { toast('Indica ambas fechas', 'warning'); return; }
+            if (end_date <= start_date) { toast('Fin debe ser posterior al inicio', 'warning'); return; }
+            if (!Number.isFinite(startHum) || startHum < 8 || startHum > 40) {
+              toast('Humedad de entrada 8–40%', 'warning'); return;
+            }
+            if (!Number.isFinite(endHum) || endHum < 8 || endHum > 40) {
+              toast('Humedad de salida 8–40%', 'warning'); return;
+            }
+            if (reason.length < 10) {
+              toast('El motivo debe tener al menos 10 caracteres', 'warning'); return;
+            }
+            try {
+              await withBusy(btn, 'Guardando…', async () => {
+                const r = await api.lotAddRestingCycle({
+                  lot_id: lot.id,
+                  start_date, start_humidity: startHum,
+                  end_date, end_humidity: endHum,
+                  end_reason, reason,
+                });
+                const parts = [`Ciclo agregado (nº ${r.cycle.cycle_number})`];
+                if (r.warnings && r.warnings.length > 0) {
+                  parts.push(`con ${r.warnings.length} aviso(s)`);
+                }
+                toast(parts.join(' · '), 'success', 5000);
+              });
+              close({ ok: true });
+            } catch (err) {
+              toast(err.message || 'Error al agregar ciclo', 'error', 6000);
+            }
+          },
+        }, ['Agregar ciclo']),
+      ]),
+    ]);
+  }, { title: 'Agregar ciclo de descanso retroactivo' });
 }

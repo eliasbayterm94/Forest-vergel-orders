@@ -77,6 +77,7 @@ export const api = {
   lotCreateBulk:   (payload) => request('POST', '/api/production-lots-create-bulk', { body: payload }),
   lotUpdate:       (payload) => request('POST', '/api/production-lots-update', { body: payload }),
   lotAdjustDried:  (payload) => request('POST', '/api/production-lots-adjust-dried', { body: payload }),
+  lotAddRestingCycle: (payload) => request('POST', '/api/lot-add-resting-cycle', { body: payload }),
   lotUpdateStatus: (payload) => request('POST', '/api/production-lots-update-status', { body: payload }),
   lotDelete:       (payload) => request('POST', '/api/production-lots-delete', { body: payload }),
 
