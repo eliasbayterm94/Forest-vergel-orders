@@ -7,6 +7,7 @@ const {
   revertLotsIfNotStillDelivered,
   revertOrdersIfNoLongerComplete,
 } = require('./_lib/shipmentRevert');
+const { actorLabel } = require('./_lib/actor');
 
 /**
  * POST /shipment-line-cancel  (finca, admin)
@@ -23,7 +24,7 @@ const {
  *   3) Si el shipment queda sin filas en shipment_lots, se borra
  *      la fila shipments también.
  */
-exports.handler = requireAuth(['finca', 'admin'], async (event) => {
+exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
@@ -63,9 +64,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
 
   // Apéndice del motivo en notes (no destructivo).
   if (reason) {
-    const newNotes = ship.notes
-      ? `${ship.notes} · Cancelada línea (${production_lot_id.slice(0, 8)}): ${reason}`
-      : `Cancelada línea (${production_lot_id.slice(0, 8)}): ${reason}`;
+    const author = actorLabel(session, body);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const tag = `[Línea cancelada · ${author} · ${stamp}] (${production_lot_id.slice(0, 8)}): ${reason}`;
+    const newNotes = ship.notes ? `${ship.notes} · ${tag}` : tag;
     await sb.from('shipments').update({ notes: newNotes }).eq('id', shipment_id);
   }
 

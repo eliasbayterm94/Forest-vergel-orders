@@ -10,8 +10,28 @@ export class ApiError extends Error {
   }
 }
 
+// Operario activo del dispositivo (elegido en el sidebar). Viaja en
+// cada POST como operator_name para que los endpoints de auditoría
+// registren quién hizo la acción, no solo el rol compartido.
+const OPERATOR_KEY = 'fvb_operator';
+export function getOperator() {
+  try { return localStorage.getItem(OPERATOR_KEY) || ''; } catch { return ''; }
+}
+export function setOperator(name) {
+  try {
+    if (name) localStorage.setItem(OPERATOR_KEY, name);
+    else localStorage.removeItem(OPERATOR_KEY);
+  } catch { /* storage puede fallar en privado */ }
+}
+
 async function request(method, path, { body, query } = {}) {
   let url = path.startsWith('/') ? path : `/api/${path}`;
+  // Anexar el operario activo a todos los POST (los endpoints que no
+  // lo usan lo ignoran — todos filtran por whitelist).
+  if (method === 'POST' && body && typeof body === 'object' && body.operator_name === undefined) {
+    const op = getOperator();
+    if (op) body = { ...body, operator_name: op };
+  }
   if (query && Object.keys(query).length) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) {
@@ -92,6 +112,9 @@ export const api = {
   fermentationTypesList:   (query)   => request('GET',  '/api/fermentation-types-list',   { query }),
   fermentationTypesCreate: (payload) => request('POST', '/api/fermentation-types-create', { body: payload }),
   fermentationTypesUpdate: (payload) => request('POST', '/api/fermentation-types-update', { body: payload }),
+  operatorsList:   (query)   => request('GET',  '/api/operators-list',   { query }),
+  operatorsCreate: (payload) => request('POST', '/api/operators-create', { body: payload }),
+  operatorsUpdate: (payload) => request('POST', '/api/operators-update', { body: payload }),
 
   lotPartialCreate: (payload) => request('POST', '/api/lot-partials-create', { body: payload }),
   lotPartialDelete: (payload) => request('POST', '/api/lot-partials-delete', { body: payload }),

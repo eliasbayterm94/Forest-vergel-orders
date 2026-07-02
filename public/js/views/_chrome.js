@@ -4,7 +4,7 @@
 import { el } from '../ui/el.js';
 import { getSession, logout } from '../auth.js';
 import { navigate, currentPath, setSession } from '../router.js';
-import { api } from '../api.js';
+import { api, getOperator, setOperator } from '../api.js';
 import { toast } from '../ui/toast.js';
 import { confirmModal } from '../ui/modal.js';
 import { topbarSearch } from '../ui/topbar-search.js';
@@ -143,6 +143,7 @@ export function chrome(content) {
     )),
 
     el('div', { class: 'sidebar-footer' }, [
+      operatorPicker(),
       el('button', {
         type: 'button',
         class: 'sidebar-footer-btn',
@@ -258,6 +259,42 @@ export function chrome(content) {
       bottomNav,
     ]),
   ]);
+}
+
+// Selector "¿Quién eres?" del sidebar. El operario elegido persiste
+// en localStorage del dispositivo y viaja como operator_name en todos
+// los POST (ver api.js) para que las auditorías registren la persona,
+// no solo el rol compartido. Carga la lista lazy al montar el chrome;
+// si no hay operarios registrados, no muestra nada.
+function operatorPicker() {
+  const wrap = el('div', { class: 'px-3 pb-2' });
+  const current = getOperator();
+
+  api.operatorsList({}).then((r) => {
+    const ops = (r && r.operators) || [];
+    if (ops.length === 0) return;   // sin operarios registrados → oculto
+    const sel = el('select', {
+      class: 'w-full text-[11px] rounded-md px-2 py-1.5',
+      style: 'background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);',
+      title: 'Operario activo en este dispositivo — queda en las auditorías',
+      onChange: (e) => {
+        setOperator(e.target.value);
+        toast(e.target.value ? `Operario: ${e.target.value}` : 'Operario sin definir', 'info', 2500);
+      },
+    }, [
+      el('option', { value: '', selected: current === '' ? 'true' : null }, ['— ¿Quién eres? —']),
+      ...ops.map((o) => el('option', {
+        value: o.name,
+        selected: o.name === current ? 'true' : null,
+      }, [o.name])),
+    ]);
+    wrap.append(
+      el('p', { class: 'text-[9px] uppercase tracking-loose mb-1', style: 'color:rgba(255,255,255,0.4);', text: 'Operario' }),
+      sel,
+    );
+  }).catch(() => { /* sin red o sin permiso — omitir el picker */ });
+
+  return wrap;
 }
 
 async function triggerDigest() {

@@ -4,6 +4,7 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { LOT_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { actorLabel } = require('./_lib/actor');
 
 /**
  * POST /lot-add-resting-cycle  (finca, admin)
@@ -107,7 +108,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   // Auditoría en notes
   const stamp = new Date().toISOString().slice(0, 10);
-  const author = (session && session.role) || 'unknown';
+  const author = actorLabel(session, body);
   const fmt = (ymd) => {
     const [y, m, d] = ymd.split('-');
     return `${d}/${m}/${y}`;

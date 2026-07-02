@@ -8,18 +8,20 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
     api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
     api.fermentationTanksList({ include_inactive: 'true' }).catch(() => ({ fermentation_tanks: [] })),
     api.fermentationTypesList({ include_inactive: 'true' }).catch(() => ({ fermentation_types: [] })),
+    api.operatorsList({ include_inactive: 'true' }).catch(() => ({ operators: [] })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
   let dryingTypes = (dtRes && dtRes.drying_types) || [];
   let fermentationTanks = (ftRes && ftRes.fermentation_tanks) || [];
   let fermentationTypes = (ftypesRes && ftypesRes.fermentation_types) || [];
+  let operators = (opsRes && opsRes.operators) || [];
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -93,6 +95,22 @@ export async function adminConfigView() {
             const r = await api.fermentationTypesUpdate(payload);
             fermentationTypes = fermentationTypes.map((t) => t.id === r.fermentation_type.id ? r.fermentation_type : t);
             toast(`"${r.fermentation_type.name}" actualizado`, 'success');
+          }
+          redraw();
+        } catch (e) { toast(e.message, 'error'); }
+      }),
+      operatorsSection(operators, async (action, payload) => {
+        try {
+          if (action === 'create') {
+            const r = await api.operatorsCreate(payload);
+            const found = operators.find((o) => o.id === r.operator.id);
+            if (found) Object.assign(found, r.operator);
+            else operators.push(r.operator);
+            toast(r.created ? `Operario "${r.operator.name}" creado` : `Operario "${r.operator.name}" actualizado`, 'success');
+          } else if (action === 'update') {
+            const r = await api.operatorsUpdate(payload);
+            operators = operators.map((o) => o.id === r.operator.id ? r.operator : o);
+            toast(`"${r.operator.name}" actualizado`, 'success');
           }
           redraw();
         } catch (e) { toast(e.message, 'error'); }
@@ -463,6 +481,61 @@ function fermentationTypesSection(types, onAction) {
     ...rows,
     rows.length === 0
       ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tipos. Agrega uno arriba.' })
+      : null,
+  ]);
+}
+
+// ─── Operators section ──────────────────────────────────────────────
+// Operarios para accountability individual: el usuario elige "quién
+// es" en el sidebar y su nombre viaja en cada acción auditada.
+function operatorsSection(operators, onAction) {
+  const nameInput = el('input', {
+    type: 'text', placeholder: 'Ej: Juan Pérez', class: 'ctrm-input', maxlength: '60',
+  });
+  const addBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-primary',
+    type: 'button',
+    onClick: async () => {
+      const name = nameInput.value.trim();
+      if (!name) { return; }
+      await onAction('create', { name });
+      nameInput.value = '';
+    },
+  }, ['+ Agregar operario']);
+
+  const rows = (operators || []).map((o) => {
+    const renameInput = el('input', { type: 'text', value: o.name, class: 'ctrm-input mono text-[12px]' });
+    return el('div', {
+      class: `grid grid-cols-[1fr_auto_auto] items-center gap-2 py-2 border-t border-sand ${o.active ? '' : 'opacity-60'}`,
+    }, [
+      renameInput,
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+        type: 'button',
+        onClick: () => onAction('update', {
+          id: o.id,
+          fields: { name: renameInput.value.trim() },
+        }),
+      }, ['Guardar']),
+      el('button', {
+        class: `ctrm-btn ctrm-btn-soft ctrm-btn-xs ${o.active ? 'text-crit' : 'text-ok'}`,
+        type: 'button',
+        onClick: () => onAction('update', { id: o.id, fields: { active: !o.active } }),
+      }, [o.active ? 'Desactivar' : 'Reactivar']),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Operarios' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'Personas que operan el sistema. Cada usuario elige quién es en el sidebar, y su nombre queda en las auditorías (ajustes de peso, ciclos retroactivos, cierres manuales, cancelaciones).' }),
+    el('div', { class: 'grid grid-cols-[1fr_auto] gap-2 items-end pb-2 border-b border-sand' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Nombre' }), nameInput]),
+      addBtn,
+    ]),
+    ...rows,
+    rows.length === 0
+      ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay operarios. Agrega uno arriba.' })
       : null,
   ]);
 }

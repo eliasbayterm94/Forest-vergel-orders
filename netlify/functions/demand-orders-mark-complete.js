@@ -4,6 +4,7 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { actorLabel } = require('./_lib/actor');
 
 /**
  * POST /demand-orders-mark-complete  (forest, finca, admin)
@@ -55,7 +56,7 @@ exports.handler = requireAuth(['forest', 'finca', 'admin'], async (event, _ctx, 
   }
 
   const stamp = new Date().toISOString();
-  const author = (session && session.role) ? session.role : 'unknown';
+  const author = actorLabel(session, body);
   const tag = `[Cerrado manualmente por ${author} · ${stamp.slice(0, 10)}] ${reason}`;
   const newComments = order.comments ? `${order.comments}\n${tag}` : tag;
 
