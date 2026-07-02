@@ -291,7 +291,14 @@ export async function fincaDespachosView() {
     const baseRow = el('tr', { class: 'border-t border-sand' }, [
       el('td', { class: 'px-3 py-2 font-mono font-semibold text-navy' }, [
         lot.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MZ' }) : null,
-        document.createTextNode(lot.bache_code || lot.blend_code || lot.lot_code || '—'),
+        el('button', {
+          type: 'button',
+          class: 'font-mono font-semibold text-navy hover:underline',
+          style: 'background:none;border:none;padding:0;cursor:pointer;',
+          title: 'Ver historial del bache',
+          onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${lot.id}`); },
+          text: lot.bache_code || lot.blend_code || lot.lot_code || '—',
+        }),
       ]),
       el('td', { class: 'px-3 py-2 text-ink-700', text: lot.reference_name || '—' }),
       el('td', { class: 'px-3 py-2 text-[11px]', text: lot.process_type || '—' }),
@@ -541,7 +548,14 @@ export async function fincaDespachosView() {
       // Lot header (navy strip, igual al PDF)
       el('div', { class: 'flex items-center justify-between gap-2 px-3 py-2', style: 'background:#1a3a5c;' }, [
         el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-          el('span', { class: 'font-mono font-bold text-[12px]', style: 'color:#e7e244;', text: lot.bache_code || lot.lot_code }),
+          el('button', {
+            type: 'button',
+            class: 'font-mono font-bold text-[12px] hover:underline',
+            style: 'background:none;border:none;padding:0;cursor:pointer;color:#e7e244;',
+            title: 'Ver historial del bache',
+            onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${lot.id}`); },
+            text: lot.bache_code || lot.lot_code,
+          }),
           el('span', { class: 'font-display font-semibold text-[12px] truncate', style: 'color:#fff;', text: lot.reference_name || '—' }),
         ]),
         el('span', { class: 'font-mono text-[11px]', style: 'color:#cdd5dd;', text: `${lot.process_type} · ${fmtKg(kgVerdeShipped)}` }),
