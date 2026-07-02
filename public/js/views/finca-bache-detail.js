@@ -726,6 +726,7 @@ async function editEventModal(ev, lot, reload) {
       }),
     })) : null;
 
+    const KG_PER_SACO = 70;
     const kgInputs = cfg.showKg ? {
       dried: el('input', {
         type: 'number', step: '0.01', min: '0',
@@ -743,6 +744,27 @@ async function editEventModal(ev, lot, reload) {
         class: 'ctrm-input mono', placeholder: 'kg verde',
       }),
     } : null;
+    // Auto-recalcular kg verde cuando cambia seco o factor. Si el
+    // operario edita verde a mano se marca greenEdited para no
+    // pisar su valor. Fórmula estándar: verde = (seco / factor) × 70.
+    if (kgInputs) {
+      let greenEdited = kgInputs.green.value !== '';
+      const recompute = () => {
+        if (greenEdited) return;
+        const seco = Number(kgInputs.dried.value || 0);
+        const fac  = Number(kgInputs.factor.value || 0);
+        if (seco > 0 && fac > 0) {
+          kgInputs.green.value = String(Math.round((seco / fac) * KG_PER_SACO * 100) / 100);
+        } else {
+          kgInputs.green.value = '';
+        }
+      };
+      kgInputs.dried.addEventListener('input', recompute);
+      kgInputs.factor.addEventListener('input', recompute);
+      kgInputs.green.addEventListener('input', () => {
+        greenEdited = kgInputs.green.value !== '';
+      });
+    }
 
     function chipGroup(items) {
       return el('div', { class: 'flex flex-wrap gap-2' },
