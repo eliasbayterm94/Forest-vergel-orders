@@ -188,8 +188,19 @@ export async function fincaBacheDetailView() {
                   },
                 }, ['↓ Lot Passport'])
               : null,
+            (lot.status === 'Ready' || lot.status === 'Delivered')
+              ? el('button', {
+                  class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+                  title: 'Corregir kg seco de entrada a Punto Final (por error de captura)',
+                  onClick: async () => {
+                    const r = await adjustDriedModal(lot);
+                    if (r && r.ok) await reload();
+                  },
+                }, ['Ajustar peso seco'])
+              : null,
             isLocked
-              ? el('span', { class: 'text-[11px] italic text-ink-300', text: 'Bache despachado · sólo lectura' })
+              ? el('span', { class: 'text-[11px] italic text-ink-300',
+                  text: 'Bache despachado · edición limitada. Usa "Ajustar peso seco" para correcciones.' })
               : null,
           ]),
         ]),
@@ -880,4 +891,159 @@ function maxDaysHint(h) {
   if (v > 20)  return ' · máx 5d';
   if (v >= 14) return ' · máx 8d';
   return '';
+}
+
+// Modal para corregir kg_dried_output post-cierre. Sirve tanto en
+// Ready como en Delivered. Si en Delivered el nuevo valor deja
+// saldo, el backend reverte el bache a Ready + limpia
+// delivered_date. Anexa auditoría a notes.
+async function adjustDriedModal(lot) {
+  const oldDried = Number(lot.kg_dried_output || 0);
+  const oldGreen = Number(lot.kg_green_actual || 0);
+  const alreadyOut = Number(
+    (lot.kg_dried_used_in_blends || 0) + (lot.kg_dried_shipped || 0),
+  );
+  const currentAvail = Math.max(0, oldDried - alreadyOut);
+
+  return openModal(({ close }) => {
+    const newInput = el('input', {
+      type: 'number', step: '0.01', min: '0.01',
+      value: String(oldDried),
+      class: 'ctrm-input mono w-full',
+    });
+    const reasonInput = el('textarea', {
+      rows: '3',
+      class: 'ctrm-textarea w-full',
+      placeholder: 'Motivo obligatorio · queda en notas del bache',
+    });
+
+    // Preview reactivo
+    const previewGreen  = el('strong', { class: 'font-mono' });
+    const previewAvail  = el('strong', { class: 'font-mono' });
+    const previewFactor = el('strong', { class: 'font-mono' });
+    const previewRevert = el('p', { class: 'text-[11px] mt-1' });
+    const previewWarn   = el('p', { class: 'text-[11px] text-crit mt-1', style: 'display:none;' });
+
+    function refreshPreview() {
+      const newDried = Number(newInput.value || 0);
+      // Green escalado proporcionalmente
+      const newGreen = oldDried > 0 && oldGreen > 0
+        ? oldGreen * (newDried / oldDried)
+        : newGreen;
+      const newAvail = newDried - alreadyOut;
+      const newFactor = lot.kg_input_initial > 0 && newDried > 0
+        ? Number(lot.kg_input_initial) / newDried
+        : null;
+      previewGreen.textContent  = `${fmtKg(newGreen)} verde`;
+      previewAvail.textContent  = `${fmtKg(Math.max(0, newAvail))} kg`;
+      previewFactor.textContent = newFactor != null ? `${Math.round(newFactor * 100) / 100}×` : '—';
+      // Warnings
+      if (newAvail + 0.01 < 0) {
+        previewWarn.textContent = `⚠ El nuevo valor deja inventario negativo. Mínimo permitido: ${fmtKg(alreadyOut)}.`;
+        previewWarn.style.display = '';
+      } else {
+        previewWarn.style.display = 'none';
+      }
+      // Info de revert
+      if (lot.status === 'Delivered' && newAvail > 0.01) {
+        previewRevert.className = 'text-[11px] mt-1 text-ok';
+        previewRevert.textContent = `→ Al guardar, el bache vuelve a Listo (Punto Final) con ${fmtKg(newAvail)} kg de saldo.`;
+      } else if (lot.status === 'Delivered' && newAvail <= 0.01) {
+        previewRevert.className = 'text-[11px] mt-1 text-ink-500';
+        previewRevert.textContent = 'El bache queda Delivered (no queda saldo).';
+      } else {
+        previewRevert.textContent = '';
+      }
+    }
+    newInput.addEventListener('input', refreshPreview);
+    refreshPreview();
+
+    return el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `Corregir el peso seco de entrada a Punto Final del bache `,
+        el('strong', { class: 'text-navy', text: lot.bache_code || lot.lot_code }),
+        `. La conversión y kg verde se recalculan automáticamente. El motivo queda auditado en las notas del bache.`,
+      ]),
+
+      // Estado actual
+      el('div', { class: 'rounded-lg bg-cream border border-sand p-3 text-[12px] space-y-1' }, [
+        el('p', { class: 'eyebrow text-[9px]', text: 'Estado actual' }),
+        el('p', { class: 'font-mono' }, [
+          `Peso seco registrado: `, el('strong', { text: fmtKg(oldDried) }),
+        ]),
+        el('p', { class: 'font-mono' }, [
+          `Ya salió de bodega (despachos + mezclas): `,
+          el('strong', { text: fmtKg(alreadyOut) }),
+        ]),
+        el('p', { class: 'font-mono' }, [
+          `Saldo actual disponible: `,
+          el('strong', { class: currentAvail > 0.01 ? 'text-ok' : 'text-ink-300',
+            text: fmtKg(currentAvail) }),
+        ]),
+      ]),
+
+      // Input nuevo
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Peso seco corregido (kg) *' }),
+        newInput,
+      ]),
+
+      // Preview
+      el('div', { class: 'rounded-lg bg-yellow-light border border-yellow p-3 text-[12px] space-y-1',
+          style: 'background:#fbf9d3;border-color:#e7e244;' }, [
+        el('p', { class: 'eyebrow text-[9px]', text: 'Preview con el cambio' }),
+        el('p', { class: 'font-mono' }, [`Verde recalculado: `, previewGreen]),
+        el('p', { class: 'font-mono' }, [`Saldo NUEVO en bodega: `, previewAvail]),
+        el('p', { class: 'font-mono' }, [`Nueva conversión: `, previewFactor]),
+        previewRevert,
+        previewWarn,
+      ]),
+
+      // Motivo
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Motivo * (mínimo 10 caracteres)' }),
+        reasonInput,
+      ]),
+
+      // Acciones
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-action', type: 'button',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            const newDried = Number(newInput.value);
+            const reason = reasonInput.value.trim();
+            if (!Number.isFinite(newDried) || newDried <= 0) {
+              toast('Peso seco debe ser > 0', 'warning'); return;
+            }
+            if (newDried + 0.01 < alreadyOut) {
+              toast(`No puede quedar menor que lo ya salido (${fmtKg(alreadyOut)})`, 'error'); return;
+            }
+            if (reason.length < 10) {
+              toast('El motivo debe tener al menos 10 caracteres', 'warning'); return;
+            }
+            try {
+              await withBusy(btn, 'Guardando…', async () => {
+                const r = await api.lotAdjustDried({
+                  lot_id: lot.id,
+                  kg_dried_output: newDried,
+                  reason,
+                });
+                const parts = [`Peso seco actualizado: ${fmtKg(newDried)}`];
+                if (r.reverted_to_ready) parts.push(`bache → Listo con ${fmtKg(r.new_available_kg)} de saldo`);
+                if ((r.orders_reverted_to_in_production || []).length > 0) {
+                  parts.push(`${r.orders_reverted_to_in_production.length} pedido(s) → InProduction`);
+                }
+                toast(parts.join(' · '), 'success', 6000);
+              });
+              close({ ok: true });
+            } catch (err) {
+              toast(err.message || 'Error al ajustar', 'error', 6000);
+            }
+          },
+        }, ['Guardar ajuste']),
+      ]),
+    ]);
+  }, { title: 'Ajustar peso seco de entrada a Punto Final' });
 }
