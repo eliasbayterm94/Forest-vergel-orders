@@ -425,6 +425,30 @@ export function promptCloseBache(lot, partials, opts = {}) {
   }, { title: 'Cerrar bache' });
 }
 
+// ── Plausibility confirm (helper compartido) ────────────────────────
+//
+// Los endpoints de pesos devuelven 409 PLAUSIBILITY_CONFIRM_REQUIRED
+// cuando la conversión resultante cae fuera del rango típico del
+// stage (posible typo). Este helper corre la llamada, y si rebota
+// por plausibility muestra el mensaje del backend en un confirmModal;
+// si el operario confirma, reintenta con override_plausibility: true.
+// Devuelve null si el operario declina (tratarlo como cancelación).
+export async function callWithPlausibilityConfirm(call) {
+  try {
+    return await call(false);
+  } catch (e) {
+    if (e && e.code === 'PLAUSIBILITY_CONFIRM_REQUIRED') {
+      const ok = await confirmModal(
+        `${e.message}\n\n¿Confirmas que el dato es correcto?`,
+        { title: 'Verificación de peso', confirmText: 'Sí, guardar igual', danger: true },
+      );
+      if (!ok) return null;
+      return call(true);
+    }
+    throw e;
+  }
+}
+
 // ── Advance status (helper compartido) ──────────────────────────────
 //
 // Construye el payload via los prompts apropiados, llama al endpoint
@@ -500,7 +524,8 @@ export async function advanceStatus(lot, target) {
     if (closeMeta.ready_date     != null) payload.ready_date     = closeMeta.ready_date;
     if (closeMeta.final_humidity != null) payload.final_humidity = closeMeta.final_humidity;
   }
-  return api.lotUpdateStatus(payload);
+  return callWithPlausibilityConfirm((override) =>
+    api.lotUpdateStatus(override ? { ...payload, override_plausibility: true } : payload));
 }
 
 // ── Editar datos principales del bache ─────────────────────────────

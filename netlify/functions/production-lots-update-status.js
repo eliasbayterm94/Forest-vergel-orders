@@ -8,6 +8,7 @@ const { ok, badReq, notFound, conflict, serverErr, methodNotAllowed, parseJson }
 const { maybeCompleteOrder } = require('./_lib/orderCompletion');
 const { bogotaToday } = require('./_lib/bogotaTime');
 const { validateDryingLocations } = require('./_lib/dryingTypes');
+const { checkDriedPlausibility } = require('./_lib/plausibility');
 
 /**
  * POST /production-lots-update-status  (finca, admin)
@@ -234,6 +235,23 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (targetStatus === LOT_STATUS.Ready) {
     const finalDried = update.kg_dried_output != null ? Number(update.kg_dried_output) : lot.kg_dried_output;
     const initial    = lot.kg_input_initial != null ? Number(lot.kg_input_initial) : null;
+
+    // Plausibility: atrapa typos de peso antes de que contaminen el
+    // inventario. HARD (seco > entrada) se rechaza siempre; conversión
+    // fuera de rango pide confirmación (override_plausibility: true).
+    if (finalDried != null && finalDried > 0) {
+      const check = checkDriedPlausibility({
+        kgInputInitial: initial,
+        kgDried: finalDried,
+        processingStage: lot.processing_stage,
+      });
+      if (check.hardError) return badReq(check.hardError, 'IMPLAUSIBLE_WEIGHT');
+      if (check.confirmWarning && !body.override_plausibility) {
+        return conflict(check.confirmWarning, 'PLAUSIBILITY_CONFIRM_REQUIRED',
+          { conversion: check.conversion });
+      }
+    }
+
     if (initial != null && finalDried != null && finalDried > 0) {
       update.conversion_factor = Math.round((initial / finalDried) * 10000) / 10000;
     }

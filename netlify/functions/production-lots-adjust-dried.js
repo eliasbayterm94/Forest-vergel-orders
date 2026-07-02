@@ -5,6 +5,8 @@ const { getSupabase } = require('./_lib/supabase');
 const { LOT_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { revertOrdersIfNoLongerComplete } = require('./_lib/shipmentRevert');
+const { checkDriedPlausibility } = require('./_lib/plausibility');
+const { actorLabel } = require('./_lib/actor');
 
 /**
  * POST /production-lots-adjust-dried  (finca, admin)
@@ -85,6 +87,21 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     );
   }
 
+  // Plausibility del nuevo peso: HARD (seco > entrada) rechaza;
+  // conversión fuera del rango del stage pide confirmación.
+  {
+    const check = checkDriedPlausibility({
+      kgInputInitial: lot.kg_input_initial,
+      kgDried: newDried,
+      processingStage: lot.processing_stage,
+    });
+    if (check.hardError) return badReq(check.hardError, 'IMPLAUSIBLE_WEIGHT');
+    if (check.confirmWarning && !body.override_plausibility) {
+      return conflict(check.confirmWarning, 'PLAUSIBILITY_CONFIRM_REQUIRED',
+        { conversion: check.conversion });
+    }
+  }
+
   // Escalar kg_green_actual proporcionalmente. Preserva la
   // relación verde/seco original — más seguro que recalcular con
   // el factor porque puede haber sido ajustado a mano.
@@ -106,7 +123,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   // Auditoría en notes
   const stamp = new Date().toISOString().slice(0, 10);
-  const author = (session && session.role) || 'unknown';
+  const author = actorLabel(session, body);
   const auditLine = `[Ajuste seco · ${author} · ${stamp}] ${oldDried} kg → ${newDried} kg. Motivo: ${reasonTrimmed}`;
   const newNotes = lot.notes ? `${lot.notes}\n${auditLine}` : auditLine;
 

@@ -16,6 +16,7 @@ import {
   NEXT_TRANSITIONS,
   advanceStatus as advanceStatusShared,
   editBacheModal,
+  callWithPlausibilityConfirm,
 } from './_bache-actions.js';
 import { generateLotPassportPdf } from '../ui/pdf.js';
 
@@ -857,14 +858,21 @@ async function editEventModal(ev, lot, reload) {
             }
 
             try {
+              let declined = false;
               await withBusy(btn, 'Guardando…', async () => {
                 if (Object.keys(lotFields).length > 0) {
-                  await api.lotUpdate({ lot_id: lot.id, fields: lotFields });
+                  const r = await callWithPlausibilityConfirm((override) =>
+                    api.lotUpdate({
+                      lot_id: lot.id, fields: lotFields,
+                      ...(override ? { override_plausibility: true } : {}),
+                    }));
+                  if (r === null) { declined = true; return; }
                 }
                 if (Object.keys(cycleFields).length > 0 && cfg.cycleId) {
                   await api.lotRestingCycleUpdate({ cycle_id: cfg.cycleId, fields: cycleFields });
                 }
               });
+              if (declined) return;   // el operario no confirmó el peso — modal sigue abierta
               toast('Cambios guardados', 'success');
               close({ ok: true });
               reload();
@@ -1056,12 +1064,16 @@ async function adjustDriedModal(lot) {
               toast('El motivo debe tener al menos 10 caracteres', 'warning'); return;
             }
             try {
+              let declined = false;
               await withBusy(btn, 'Guardando…', async () => {
-                const r = await api.lotAdjustDried({
-                  lot_id: lot.id,
-                  kg_dried_output: newDried,
-                  reason,
-                });
+                const r = await callWithPlausibilityConfirm((override) =>
+                  api.lotAdjustDried({
+                    lot_id: lot.id,
+                    kg_dried_output: newDried,
+                    reason,
+                    ...(override ? { override_plausibility: true } : {}),
+                  }));
+                if (r === null) { declined = true; return; }
                 const parts = [`Peso seco actualizado: ${fmtKg(newDried)}`];
                 if (r.reverted_to_ready) parts.push(`bache → Listo con ${fmtKg(r.new_available_kg)} de saldo`);
                 if ((r.orders_reverted_to_in_production || []).length > 0) {
@@ -1069,6 +1081,7 @@ async function adjustDriedModal(lot) {
                 }
                 toast(parts.join(' · '), 'success', 6000);
               });
+              if (declined) return;   // el operario no confirmó — modal sigue abierta
               close({ ok: true });
             } catch (err) {
               toast(err.message || 'Error al ajustar', 'error', 6000);

@@ -7,6 +7,7 @@ const { validateFermentationTanks } = require('./_lib/fermentationTanks');
 const { validateFermentationTypes } = require('./_lib/fermentationTypes');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
+const { checkDriedPlausibility } = require('./_lib/plausibility');
 
 /**
  * POST /production-lots-update  (finca, admin)
@@ -147,6 +148,33 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
     if (!result.ok) return badReq(result.message, 'INVALID_FERM_TYPES');
     update.fermentation_types = result.types;
+  }
+
+  // Plausibility del peso seco: si el update trae kg_dried_output (o
+  // cambia kg_input_initial con un dried existente), verificamos que
+  // el par entrada/seco sea físicamente posible y que la conversión
+  // caiga en el rango típico del stage. HARD se rechaza; CONFIRM
+  // requiere body.override_plausibility.
+  if (update.kg_dried_output != null || update.kg_input_initial != null) {
+    const { data: curLot } = await sb
+      .from('production_lots')
+      .select('kg_input_initial, kg_dried_output, processing_stage')
+      .eq('id', lot_id).maybeSingle();
+    if (!curLot) return notFound('Lot not found');
+    const effInitial = update.kg_input_initial != null ? update.kg_input_initial : curLot.kg_input_initial;
+    const effDried   = update.kg_dried_output  != null ? update.kg_dried_output  : curLot.kg_dried_output;
+    if (effDried != null && Number(effDried) > 0) {
+      const check = checkDriedPlausibility({
+        kgInputInitial: effInitial,
+        kgDried: effDried,
+        processingStage: curLot.processing_stage,
+      });
+      if (check.hardError) return badReq(check.hardError, 'IMPLAUSIBLE_WEIGHT');
+      if (check.confirmWarning && !body.override_plausibility) {
+        return conflict(check.confirmWarning, 'PLAUSIBILITY_CONFIRM_REQUIRED',
+          { conversion: check.conversion });
+      }
+    }
   }
 
   // Si cambia kg_input_initial, recalcular los campos derivados
