@@ -6,6 +6,7 @@ const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { notifyOrderCompleted } = require('./_lib/notifications');
 const { bogotaToday } = require('./_lib/bogotaTime');
+const { driedLedger } = require('./_lib/lotInventory');
 
 /**
  * POST /shipments-create  (finca, admin)
@@ -157,11 +158,13 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
           'PARTIAL_IDS_NOT_ALLOWED',
         );
       }
-      // Calcular kg disponible para despacho
-      const lotDried     = Number(lot.kg_dried_output || 0);
-      const alreadySent  = kgAlreadyShippedByLot.get(lot.id) || 0;
-      const inBlends     = kgInBlendsByLot.get(lot.id) || 0;
-      const kgAvailable  = lotDried - alreadySent - inBlends;
+      // Calcular kg disponible para despacho — misma fuente única
+      // (_lib/lotInventory) que production-lots-list y lotAvailability.
+      const kgAvailable = driedLedger({
+        kgDriedOutput: lot.kg_dried_output,
+        blendedKg: kgInBlendsByLot.get(lot.id) || 0,
+        shippedWholeKg: kgAlreadyShippedByLot.get(lot.id) || 0,
+      }).available;
 
       if (kgAvailable <= 0.01) {
         return conflict(
@@ -262,13 +265,14 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     let shouldDeliver = false;
     if (partials.length === 0) {
       // Despacho completo o parcial. Solo marcar Delivered si ya no queda kg.
-      const lotDried    = Number(lot.kg_dried_output || 0);
-      const prevSent    = kgAlreadyShippedByLot.get(lotId) || 0;
-      const inBlends    = kgInBlendsByLot.get(lotId) || 0;
-      const newlySent   = linkRows
+      const newlySent = linkRows
         .filter((r) => r.production_lot_id === lotId && r.lot_partial_id == null)
         .reduce((s, r) => s + Number(r.kg_dried_shipped || 0), 0);
-      const remaining   = lotDried - prevSent - inBlends - newlySent;
+      const remaining = driedLedger({
+        kgDriedOutput: lot.kg_dried_output,
+        blendedKg: kgInBlendsByLot.get(lotId) || 0,
+        shippedWholeKg: (kgAlreadyShippedByLot.get(lotId) || 0) + newlySent,
+      }).available;
       shouldDeliver = remaining <= 0.01;
     } else {
       // Lot fully accounted for if every partial is shipped (in this

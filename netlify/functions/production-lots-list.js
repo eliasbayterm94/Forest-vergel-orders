@@ -3,6 +3,10 @@
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { ok, serverErr, methodNotAllowed } = require('./_lib/respond');
+const {
+  sumBlendedKg, sumShippedFromPartials, sumAllocatedGreen,
+  driedLedger, greenLedger, round2,
+} = require('./_lib/lotInventory');
 
 /**
  * GET /production-lots-list
@@ -125,49 +129,40 @@ exports.handler = requireAuth(async (event) => {
   }
 
   const lots = (data || []).map((l) => {
-    // kg seco consumido por mezclas en las que este bache participó
-    // como padre. (Para el blend resultante is_blend=true y no entra
-    // aquí — solo cuentan los aportes a OTROS blends.)
-    const kgDriedUsedInBlends = (l.lot_blend_components || [])
-      .reduce((s, r) => s + Number(r.kg_dried_used || 0), 0);
-    // kg seco ya despachado vía parciales con shipment_id.
-    const kgDriedShippedInPartials = (l.lot_partials || [])
-      .filter((p) => p.shipment_lots && p.shipment_lots.length > 0)
-      .reduce((s, p) => s + Number(p.kg_dried || 0), 0);
-    // kg seco ya despachado como whole-lot o partial-by-kg (filas de
-    // shipment_lots con lot_partial_id IS NULL). Sin esto, un
-    // despacho parcial de 200kg de un bache de 350kg dejaba al bache
-    // con kg_dried_available = 350 (debería ser 150).
-    const kgDriedShippedWhole = wholeShipKgByLot.get(l.id) || 0;
-    const kgDriedAvailable = Math.max(0,
-      Number(l.kg_dried_output || 0)
-      - kgDriedUsedInBlends
-      - kgDriedShippedInPartials
-      - kgDriedShippedWhole);
-
-    // ── Verde: total, comprometido (pedidos + compras) y disponible
-    // neto real (descontando además lo que ya salió físicamente:
-    // mezclas + parciales despachados, convertido a verde por ratio).
-    const totalGreen = Number(l.kg_green_actual ?? l.kg_green_expected ?? 0);
-    const totalDried = Number(l.kg_dried_output ?? 0);
-    const greenPerDried = totalDried > 0 ? totalGreen / totalDried : 0;
-    const greenGone =
-      (kgDriedUsedInBlends + kgDriedShippedInPartials + kgDriedShippedWhole) * greenPerDried;
-    const assignedOrdersGreen = (l.lot_order_assignments || [])
-      .reduce((s, a) => s + Number(a.kg_green_allocated || 0), 0);
-    const assignedPurchasesGreen = (l.lot_purchases || [])
-      .reduce((s, p) => s + Number(p.kg_green_allocated || 0), 0);
-    const greenAssigned = assignedOrdersGreen + assignedPurchasesGreen;
-    const greenAvailable = Math.max(0, totalGreen - greenGone - greenAssigned);
+    // Inventario del bache — la matemática vive en _lib/lotInventory
+    // (fuente única, compartida con lotAvailability y shipments-create).
+    //   · blended: kg seco consumido por mezclas donde este bache es
+    //     fuente (para el blend resultante is_blend=true y no entra
+    //     aquí — solo cuentan los aportes a OTROS blends)
+    //   · shippedPartials: despachos vía parciales (embed
+    //     lot_partials[].shipment_lots)
+    //   · shippedWhole: despachos whole/partial-by-kg (segunda query,
+    //     filas con lot_partial_id IS NULL). Sin esto, un despacho
+    //     parcial de 200 kg de un bache de 350 dejaba el available en
+    //     350 (debería ser 150).
+    const dl = driedLedger({
+      kgDriedOutput: l.kg_dried_output,
+      blendedKg: sumBlendedKg(l.lot_blend_components),
+      shippedPartialsKg: sumShippedFromPartials(l.lot_partials),
+      shippedWholeKg: wholeShipKgByLot.get(l.id) || 0,
+    });
+    const gl = greenLedger({
+      kgGreenActual: l.kg_green_actual,
+      kgGreenExpected: l.kg_green_expected,
+      kgDriedOutput: l.kg_dried_output,
+      driedOutKg: dl.out,
+      assignedOrdersKg: sumAllocatedGreen(l.lot_order_assignments),
+      assignedPurchasesKg: sumAllocatedGreen(l.lot_purchases),
+    });
 
     return {
     ...l,
     reference_name: l.coffee_references && l.coffee_references.name,
     infusion_name:  l.infusions && l.infusions.name,
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
-    kg_dried_used_in_blends: Math.round(kgDriedUsedInBlends * 100) / 100,
-    kg_dried_shipped:        Math.round((kgDriedShippedInPartials + kgDriedShippedWhole) * 100) / 100,
-    kg_dried_available: Math.round(kgDriedAvailable * 100) / 100,
+    kg_dried_used_in_blends: round2(dl.blended),
+    kg_dried_shipped:        round2(dl.shipped),
+    kg_dried_available:      round2(dl.available),
     // Detalle de despachos: cada elemento referencia un shipment con
     // el kg seco que aportó este bache. Soporta tanto despachos por
     // partials (P1, P2…) como whole/partial-by-kg. Para pintar pills
@@ -194,10 +189,10 @@ exports.handler = requireAuth(async (event) => {
       return out;
     })(),
     blend_components: l.is_blend ? (componentsByBlend.get(l.id) || []) : [],
-    kg_green_assigned_orders:    Math.round(assignedOrdersGreen * 100) / 100,
-    kg_green_assigned_purchases: Math.round(assignedPurchasesGreen * 100) / 100,
-    kg_green_assigned:           Math.round(greenAssigned * 100) / 100,
-    kg_green_available:          Math.round(greenAvailable * 100) / 100,
+    kg_green_assigned_orders:    round2(gl.assignedOrders),
+    kg_green_assigned_purchases: round2(gl.assignedPurchases),
+    kg_green_assigned:           round2(gl.assigned),
+    kg_green_available:          round2(gl.available),
     purchases: (l.lot_purchases || []).map((p) => ({
       id: p.id,
       client_name: p.client_name,
