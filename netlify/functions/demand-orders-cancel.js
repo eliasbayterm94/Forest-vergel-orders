@@ -4,14 +4,16 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
+const { actorLabel } = require('./_lib/actor');
 
 /**
- * POST /demand-orders-cancel  (forest, admin)
+ * POST /demand-orders-cancel  (forest, finca, admin)
  * Body: { order_id, reason? }
  *
  * Cancela un pedido (soft delete: status = Cancelled). Aplica a
  * estados activos (Pending, Accepted, PartiallyAccepted, InProduction).
- * El trigger en BD permite estas transiciones.
+ * El trigger en BD permite estas transiciones. Finca puede cancelar
+ * desde la Cola de Pedidos; Forest desde su tablero.
  *
  * Si el pedido tiene asignaciones a lotes que aún no se despacharon
  * (status != Delivered), devolvemos 409 HAS_LOT_ASSIGNMENTS con el
@@ -26,7 +28,7 @@ const ACTIVE_STATUSES = new Set([
   ORDER_STATUS.InProduction,
 ]);
 
-exports.handler = requireAuth(['forest', 'admin'], async (event) => {
+exports.handler = requireAuth(['forest', 'finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
@@ -69,10 +71,13 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
     );
   }
 
-  // Append reason to comments so we keep an audit trail.
-  const newComments = reason
-    ? [order.comments, `Cancelado: ${reason}`].filter(Boolean).join(' · ')
-    : order.comments;
+  // Append reason to comments so we keep an audit trail (con rol y
+  // operario para saber QUIÉN canceló — mismo formato que el cierre
+  // manual de pedidos).
+  const stamp = new Date().toISOString().slice(0, 10);
+  const author = actorLabel(session, body);
+  const tag = `[Cancelado por ${author} · ${stamp}]${reason ? ` ${reason}` : ''}`;
+  const newComments = [order.comments, tag].filter(Boolean).join('\n');
 
   const { data: updated, error: updErr } = await sb
     .from('demand_orders')

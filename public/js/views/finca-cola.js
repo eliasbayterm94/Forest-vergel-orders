@@ -16,6 +16,8 @@ import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { openPopover } from '../ui/popover.js';
+import { openModal } from '../ui/modal.js';
+import { toast } from '../ui/toast.js';
 import { renderOrderCard } from './_order-card.js';
 
 const FILTERS = [
@@ -130,6 +132,19 @@ export async function fincaColaView() {
     })
     .sort((a, b) => (a.latest_drying_start_date || '').localeCompare(b.latest_drying_start_date || ''));
 
+  // Historial: pedidos terminados (Completed) y cancelados. Se ven
+  // en el tab "Terminados" con sus baches asignados para verificar
+  // lo que ya pasó.
+  const finished = allOrders
+    .filter((o) => ['Completed', 'Cancelled'].includes(o.status))
+    .map((o) => ({
+      ...o,
+      allocated_kg: allocByOrder.get(o.id) || 0,
+      shipped_kg: shippedByOrder.get(o.id) || 0,
+      closed_at: (o.completed_at || o.cancelled_at || '').slice(0, 10) || null,
+    }))
+    .sort((a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
+
   // Escala global para el timeline (today → maxDelivery)
   const earliest = today;
   const latest = inFlight.reduce(
@@ -141,6 +156,58 @@ export async function fincaColaView() {
   let sheetValues = {};   // { client_name?: [...], process_type?: [...] }
   // Pedidos expandidos en la vista Tabla (dropdown con lotes asignados).
   const expandedOrders = new Set();
+  const expandedFinished = new Set();
+  let activeTab = 'en_curso';   // 'en_curso' | 'terminados'
+
+  // ── Cancelar pedido (con motivo, auditado) ─────────────────────
+  async function cancelOrderModal(o) {
+    const reasonInput = el('textarea', {
+      rows: '3', class: 'ctrm-textarea w-full',
+      placeholder: 'Motivo de la cancelación…',
+    });
+    const out = await openModal(({ close }) => el('div', { class: 'space-y-3' }, [
+      el('p', { class: 'text-[12px] text-ink-700 leading-relaxed' }, [
+        `Cancelar el pedido `,
+        el('strong', { class: 'text-navy', text: o.order_code || o.id.slice(0, 8) }),
+        o.client_name ? ` de ${o.client_name}` : '',
+        `. El pedido pasa a Cancelado y queda en el historial de Terminados. `,
+        `Si tiene baches asignados sin despachar, primero hay que quitar esas asignaciones desde Producción.`,
+      ]),
+      el('div', {}, [
+        el('label', { class: 'ctrm-label', text: 'Motivo *' }),
+        reasonInput,
+      ]),
+      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+        el('button', { type: 'button', class: 'ctrm-btn ctrm-btn-ghost', onClick: () => close(null) }, ['Volver']),
+        el('button', {
+          type: 'button', class: 'ctrm-btn ctrm-btn-danger',
+          onClick: () => {
+            const reason = reasonInput.value.trim();
+            if (!reason) { toast('Indica el motivo de la cancelación', 'warning'); return; }
+            close({ reason });
+          },
+        }, ['Cancelar pedido']),
+      ]),
+    ]), { title: 'Cancelar pedido' });
+
+    if (!out) return;
+    try {
+      await api.orderCancel({ order_id: o.id, reason: out.reason });
+      toast(`Pedido ${o.order_code || ''} cancelado`, 'success');
+      navigate('/finca/cola');
+    } catch (e) {
+      if (e.code === 'HAS_LOT_ASSIGNMENTS') {
+        const baches = ((e.detail && e.detail.assignments) || [])
+          .map((a) => a.bache_code).filter(Boolean).join(', ');
+        toast(
+          `No se puede cancelar: tiene asignaciones activas${baches ? ` (${baches})` : ''}. Quítalas desde Producción primero.`,
+          'error', 8000,
+        );
+      } else {
+        toast(e.message || 'Error al cancelar', 'error', 6000);
+      }
+    }
+  }
 
   // Filtros del sheet: cliente + proceso. Las opciones se derivan de
   // los pedidos in-flight cargados.
@@ -218,9 +285,9 @@ export async function fincaColaView() {
       return;
     }
     if (vm.mode() === 'table') {
-      list.append(queueTable(shown, today, lotsByOrder, expandedOrders, redraw));
+      list.append(queueTable(shown, today, lotsByOrder, expandedOrders, redraw, cancelOrderModal));
     } else {
-      for (const o of shown) list.append(queueRow(o, today, earliest, latest));
+      for (const o of shown) list.append(queueRow(o, today, earliest, latest, cancelOrderModal));
     }
   }
   const vm = createViewMode('finca-cola', {
@@ -273,19 +340,144 @@ export async function fincaColaView() {
   refreshLegend();
   redraw();
 
-  return chrome(el('div', {}, [
-    pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
+  // ── Tabs: En curso / Terminados ────────────────────────────────
+  // "En curso" es la cola operativa de siempre. "Terminados" es el
+  // historial de pedidos Completed/Cancelled con sus baches
+  // asignados, para verificar lo que ya pasó.
+  const enCursoWrap = el('div', {}, [
     kpiStrip,
     weeklyLoadPanel,
     filterRow,
     legendHolder,
     list,
+  ]);
+  const terminadosWrap = el('div', {});
+  function redrawTerminados() {
+    terminadosWrap.innerHTML = '';
+    if (finished.length === 0) {
+      terminadosWrap.append(emptyStateCard({
+        title: 'Aún no hay pedidos terminados',
+        description: 'Cuando un pedido se complete o se cancele aparecerá aquí con sus baches asignados.',
+      }));
+      return;
+    }
+    terminadosWrap.append(finishedTable(finished, lotsByOrder, expandedFinished, redrawTerminados));
+  }
+  redrawTerminados();
+
+  const tabBtn = (key, label, count) => el('button', {
+    type: 'button',
+    class: activeTab === key
+      ? 'ctrm-btn ctrm-btn-primary ctrm-btn-sm'
+      : 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
+    onClick: () => {
+      activeTab = key;
+      enCursoWrap.style.display     = key === 'en_curso'   ? '' : 'none';
+      terminadosWrap.style.display  = key === 'terminados' ? '' : 'none';
+      tabBar.replaceChildren(
+        tabBtn('en_curso', 'En curso', inFlight.length),
+        tabBtn('terminados', 'Terminados', finished.length),
+      );
+    },
+  }, [`${label} · ${count}`]);
+  const tabBar = el('div', { class: 'flex items-center gap-2 mb-4' }, [
+    tabBtn('en_curso', 'En curso', inFlight.length),
+    tabBtn('terminados', 'Terminados', finished.length),
+  ]);
+  terminadosWrap.style.display = 'none';
+
+  return chrome(el('div', {}, [
+    pageTitle('Cola de pedidos', `Hoy: ${today} · drying-start = entrega − (drying + procesamiento)`),
+    tabBar,
+    enCursoWrap,
+    terminadosWrap,
   ]));
+}
+
+// ─── Historial de terminados ────────────────────────────────────────
+// Tabla expandible de pedidos Completed/Cancelled. El dropdown por
+// fila reutiliza assignmentsBlock (los mismos baches + despachos que
+// la cola en curso).
+function finishedTable(orders, lotsByOrder, expanded, redraw) {
+  const cell = (label, classes, content) => {
+    const td = el('td', { class: classes });
+    td.setAttribute('data-label', label);
+    if (content instanceof Node) td.append(content);
+    else td.append(document.createTextNode(String(content == null ? '—' : content)));
+    return td;
+  };
+  return sortableTable({
+    headers: [
+      { label: '', cls: 'w-8' },
+      { label: 'Código',     sortGetter: (o) => o.order_code || '' },
+      { label: 'Referencia', sortGetter: (o) => o.reference_name || '' },
+      { label: 'Cliente',    sortGetter: (o) => o.client_name || '' },
+      { label: 'Status',     sortGetter: (o) => o.status || '' },
+      { label: 'Aceptado',   cls: 'text-right', sortGetter: (o) => Number(o.kg_green_accepted || 0) },
+      { label: 'Asignado',   cls: 'text-right', sortGetter: (o) => Number(o.allocated_kg || 0) },
+      { label: 'Despachado', cls: 'text-right', sortGetter: (o) => Number(o.shipped_kg || 0) },
+      { label: 'Cerrado el', sortGetter: (o) => o.closed_at || '' },
+    ],
+    defaultSort: { index: 8, dir: 'desc' },
+    totals: [
+      null,
+      { value: (arr) => `Total · ${arr.length}`, cls: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700' },
+      null, null, null,
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.kg_green_accepted || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.allocated_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
+      { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.shipped_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-ok' },
+      null,
+    ],
+    items: orders,
+    renderRow: (o) => {
+      const isExp = expanded.has(o.id);
+      const toggle = () => {
+        if (isExp) expanded.delete(o.id); else expanded.add(o.id);
+        redraw();
+      };
+      const mainRow = el('tr', {
+        class: `cursor-pointer hover:bg-cream ${isExp ? 'bg-cream' : ''}`,
+        onClick: toggle,
+      }, [
+        cell('Expand', 'w-8 text-center', el('span', {
+          class: 'text-ink-500 font-mono text-[11px]',
+          text: isExp ? '▾' : '▸',
+        })),
+        cell('Código', 'font-mono text-navy font-semibold',
+          el('button', {
+            type: 'button',
+            class: 'font-mono text-navy font-semibold hover:underline',
+            style: 'background:none;border:none;padding:0;cursor:pointer;',
+            onClick: (e) => { e.stopPropagation(); navigate(`/pedido?id=${o.id}`); },
+            text: o.order_code || '—',
+          })),
+        cell('Referencia', '', o.reference_name || '—'),
+        cell('Cliente', '', o.client_name || '—'),
+        cell('Status', '', el('span', { class: `ctrm-pill ${statusPillKind(o.status)}`, text: statusLabel(o.status) })),
+        cell('Aceptado',  'text-right font-mono', fmtKg(o.kg_green_accepted || 0)),
+        cell('Asignado',  'text-right font-mono', fmtKg(o.allocated_kg || 0)),
+        cell('Despachado', `text-right font-mono ${o.shipped_kg > 0 ? 'text-ok font-semibold' : 'text-ink-300'}`,
+          o.shipped_kg > 0 ? fmtKg(o.shipped_kg) : '—'),
+        cell('Cerrado el', 'font-mono text-[11px]',
+          o.closed_at ? `${fmtDate(o.closed_at)} · ${relDate(o.closed_at)}` : '—'),
+      ]);
+
+      if (!isExp) return mainRow;
+
+      const lots = lotsByOrder.get(o.id) || [];
+      const subRow = el('tr', { class: 'bg-cream' }, [
+        el('td', { colspan: '9', class: 'p-3' }, [assignmentsBlock(lots)]),
+      ]);
+      const frag = document.createDocumentFragment();
+      frag.append(mainRow, subRow);
+      return frag;
+    },
+  }).el;
 }
 
 // ─── Table renderer ────────────────────────────────────────────────
 // COLSPAN = 12 (chevron + 11 columnas de datos)
-function queueTable(orders, today, lotsByOrder, expanded, redraw) {
+function queueTable(orders, today, lotsByOrder, expanded, redraw, onCancel) {
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
     td.setAttribute('data-label', label);
@@ -307,6 +499,7 @@ function queueTable(orders, today, lotsByOrder, expanded, redraw) {
       { label: 'Pendiente',  cls: 'text-right', sortGetter: (o) => Number(o.pending_kg || 0) },
       { label: 'Drying-start', sortGetter: (o) => o.latest_drying_start_date },
       { label: 'Entrega',    sortGetter: (o) => o.max_delivery_date },
+      { label: '', cls: 'w-8' },   // cancelar
     ],
     totals: [
       null,
@@ -316,7 +509,7 @@ function queueTable(orders, today, lotsByOrder, expanded, redraw) {
       { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.allocated_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-navy' },
       { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.shipped_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-ok' },
       { value: (arr) => fmtKg(arr.reduce((s, o) => s + Number(o.pending_kg || 0), 0)), cls: 'text-right font-mono font-semibold text-warn' },
-      null, null,
+      null, null, null,
     ],
     items: orders,
     renderRow: (o) => {
@@ -365,13 +558,22 @@ function queueTable(orders, today, lotsByOrder, expanded, redraw) {
           o.latest_drying_start_date ? `${fmtDate(o.latest_drying_start_date)} · ${relDate(o.latest_drying_start_date)}` : '—'),
         cell('Entrega', 'font-mono text-[11px]',
           o.max_delivery_date ? `${fmtDate(o.max_delivery_date)} · ${relDate(o.max_delivery_date)}` : '—'),
+        cell('Cancelar', 'w-8 text-center', onCancel
+          ? el('button', {
+              type: 'button',
+              class: 'text-crit text-[14px] font-bold hover:bg-crit-bg rounded px-1.5 py-0.5',
+              title: 'Cancelar pedido',
+              style: 'background:none;border:none;cursor:pointer;',
+              onClick: (e) => { e.stopPropagation(); onCancel(o); },
+            }, ['×'])
+          : document.createTextNode('')),
       ]);
 
       if (!isExp) return mainRow;
 
       const lots = lotsByOrder.get(o.id) || [];
       const subRow = el('tr', { class: 'bg-cream' }, [
-        el('td', { colspan: '12', class: 'p-3' }, [assignmentsBlock(lots)]),
+        el('td', { colspan: '13', class: 'p-3' }, [assignmentsBlock(lots)]),
       ]);
       const frag = document.createDocumentFragment();
       frag.append(mainRow, subRow);
@@ -519,7 +721,7 @@ function matches(o, filter, today) {
 // La card unificada vive en _order-card.js (compartida con Forest).
 // Aquí encima/abajo le agregamos los hints específicos de la cola:
 // timeline horizontal de fechas + pills de urgencia/sobrecarga.
-function queueRow(o, today, earliest, latest) {
+function queueRow(o, today, earliest, latest, onCancel) {
   const isOverdue = o.latest_drying_start_date && o.latest_drying_start_date < today;
   const dryingPos = posOn(earliest, latest, o.latest_drying_start_date);
   const delivPos  = posOn(earliest, latest, o.max_delivery_date);
@@ -558,6 +760,7 @@ function queueRow(o, today, earliest, latest) {
     },
     secondaryActions: [
       { label: 'Ver detalle', onClick: () => navigate(`/pedido?id=${o.id}`) },
+      onCancel ? { label: 'Cancelar pedido', danger: true, onClick: () => onCancel(o) } : null,
     ],
   });
 
