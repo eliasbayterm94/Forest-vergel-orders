@@ -6,7 +6,8 @@ const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { notifyOrderCompleted } = require('./_lib/notifications');
 const { bogotaToday } = require('./_lib/bogotaTime');
-const { driedLedger } = require('./_lib/lotInventory');
+const { driedLedger, round2 } = require('./_lib/lotInventory');
+const { actorLabel } = require('./_lib/actor');
 
 /**
  * POST /shipments-create  (finca, admin)
@@ -25,13 +26,30 @@ const { driedLedger } = require('./_lib/lotInventory');
  *       codigo_trilladora?: string, codigo_mezcla?: string,
  *       num_sacos?: int, num_lonas?: int,
  *       empaque_interior?: 'grainpro'|'bolsa', color_cinta?: '#rrggbb',
- *       observaciones?: string, partials_merged?: boolean }
+ *       observaciones?: string, partials_merged?: boolean,
+ *       kg_dried_to_ship?: number, close_lot?: boolean, split?: boolean }
  *   ]
+ *   override_peso_real?: boolean
  *
  *   - partial_ids null/empty → ship the whole lot. Only allowed when
  *     the lot has no registered partials.
  *   - partial_ids array     → ship those specific partials. Required
  *     when the lot has any partial.
+ *
+ *   Peso real de báscula (close_lot=true + kg_dried_to_ship):
+ *   despacho TOTAL cuyo peso real difiere del registrado por humedad.
+ *   La línea guarda el kg real y la diferencia queda en
+ *   kg_dried_merma (cuenta como salida de bodega → disponible 0) y
+ *   anotada en la bitácora del bache. El bache pasa a Delivered.
+ *   Diferencias > 3% exigen override_peso_real=true
+ *   (409 PESO_REAL_CONFIRM_REQUIRED); báscula por encima del
+ *   registro se tolera hasta +3% (más allá: EXCEEDS_AVAILABLE).
+ *
+ *   División P1/P2 (varios items whole-mode del mismo bache):
+ *   cada línea lleva su propio kg y empaque, y recibe split_label
+ *   automático (P1, P2, …). Si el bache ya tiene líneas etiquetadas
+ *   de despachos anteriores, la numeración continúa (P3, …) — así
+ *   una división puede salir en remisiones de días distintos.
  *
  * Backwards-compat: `lot_ids: [uuid]` is accepted and translates to
  * items[i] = { production_lot_id, partial_ids: null }.
@@ -87,7 +105,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const { data: lots, error: lErr } = await sb
     .from('production_lots')
     .select(`
-      id, lot_code, bache_code, status,
+      id, lot_code, bache_code, status, notes,
       kg_dried_output,
       kg_green_actual, kg_green_expected,
       lot_partials ( id, parcial_letter, kg_green_yield, rejected_at )
@@ -110,7 +128,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   // already-shipped wholes / partials and acumular kg ya despachados).
   const { data: existingLinks, error: exErr } = await sb
     .from('shipment_lots')
-    .select('production_lot_id, lot_partial_id, kg_dried_shipped')
+    .select('production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma, split_label')
     .in('production_lot_id', lotIds);
   if (exErr) return serverErr('Existing-link lookup failed', exErr.message);
 
@@ -118,11 +136,23 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     .filter((x) => x.lot_partial_id != null).map((x) => x.lot_partial_id));
 
   // Acumular kg seco ya despachado por lote (para despachos parciales).
+  // La merma de despachos totales previos también cuenta como salida.
   const kgAlreadyShippedByLot = new Map();
+  // Mayor número P ya usado en líneas de división del lote (para que
+  // la numeración continúe entre despachos: P1 hoy, P2 mañana).
+  const priorMaxPByLot = new Map();
   for (const x of existingLinks || []) {
     if (x.lot_partial_id != null) continue;
     const prev = kgAlreadyShippedByLot.get(x.production_lot_id) || 0;
-    kgAlreadyShippedByLot.set(x.production_lot_id, prev + Number(x.kg_dried_shipped || 0));
+    kgAlreadyShippedByLot.set(x.production_lot_id,
+      prev + Number(x.kg_dried_shipped || 0) + Number(x.kg_dried_merma || 0));
+    const m = /^P(\d+)$/.exec(x.split_label || '');
+    if (m) {
+      const n = Number(m[1]);
+      if (n > (priorMaxPByLot.get(x.production_lot_id) || 0)) {
+        priorMaxPByLot.set(x.production_lot_id, n);
+      }
+    }
   }
   // Kg consumido en mezclas
   const { data: blendUse } = await sb
@@ -138,6 +168,21 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   // Validate every item against its lot's partials.
   const lotById = new Map(lots.map((l) => [l.id, l]));
   const linkRows = [];   // shipment_lots inserts
+
+  // División P1/P2: varios items whole-mode del mismo bache. Contamos
+  // por lote para decidir si las líneas llevan split_label.
+  const wholeItemCountByLot = new Map();
+  for (const it of items) {
+    const lot = lotById.get(it.production_lot_id);
+    if ((lot.lot_partials || []).length === 0) {
+      wholeItemCountByLot.set(lot.id, (wholeItemCountByLot.get(lot.id) || 0) + 1);
+    }
+  }
+  const requestedSoFarByLot = new Map();  // kg (incl. merma) pedidos por líneas previas de ESTE request
+  const labelSeqByLot = new Map();        // último número P asignado en este request
+  const forceDeliverLots = new Set();     // close_lot: el bache cierra aunque la báscula difiera
+  const pesoRealByLot = new Map();        // lot_id → { registered, real, merma } para la bitácora
+
   for (const it of items) {
     const lot = lotById.get(it.production_lot_id);
     const partials = lot.lot_partials || [];
@@ -177,39 +222,92 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       }
       // Calcular kg disponible para despacho — misma fuente única
       // (_lib/lotInventory) que production-lots-list y lotAvailability.
-      const kgAvailable = driedLedger({
+      // Las líneas previas de ESTE request (división) también descuentan.
+      const ledgerAvailable = driedLedger({
         kgDriedOutput: lot.kg_dried_output,
         blendedKg: kgInBlendsByLot.get(lot.id) || 0,
         shippedWholeKg: kgAlreadyShippedByLot.get(lot.id) || 0,
       }).available;
+      const inRequest = requestedSoFarByLot.get(lot.id) || 0;
+      const kgAvailable = ledgerAvailable - inRequest;
 
       if (kgAvailable <= 0.01) {
+        if (inRequest > 0) {
+          return conflict(
+            `Lote ${lot.bache_code || lot.lot_code}: las líneas de la división exceden los ${round2(ledgerAvailable)} kg disponibles`,
+            'EXCEEDS_AVAILABLE',
+          );
+        }
         return conflict(
           `Lote ${lot.bache_code || lot.lot_code} ya fue completamente despachado`,
           'LOT_ALREADY_SHIPPED',
         );
       }
 
-      // Si el item trae kg_dried_to_ship, es despacho parcial.
+      const closeLot = it.close_lot === true;
       let kgToShip = kgAvailable;
+      let merma = null;
       if (it.kg_dried_to_ship != null) {
         const requested = Number(it.kg_dried_to_ship);
         if (!Number.isFinite(requested) || requested <= 0) {
           return badReq('kg_dried_to_ship must be > 0', 'INVALID_KG_SHIP');
         }
-        if (requested > kgAvailable + 0.01) {
+        if (closeLot) {
+          // Peso real de báscula en despacho TOTAL: puede diferir del
+          // registrado (humedad). Tolera hasta +3% por encima; más es
+          // un error de digitación, no humedad.
+          if (requested > kgAvailable * 1.03 + 0.01) {
+            return conflict(
+              `Lote ${lot.bache_code || lot.lot_code}: peso báscula ${requested} kg supera en más de 3% los ${round2(kgAvailable)} kg registrados`,
+              'EXCEEDS_AVAILABLE',
+            );
+          }
+          const diff = round2(kgAvailable - requested);   // >0 merma, <0 ganancia
+          const pct = kgAvailable > 0 ? Math.abs(diff) / kgAvailable : 0;
+          if (pct > 0.03 && body.override_peso_real !== true) {
+            return conflict(
+              `Lote ${lot.bache_code || lot.lot_code}: peso báscula ${requested} kg difiere ` +
+              `${Math.abs(diff)} kg (${Math.round(pct * 1000) / 10}%) de los ${round2(kgAvailable)} kg registrados. ` +
+              `Confirma para continuar.`,
+              'PESO_REAL_CONFIRM_REQUIRED',
+              { kg_registered: round2(kgAvailable), kg_real: requested, kg_diff: diff },
+            );
+          }
+          if (Math.abs(diff) >= 0.01) merma = diff;
+        } else if (requested > kgAvailable + 0.01) {
           return conflict(
-            `Lote ${lot.bache_code || lot.lot_code}: solicitado ${requested} kg, disponible ${Math.round(kgAvailable * 100) / 100} kg`,
+            `Lote ${lot.bache_code || lot.lot_code}: solicitado ${requested} kg, disponible ${round2(kgAvailable)} kg`,
             'EXCEEDS_AVAILABLE',
           );
         }
         kgToShip = requested;
       }
+      if (closeLot) {
+        forceDeliverLots.add(lot.id);
+        if (merma != null) {
+          pesoRealByLot.set(lot.id, { registered: round2(kgAvailable), real: round2(kgToShip), merma });
+        }
+      }
+      requestedSoFarByLot.set(lot.id, inRequest + kgToShip + (merma || 0));
+
+      // Etiqueta de división: si el item se marcó como división
+      // (split=true), si este request trae varias líneas del bache, o
+      // si el bache ya tiene líneas P de despachos anteriores, la
+      // línea recibe el siguiente número.
+      let split_label = null;
+      const priorMax = priorMaxPByLot.get(lot.id) || 0;
+      if (it.split === true || (wholeItemCountByLot.get(lot.id) || 0) > 1 || priorMax > 0) {
+        const seq = (labelSeqByLot.get(lot.id) || priorMax) + 1;
+        labelSeqByLot.set(lot.id, seq);
+        split_label = `P${seq}`;
+      }
 
       linkRows.push({
         production_lot_id: lot.id,
         lot_partial_id: null,
-        kg_dried_shipped: Math.round(kgToShip * 100) / 100,
+        kg_dried_shipped: round2(kgToShip),
+        kg_dried_merma: merma,
+        split_label,
         ...extras,
       });
     } else {
@@ -281,16 +379,18 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
     let shouldDeliver = false;
     if (partials.length === 0) {
-      // Despacho completo o parcial. Solo marcar Delivered si ya no queda kg.
+      // Despacho completo o parcial. Solo marcar Delivered si ya no
+      // queda kg (la merma de peso real también cuenta como salida),
+      // o si la línea cerró el bache con peso de báscula (close_lot).
       const newlySent = linkRows
         .filter((r) => r.production_lot_id === lotId && r.lot_partial_id == null)
-        .reduce((s, r) => s + Number(r.kg_dried_shipped || 0), 0);
+        .reduce((s, r) => s + Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0), 0);
       const remaining = driedLedger({
         kgDriedOutput: lot.kg_dried_output,
         blendedKg: kgInBlendsByLot.get(lotId) || 0,
         shippedWholeKg: (kgAlreadyShippedByLot.get(lotId) || 0) + newlySent,
       }).available;
-      shouldDeliver = remaining <= 0.01;
+      shouldDeliver = remaining <= 0.01 || forceDeliverLots.has(lotId);
     } else {
       // Lot fully accounted for if every partial is shipped (in this
       // shipment or previously) or rejected.
@@ -305,9 +405,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
     if (!shouldDeliver) continue;
 
+    const update = { status: LOT_STATUS.Delivered, delivered_date: today };
+    // Peso real de báscula: dejar la diferencia en la bitácora.
+    const pr = pesoRealByLot.get(lotId);
+    if (pr) {
+      const kind = pr.merma > 0 ? 'merma' : 'ganancia';
+      const auditLine =
+        `[Despacho total · ${actorLabel(session, body)} · ${today}] ` +
+        `Peso báscula: ${pr.real} kg vs ${pr.registered} kg registrados ` +
+        `(${kind} de ${Math.abs(pr.merma)} kg por humedad). Despacho ${ship.shipment_code || ship.id}.`;
+      update.notes = lot.notes ? `${lot.notes}\n${auditLine}` : auditLine;
+    }
     const { error: upErr } = await sb
       .from('production_lots')
-      .update({ status: LOT_STATUS.Delivered, delivered_date: today })
+      .update(update)
       .eq('id', lotId);
     if (upErr) return serverErr(`Failed to deliver lot ${lot.bache_code || lot.lot_code}`, upErr.message);
 

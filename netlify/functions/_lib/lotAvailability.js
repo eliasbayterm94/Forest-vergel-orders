@@ -33,7 +33,7 @@ async function computeGreenAvailability(sb, lotId) {
       sb.from('lot_order_assignments').select('kg_green_allocated').eq('production_lot_id', lotId),
       sb.from('lot_purchases').select('kg_green_allocated').eq('production_lot_id', lotId),
       sb.from('lot_blend_components').select('kg_dried_used').eq('source_lot_id', lotId),
-      sb.from('shipment_lots').select('kg_dried_shipped, lot_partial_id, lot_partials(kg_dried)')
+      sb.from('shipment_lots').select('kg_dried_shipped, kg_dried_merma, lot_partial_id, lot_partials(kg_dried)')
         .eq('production_lot_id', lotId),
     ]);
 

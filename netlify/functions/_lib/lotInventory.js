@@ -42,12 +42,18 @@ function sumBlendedKg(blendRows) {
  * Cada fila vale su kg_dried_shipped; si es un link de parcial sin
  * kg explícito (filas previas a migration 0030), cae al kg_dried
  * del parcial embebido.
+ *
+ * kg_dried_merma (migration 0046, despacho total con peso real de
+ * báscula) también cuenta como kg que salieron de bodega: si el
+ * bache tenía 350 y la báscula marcó 348, salieron 348 despachados
+ * + 2 de merma → disponible 0, sin saldo fantasma.
  */
 function sumShippedFromLinks(links) {
   return (links || []).reduce((s, r) => {
-    if (r.kg_dried_shipped != null) return s + Number(r.kg_dried_shipped);
-    if (r.lot_partials && r.lot_partials.kg_dried != null) return s + Number(r.lot_partials.kg_dried);
-    return s;
+    const merma = Number(r.kg_dried_merma || 0);
+    if (r.kg_dried_shipped != null) return s + Number(r.kg_dried_shipped) + merma;
+    if (r.lot_partials && r.lot_partials.kg_dried != null) return s + Number(r.lot_partials.kg_dried) + merma;
+    return s + merma;
   }, 0);
 }
 

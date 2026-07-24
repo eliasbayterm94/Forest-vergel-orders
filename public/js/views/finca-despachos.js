@@ -302,7 +302,7 @@ export async function fincaDespachosView() {
           style: 'background:none;border:none;padding:0;cursor:pointer;',
           title: 'Ver historial del bache',
           onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${lot.id}`); },
-          text: lot.bache_code || lot.blend_code || lot.lot_code || '—',
+          text: (lot.bache_code || lot.blend_code || lot.lot_code || '—') + (lot.split_label ? `-${lot.split_label}` : ''),
         }),
       ]),
       el('td', { class: 'px-3 py-2 text-ink-700', text: lot.reference_name || '—' }),
@@ -440,6 +440,10 @@ export async function fincaDespachosView() {
         ` del despacho `,
         el('strong', { class: 'text-navy', text: shipment.shipment_code }),
         `. El bache vuelve a Listo y los pedidos completados que ya no cumplan vuelven a InProduction.`,
+        lot.split_label
+          ? el('span', { class: 'block mt-1 text-warn font-semibold',
+              text: 'Este bache está dividido: se cancelan TODAS sus líneas P de este despacho.' })
+          : null,
       ]),
       el('div', {}, [
         el('label', { class: 'ctrm-label', text: 'Motivo *' }),
@@ -592,7 +596,7 @@ export async function fincaDespachosView() {
             style: 'background:none;border:none;padding:0;cursor:pointer;color:#e7e244;',
             title: 'Ver historial del bache',
             onClick: (e) => { e.stopPropagation(); navigate(`/finca/bache?id=${lot.id}`); },
-            text: lot.bache_code || lot.lot_code,
+            text: (lot.bache_code || lot.lot_code) + (lot.split_label ? `-${lot.split_label}` : ''),
           }),
           el('span', { class: 'font-display font-semibold text-[12px] truncate', style: 'color:#fff;', text: lot.reference_name || '—' }),
         ]),
@@ -793,6 +797,9 @@ export async function fincaDespachosView() {
           codigo_trilladora: '', codigo_mezcla: '', num_sacos: '',
           num_lonas: '', empaque_interior: '', color_cinta: '', observaciones: '',
           partials_merged: true, kg_mode: 'todo', kg_dried_to_ship: '',
+          // kg_real: peso de báscula en modo Todo ('' = igual al registrado)
+          // splits: null | [{...campos por línea + kg_dried_to_ship}] (división P1/P2)
+          kg_real: '', splits: null,
         });
       }
       return lotFields.get(lotId);
@@ -908,7 +915,8 @@ export async function fincaDespachosView() {
     // ── Tabla editable ────────────────────────────────────────
     const tableEl = el('div', { class: 'overflow-x-auto border border-sand rounded-md' });
 
-    function renderKgCell(lf, avail) {
+    function renderKgCell(lf, avail, opts) {
+      opts = opts || {};
       const isTodo = lf.kg_mode === 'todo';
       const segBtn = (label, active, onClick) => el('button', {
         type: 'button',
@@ -917,13 +925,39 @@ export async function fincaDespachosView() {
         onClick,
       }, [label]);
       const seg = el('div', { class: 'inline-flex border border-sand rounded overflow-hidden' }, [
-        segBtn('Todo', isTodo, () => { lf.kg_mode = 'todo'; lf.kg_dried_to_ship = ''; renderTable(); }),
-        segBtn('Parcial', !isTodo, () => { lf.kg_mode = 'parcial'; lf.kg_dried_to_ship = String(avail); renderTable(); }),
+        segBtn('Todo', isTodo, () => { lf.kg_mode = 'todo'; lf.kg_dried_to_ship = ''; lf.kg_real = ''; renderTable(); }),
+        segBtn('Parcial', !isTodo, () => { lf.kg_mode = 'parcial'; lf.kg_dried_to_ship = String(avail); lf.kg_real = ''; renderTable(); }),
       ]);
       if (isTodo) {
-        return el('div', { class: 'flex items-center justify-end gap-2' }, [
-          seg,
-          el('span', { class: 'text-ok font-mono font-bold text-[12px]', text: `${fmtKg(avail)}` }),
+        // Lotes con parciales: el kg es la suma de los parciales, no
+        // editable. Lotes sin parciales: peso real de báscula editable
+        // (si difiere del registrado, el bache cierra igual y la
+        // diferencia queda como merma/ganancia de humedad).
+        if (opts.hasPartials) {
+          return el('div', { class: 'flex items-center justify-end gap-2' }, [
+            seg,
+            el('span', { class: 'text-ok font-mono font-bold text-[12px]', text: `${fmtKg(avail)}` }),
+          ]);
+        }
+        const diffLabel = el('span', { class: 'text-[9px] text-warn font-mono mt-0.5' });
+        const kgIn = el('input', {
+          type: 'number', step: '0.01', min: '0.01',
+          value: lf.kg_real !== '' ? lf.kg_real : String(avail),
+          class: 'ctrm-input mono text-right text-[11px] w-20',
+          title: 'Peso real de báscula — si difiere del registrado, el bache cierra igual y la diferencia queda como merma/ganancia de humedad',
+        });
+        const updateDiff = () => {
+          const v = Number(kgIn.value || 0);
+          const d = Math.round((v - avail) * 100) / 100;
+          diffLabel.textContent = Math.abs(d) >= 0.01
+            ? `${d > 0 ? '+' : ''}${d} kg vs registrado · cierra el bache`
+            : '';
+        };
+        kgIn.addEventListener('input', () => { lf.kg_real = kgIn.value; updateDiff(); });
+        updateDiff();
+        return el('div', { class: 'flex flex-col items-end gap-0.5' }, [
+          el('div', { class: 'flex items-center gap-1' }, [seg, kgIn]),
+          diffLabel,
         ]);
       }
       const remainingLabel = el('span', { class: 'text-[9px] text-warn font-mono mt-0.5' });
@@ -948,11 +982,31 @@ export async function fincaDespachosView() {
 
     function renderLotRow(idx, l, lf, avail, opts) {
       opts = opts || {};
+      const priorMax = maxSplitP(l);
       const codeNode = el('span', { class: 'font-mono font-semibold text-navy text-[12px]' }, [
         l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MZ' }) : null,
         l.parent_lot_id ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e0e7f5;color:#1b2044;', text: 'SUB' }) : null,
         document.createTextNode(l.bache_code || l.blend_code || l.lot_code),
+        // El bache ya tiene divisiones despachadas: esta línea seguirá
+        // la numeración automáticamente.
+        priorMax > 0 ? el('span', { class: 'ctrm-pill text-[9px] ml-1', style: 'background:#f3e8d2;color:#7a5a1e;',
+          title: 'El bache ya tiene divisiones despachadas; esta línea continúa la numeración',
+          text: `→ P${priorMax + 1}` }) : null,
       ]);
+      // División P1/P2: solo lotes sin parciales de producción.
+      const divideBtn = !opts.hasPartials ? el('button', {
+        type: 'button',
+        class: 'block text-[10px] text-navy hover:underline mt-0.5',
+        style: 'background:none;border:none;padding:0;cursor:pointer;',
+        title: 'Dividir el bache en líneas P con su propio kg y empaque',
+        onClick: () => {
+          lf.splits = [
+            makeSplitFields(lf),   // la primera hereda lo ya digitado
+            makeSplitFields(),
+          ];
+          renderTable();
+        },
+      }, ['÷ Dividir']) : null;
       const refProcCell = el('div', {}, [
         el('div', { class: 'text-[11px] text-ink-700' }, [
           el('span', { text: l.reference_name || '—' }),
@@ -1039,7 +1093,7 @@ export async function fincaDespachosView() {
       }, ['×']);
       const tr = el('tr', { class: 'border-b border-sand hover:bg-cream/40' }, [
         el('td', { class: 'px-2 py-2 text-ink-300 text-[11px] font-mono', text: String(idx) }),
-        el('td', { class: 'px-2 py-2' }, [codeNode]),
+        el('td', { class: 'px-2 py-2' }, [codeNode, divideBtn]),
         el('td', { class: 'px-2 py-2' }, [refProcCell]),
         el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(avail)}` }),
         el('td', { class: 'px-2 py-2' }, [codTIn]),
@@ -1049,8 +1103,149 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-2' }, [empaqueSel]),
         el('td', { class: 'px-2 py-2' }, [colorCell]),
         el('td', { class: 'px-2 py-2' }, [obsIn]),
-        el('td', { class: 'px-2 py-2' }, [renderKgCell(lf, avail)]),
+        el('td', { class: 'px-2 py-2' }, [renderKgCell(lf, avail, { hasPartials: opts.hasPartials })]),
         el('td', { class: 'px-2 py-2 text-center' }, [removeBtn]),
+      ]);
+      paintRow();
+      return tr;
+    }
+
+    function makeSplitFields(from) {
+      return {
+        codigo_trilladora: (from && from.codigo_trilladora) || '',
+        codigo_mezcla:     (from && from.codigo_mezcla) || '',
+        num_sacos:         (from && from.num_sacos) || '',
+        num_lonas:         (from && from.num_lonas) || '',
+        empaque_interior:  (from && from.empaque_interior) || '',
+        color_cinta:       (from && from.color_cinta) || '',
+        observaciones:     (from && from.observaciones) || '',
+        kg_dried_to_ship:  '',
+      };
+    }
+
+    // Fila cabecera de un bache dividido: controles de la división.
+    function renderSplitHeaderRow(idx, l, lf, avail) {
+      const codeNode = el('span', { class: 'font-mono font-semibold text-navy text-[12px]' }, [
+        l.is_blend ? el('span', { class: 'ctrm-pill text-[9px] mr-1', style: 'background:#e8efe3;color:#2e4a2e;', text: 'MZ' }) : null,
+        document.createTextNode(l.bache_code || l.blend_code || l.lot_code),
+        el('span', { class: 'ctrm-pill text-[9px] ml-1', style: 'background:#f3e8d2;color:#7a5a1e;', text: 'DIVIDIDO' }),
+      ]);
+      const addBtn = el('button', {
+        type: 'button', class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+        onClick: () => { lf.splits.push(makeSplitFields()); renderTable(); },
+      }, ['+ Línea']);
+      const undoBtn = el('button', {
+        type: 'button', class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs',
+        title: 'Volver a una sola línea',
+        onClick: () => { lf.splits = null; renderTable(); },
+      }, ['Deshacer división']);
+      const removeBtn = el('button', { type: 'button',
+        class: 'text-crit text-[16px] font-bold',
+        title: 'Quitar del despacho',
+        onClick: () => {
+          selectedLots.delete(l.id);
+          lotFields.delete(l.id);
+          refreshAddLotOptions();
+          renderTable();
+          recountSummary();
+        },
+      }, ['×']);
+      return el('tr', { class: 'border-b-2 border-sand bg-cream/30' }, [
+        el('td', { class: 'px-2 py-2 text-ink-300 text-[11px] font-mono', text: String(idx) }),
+        el('td', { class: 'px-2 py-2' }, [codeNode]),
+        el('td', { class: 'px-2 py-2' }, [
+          el('div', { class: 'text-[11px] text-ink-700' }, [
+            el('span', { text: l.reference_name || '—' }),
+            el('span', { class: 'ctrm-pill ml-1 text-[9px]', style: 'background:#dde7ee;color:#1a3a5c;', text: l.process_type }),
+          ]),
+        ]),
+        el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(avail)}` }),
+        el('td', { colspan: '8', class: 'px-2 py-2' }, [
+          el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
+            addBtn, undoBtn,
+            el('span', { class: 'text-[10px] text-ink-500 italic',
+              text: 'Cada línea P lleva su kg y empaque. Si la suma es menor al disponible, el resto queda en bodega.' }),
+          ]),
+        ]),
+        el('td', { class: 'px-2 py-2 text-center' }, [removeBtn]),
+      ]);
+    }
+
+    // Línea P de un bache dividido: campos completos propios.
+    function renderSplitRow(l, lf, sf, label) {
+      const codTIn = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-28',
+        placeholder: 'PP-XXXX', value: sf.codigo_trilladora || '' });
+      codTIn.addEventListener('input', () => { sf.codigo_trilladora = codTIn.value; });
+      const codMIn = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-24',
+        placeholder: '—', value: sf.codigo_mezcla || '' });
+      codMIn.addEventListener('input', () => { sf.codigo_mezcla = codMIn.value; });
+      const numIn = (field) => {
+        const inp = el('input', {
+          type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
+          class: 'ctrm-input mono text-[11px] text-right w-14', value: sf[field] || '',
+        });
+        inp.addEventListener('input', () => {
+          const cleaned = (inp.value || '').replace(/[^0-9]/g, '');
+          if (cleaned !== inp.value) inp.value = cleaned;
+          sf[field] = cleaned === '' ? '' : Number(cleaned);
+          recountSummary();
+        });
+        return inp;
+      };
+      const empaqueSel = el('select', { class: 'ctrm-input text-[10px] w-24' }, [
+        el('option', { value: '', selected: !sf.empaque_interior }, ['Ninguno']),
+        el('option', { value: 'grainpro', selected: sf.empaque_interior === 'grainpro' }, ['Grain Pro']),
+        el('option', { value: 'bolsa', selected: sf.empaque_interior === 'bolsa' }, ['Bolsa plást.']),
+      ]);
+      empaqueSel.addEventListener('change', () => { sf.empaque_interior = empaqueSel.value; recountSummary(); });
+      const colorIn = el('input', {
+        type: 'color', value: sf.color_cinta || '#ffffff',
+        class: 'cursor-pointer', style: 'width:26px;height:22px;border:1px solid #d8d8d0;border-radius:4px;padding:0;background:none;',
+        title: 'Color de cinta de esta línea',
+      });
+      const paintRow = () => {
+        tr.style.background = sf.color_cinta ? hexToRgba(sf.color_cinta, 0.35) : '';
+      };
+      colorIn.addEventListener('input', () => { sf.color_cinta = colorIn.value; paintRow(); });
+      const colorClear = el('button', {
+        type: 'button', class: 'text-ink-300 text-[12px] hover:text-crit',
+        style: 'background:none;border:none;padding:0 2px;cursor:pointer;',
+        title: 'Quitar color',
+        onClick: () => { sf.color_cinta = ''; colorIn.value = '#ffffff'; paintRow(); },
+      }, ['×']);
+      const obsIn = el('input', { type: 'text', class: 'ctrm-input text-[11px] w-32',
+        placeholder: 'Observaciones', maxlength: '200', value: sf.observaciones || '' });
+      obsIn.addEventListener('input', () => { sf.observaciones = obsIn.value; });
+      const kgIn = el('input', {
+        type: 'number', step: '0.01', min: '0.01',
+        value: sf.kg_dried_to_ship || '',
+        class: 'ctrm-input mono text-right text-[11px] w-20',
+        style: 'border-color:#e65100;', placeholder: 'kg',
+      });
+      kgIn.addEventListener('input', () => { sf.kg_dried_to_ship = kgIn.value; });
+      const removeBtn = el('button', { type: 'button', class: 'text-crit text-[14px]',
+        title: 'Quitar esta línea',
+        onClick: () => {
+          if (lf.splits.length <= 1) { lf.splits = null; }
+          else lf.splits.splice(lf.splits.indexOf(sf), 1);
+          renderTable();
+        },
+      }, ['×']);
+      const tr = el('tr', { class: 'border-b border-sand bg-white' }, [
+        el('td', { class: 'px-2 py-1.5' }, []),
+        el('td', { class: 'px-2 py-1.5 pl-6 font-mono font-semibold text-navy text-[11px]',
+          text: `↳ ${label}` }),
+        el('td', { class: 'px-2 py-1.5' }, []),
+        el('td', { class: 'px-2 py-1.5' }, []),
+        el('td', { class: 'px-2 py-1.5' }, [codTIn]),
+        el('td', { class: 'px-2 py-1.5' }, [codMIn]),
+        el('td', { class: 'px-2 py-1.5 text-right' }, [numIn('num_sacos')]),
+        el('td', { class: 'px-2 py-1.5 text-right' }, [numIn('num_lonas')]),
+        el('td', { class: 'px-2 py-1.5' }, [empaqueSel]),
+        el('td', { class: 'px-2 py-1.5' }, [el('div', { class: 'flex items-center gap-0.5' }, [colorIn, colorClear])]),
+        el('td', { class: 'px-2 py-1.5' }, [obsIn]),
+        el('td', { class: 'px-2 py-1.5 text-right' }, [kgIn]),
+        el('td', { class: 'px-2 py-1.5 text-center' }, [removeBtn]),
       ]);
       paintRow();
       return tr;
@@ -1155,13 +1350,27 @@ export async function fincaDespachosView() {
         const lf = getLotFields(lotId);
         if (partials.length === 0) {
           const avail = Number(l.kg_dried_available != null ? l.kg_dried_available : (l.kg_dried_output || 0));
-          const kgToShip = lf.kg_mode === 'parcial' && lf.kg_dried_to_ship !== ''
-            ? Number(lf.kg_dried_to_ship) : avail;
-          totalDried += kgToShip;
-          totalSacos += Number(lf.num_sacos || 0);
-          totalLonas += Number(lf.num_lonas || 0);
-          addEmpaque(lf);
-          tbody.append(renderLotRow(idx++, l, lf, avail));
+          if (lf.splits) {
+            // Bache dividido: fila cabecera + una línea P por división.
+            const priorMax = maxSplitP(l);
+            tbody.append(renderSplitHeaderRow(idx++, l, lf, avail));
+            lf.splits.forEach((sf, i) => {
+              totalDried += Number(sf.kg_dried_to_ship || 0);
+              totalSacos += Number(sf.num_sacos || 0);
+              totalLonas += Number(sf.num_lonas || 0);
+              addEmpaque(sf);
+              tbody.append(renderSplitRow(l, lf, sf, `P${priorMax + i + 1}`));
+            });
+          } else {
+            const kgToShip = lf.kg_mode === 'parcial' && lf.kg_dried_to_ship !== ''
+              ? Number(lf.kg_dried_to_ship)
+              : (lf.kg_mode === 'todo' && lf.kg_real !== '' ? Number(lf.kg_real) : avail);
+            totalDried += kgToShip;
+            totalSacos += Number(lf.num_sacos || 0);
+            totalLonas += Number(lf.num_lonas || 0);
+            addEmpaque(lf);
+            tbody.append(renderLotRow(idx++, l, lf, avail));
+          }
         } else {
           const elig = eligPartials(l);
           if (lf.partials_merged !== false) {
@@ -1256,6 +1465,23 @@ export async function fincaDespachosView() {
           }, ['Generar despacho']);
           submitBtn.addEventListener('click', async () => {
             if (submitBtn.disabled) return;
+            // Validar divisiones: cada línea con kg > 0 y la suma
+            // dentro del disponible del bache.
+            for (const lid of selectedLots) {
+              const l = readyLotsById.get(lid);
+              const lf = lotFields.get(lid);
+              if (!l || !lf || !lf.splits) continue;
+              const code = l.bache_code || l.blend_code || l.lot_code;
+              const kgs = lf.splits.map((sf) => Number(sf.kg_dried_to_ship || 0));
+              if (kgs.some((k) => !(k > 0))) {
+                toast(`División de ${code}: cada línea necesita kg > 0`, 'warning'); return;
+              }
+              const avail = Number(l.kg_dried_available != null ? l.kg_dried_available : (l.kg_dried_output || 0));
+              const sum = kgs.reduce((a, b) => a + b, 0);
+              if (sum > avail + 0.01) {
+                toast(`División de ${code}: la suma (${fmtKg(sum)} kg) supera los ${fmtKg(avail)} kg disponibles`, 'warning'); return;
+              }
+            }
             const items = buildItems(readyLots, selectedLots, partialIds, lotFields, partialFields);
             if (items.length === 0) { toast('Selecciona al menos un bache', 'warning'); return; }
             if (destinoSelect.value === 'Otro' && !destinoOtherInput.value.trim()) {
@@ -1275,7 +1501,7 @@ export async function fincaDespachosView() {
             submitBtn.disabled = true;
             submitBtn.textContent = 'Generando…';
             try {
-              const r = await api.shipmentsCreate({
+              const payload = {
                 shipment_code: codeInput.value.trim() || undefined,
                 shipment_date: dateInput.value,
                 notes: notesInput.value || undefined,
@@ -1285,7 +1511,28 @@ export async function fincaDespachosView() {
                 driver_placas: driverPlacas.value.trim() || undefined,
                 driver_name:   driverName.value.trim()   || undefined,
                 items,
-              });
+              };
+              let r;
+              try {
+                r = await api.shipmentsCreate(payload);
+              } catch (e) {
+                // Peso de báscula difiere >3% del registrado: el
+                // servidor pide confirmación explícita.
+                if (e && e.code === 'PESO_REAL_CONFIRM_REQUIRED') {
+                  const okReal = await confirmModal(
+                    `${e.message}\n\nSi el peso de báscula es correcto, el bache cierra con esa diferencia registrada como merma/ganancia de humedad.`,
+                    { title: 'Peso báscula difiere del registrado' },
+                  );
+                  if (!okReal) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Generar despacho';
+                    return;
+                  }
+                  r = await api.shipmentsCreate({ ...payload, override_peso_real: true });
+                } else {
+                  throw e;
+                }
+              }
               const compl = (r.completions || []).length;
               toast(
                 `Despacho ${r.shipment.shipment_code} creado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`,
@@ -1397,11 +1644,37 @@ function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) 
     const lf = lotFields.get(l.id) || { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '', partials_merged: true };
     if (partials.length === 0) {
       if (wholeLots.has(l.id)) {
-        items.push({
-          production_lot_id: l.id, partial_ids: null,
-          ...norm(lf),
-          partials_merged: true,
-        });
+        if (lf.splits && lf.splits.length > 0) {
+          // División P1/P2: una línea por división, cada una con su
+          // kg y empaque. El servidor asigna los split_label.
+          for (const sf of lf.splits) {
+            items.push({
+              production_lot_id: l.id, partial_ids: null,
+              ...norm(sf),
+              split: true,
+              partials_merged: true,
+            });
+          }
+        } else if (lf.kg_mode === 'todo' || lf.kg_mode == null) {
+          // Despacho total: cierra el bache. Si el peso de báscula
+          // difiere del registrado, va como kg real (merma/ganancia).
+          const avail = Number(l.kg_dried_available != null ? l.kg_dried_available : (l.kg_dried_output || 0));
+          const item = {
+            production_lot_id: l.id, partial_ids: null,
+            ...norm({ ...lf, kg_dried_to_ship: '' }),
+            close_lot: true,
+            partials_merged: true,
+          };
+          const real = lf.kg_real === '' || lf.kg_real == null ? null : Number(lf.kg_real);
+          if (real != null && Math.abs(real - avail) >= 0.01) item.kg_dried_to_ship = real;
+          items.push(item);
+        } else {
+          items.push({
+            production_lot_id: l.id, partial_ids: null,
+            ...norm(lf),
+            partials_merged: true,
+          });
+        }
       }
     } else {
       const selected = partials.filter((p) => partialIds.has(p.id)).map((p) => p.id);
@@ -1442,6 +1715,18 @@ function labelled(label, child) {
 
 // #rrggbb → rgba() con alpha, para pintar la fila del modal con el
 // color de cinta sin tapar los inputs.
+// Mayor número P de las divisiones ya despachadas de un bache (viene
+// en lot.shipments[].split_label desde production-lots-list). La
+// numeración de nuevas divisiones continúa desde ahí.
+function maxSplitP(lot) {
+  let max = 0;
+  for (const s of lot.shipments || []) {
+    const m = /^P(\d+)$/.exec(s.split_label || '');
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max;
+}
+
 function hexToRgba(hex, alpha) {
   const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(hex || '');
   if (!m) return '';

@@ -21,12 +21,12 @@ exports.handler = requireAuth(async (event) => {
       destino_kind, destino_other,
       driver_cedula, driver_placas, driver_name,
       shipment_lots (
-        id, lot_partial_id, kg_dried_shipped,
+        id, lot_partial_id, kg_dried_shipped, kg_dried_merma, split_label,
         codigo_trilladora, codigo_mezcla, num_sacos, partials_merged,
         num_lonas, empaque_interior, color_cinta, observaciones,
         lot_partials ( id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield ),
         production_lots (
-          id, lot_code, bache_code, blend_code, is_blend,
+          id, lot_code, bache_code, blend_code, is_blend, status,
           process_type, processing_stage,
           kg_cherry_input, kg_despulpado_input,
           kg_dried_output, factor_rendimiento,
@@ -52,15 +52,28 @@ exports.handler = requireAuth(async (event) => {
   // partials of a lot. We collapse rows by lot_id so the UI sees one
   // entry per lot with `partials_in_shipment` listing which letters
   // are part of THIS despacho.
+  //
+  // Excepción: líneas de división (split_label P1/P2, migration 0046)
+  // NO se colapsan entre sí — cada P es su propia entrada con su kg,
+  // empaque y color, porque en la remisión salen como filas aparte.
   const shipments = (data || []).map((s) => {
-    const groups = new Map();   // lot_id → { lot, partials_in_shipment[], whole }
+    const groups = new Map();   // lot_id[:split] → { lot, partials_in_shipment[], whole }
+    const lotSeen = new Set();  // lot_ids ya agrupados (para no duplicar assignments)
     for (const sl of s.shipment_lots || []) {
       const l = sl.production_lots;
       if (!l) continue;
-      let g = groups.get(l.id);
+      const gKey = `${l.id}:${sl.split_label || ''}`;
+      let g = groups.get(gKey);
       if (!g) {
+        // Assignments son del LOTE: solo el primer grupo del lote las
+        // lista (si P1 y P2 van en el mismo despacho, duplicarlas
+        // doblaría los totales asignados).
+        const firstOfLot = !lotSeen.has(l.id);
+        lotSeen.add(l.id);
         g = {
           id: l.id,
+          split_label: sl.split_label || null,
+          lot_status: l.status,
           lot_code: l.lot_code,
           bache_code: l.bache_code,
           blend_code: l.blend_code,
@@ -87,7 +100,7 @@ exports.handler = requireAuth(async (event) => {
           reference_name: l.coffee_references && l.coffee_references.name,
           varieties: (l.production_lot_varieties || [])
             .map((j) => j.coffee_varieties).filter(Boolean),
-          assignments: (l.lot_order_assignments || []).map((a) => ({
+          assignments: (firstOfLot ? (l.lot_order_assignments || []) : []).map((a) => ({
             id: a.id,
             kg_green_allocated: Number(a.kg_green_allocated),
             order: a.demand_orders ? {
@@ -110,8 +123,11 @@ exports.handler = requireAuth(async (event) => {
           // de este bache). Puede ser menor que kg_dried_output si fue
           // despacho parcial. Queda en null si todo va por partials.
           kg_dried_shipped: null,
+          // Merma/ganancia de humedad si la línea cerró el bache con
+          // peso real de báscula (>0 merma, <0 ganancia).
+          kg_dried_merma: null,
         };
-        groups.set(l.id, g);
+        groups.set(gKey, g);
       }
       if (sl.lot_partial_id && sl.lot_partials) {
         g.partials_in_shipment.push({
@@ -134,6 +150,9 @@ exports.handler = requireAuth(async (event) => {
         g.whole_lot_in_shipment = true;
         if (sl.kg_dried_shipped != null) {
           g.kg_dried_shipped = (g.kg_dried_shipped || 0) + Number(sl.kg_dried_shipped);
+        }
+        if (sl.kg_dried_merma != null) {
+          g.kg_dried_merma = (g.kg_dried_merma || 0) + Number(sl.kg_dried_merma);
         }
       }
     }
@@ -220,7 +239,8 @@ exports.handler = requireAuth(async (event) => {
       driver_name:   s.driver_name,
       lots,
       totals: {
-        lot_count: lots.length,
+        // Baches únicos: un bache dividido en P1/P2 cuenta una vez.
+        lot_count: new Set(lots.map((l) => l.id)).size,
         order_count: orderIds.size,
         kg_green: Math.round(totalKgGreen * 100) / 100,
         kg_green_allocated: Math.round(totalAllocated * 100) / 100,

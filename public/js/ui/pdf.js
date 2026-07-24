@@ -139,9 +139,11 @@ export function generateShipmentPdf(shipment) {
   };
   for (const lot of shipment.lots || []) {
     const variedad = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
-    const baseLabel = lot.is_blend
+    let baseLabel = lot.is_blend
       ? `[MZ] ${lot.blend_code || lot.bache_code || lot.lot_code || '—'}`
       : (lot.bache_code || lot.lot_code || '—');
+    // División del bache al despachar: mismo No. con identificador P.
+    if (lot.split_label) baseLabel = `${baseLabel}-${lot.split_label}`;
 
     const partialsHere = lot.partials_in_shipment || [];
     if (lot.whole_lot_in_shipment || partialsHere.length === 0) {
@@ -151,13 +153,18 @@ export function generateShipmentPdf(shipment) {
       // viejos) caemos al total del bache como fallback.
       const kgSeco = Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0);
       totalSeco += kgSeco;
+      // Despacho parcial con saldo aún en bodega: la trilladora ve el
+      // kg que va en ESTE camión y el total del bache como referencia.
+      const kgTotalBache = Number(lot.kg_dried_output || 0);
+      const esParcial = lot.lot_status === 'Ready' && kgTotalBache > 0 && kgSeco < kgTotalBache - 0.01;
+      const kgCell = esParcial ? `${fmtKg(kgSeco)}\nde ${fmtKg(kgTotalBache)} kg` : fmtKg(kgSeco);
       pushRow([
         baseLabel,
         lot.codigo_trilladora || '—',
         lot.codigo_mezcla     || '—',
         variedad,
         lot.process_type || '—',
-        { content: fmtKg(kgSeco), styles: { halign: 'right' } },
+        { content: kgCell, styles: { halign: 'right' } },
         { content: lot.factor_rendimiento != null ? String(lot.factor_rendimiento) : '—', styles: { halign: 'right' } },
         { content: Number(lot.num_sacos || 0) > 0 ? String(lot.num_sacos) : '—', styles: { halign: 'right' } },
         { content: Number(lot.num_lonas || 0) > 0 ? String(lot.num_lonas) : '—', styles: { halign: 'right' } },
@@ -364,8 +371,12 @@ export function generateShipmentAssignmentsPdf(shipment) {
   );
   y += 44;
 
-  // Asignaciones por bache
+  // Asignaciones por bache. Las asignaciones son del LOTE: si el
+  // bache va dividido en P1/P2, solo se imprime una vez.
+  const seenLots = new Set();
   shipment.lots.forEach((lot) => {
+    if (seenLots.has(lot.id)) return;
+    seenLots.add(lot.id);
     if (y > 720) { doc.addPage(); y = 40; }
     const label = lot.is_blend
       ? `[MZ] ${lot.blend_code || lot.bache_code || '—'}`
@@ -382,7 +393,10 @@ export function generateShipmentAssignmentsPdf(shipment) {
     doc.setFontSize(9);
     doc.setTextColor(255, 255, 255);
     doc.text(lot.reference_name || '—', M + 110, y + 15);
-    const kgInShipment = Number(lot.kg_green_in_shipment ?? lot.kg_green_actual ?? lot.kg_green_expected ?? 0);
+    // Suma sobre todas las líneas P del bache en este despacho.
+    const kgInShipment = shipment.lots
+      .filter((g) => g.id === lot.id)
+      .reduce((s, g) => s + Number(g.kg_green_in_shipment ?? g.kg_green_actual ?? g.kg_green_expected ?? 0), 0);
     doc.setFontSize(8);
     doc.setTextColor(149, 181, 206);
     doc.text(`${lot.process_type || ''} · ${fmtKg(kgInShipment)}`, W - M - 10, y + 15, { align: 'right' });

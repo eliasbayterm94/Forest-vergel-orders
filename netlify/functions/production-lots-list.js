@@ -81,19 +81,24 @@ exports.handler = requireAuth(async (event) => {
   if (lotIdsAll.length > 0) {
     const { data: wholeShips, error: wsErr } = await sb
       .from('shipment_lots')
-      .select('production_lot_id, kg_dried_shipped, shipment_id, shipments(shipment_code, shipment_date)')
+      .select('production_lot_id, kg_dried_shipped, kg_dried_merma, split_label, shipment_id, shipments(shipment_code, shipment_date)')
       .in('production_lot_id', lotIdsAll)
       .is('lot_partial_id', null);
     if (!wsErr) {
       for (const r of wholeShips || []) {
+        // La merma (despacho total con peso real de báscula) cuenta
+        // como kg salidos de bodega — sin esto quedaría saldo fantasma.
         wholeShipKgByLot.set(r.production_lot_id,
-          (wholeShipKgByLot.get(r.production_lot_id) || 0) + Number(r.kg_dried_shipped || 0));
+          (wholeShipKgByLot.get(r.production_lot_id) || 0)
+          + Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0));
         const arr = wholeShipDetailsByLot.get(r.production_lot_id) || [];
         arr.push({
           shipment_id: r.shipment_id,
           shipment_code: r.shipments && r.shipments.shipment_code,
           shipment_date: r.shipments && r.shipments.shipment_date,
           kg_dried: Number(r.kg_dried_shipped || 0),
+          kg_dried_merma: r.kg_dried_merma == null ? null : Number(r.kg_dried_merma),
+          split_label: r.split_label || null,
           via: 'whole',
         });
         wholeShipDetailsByLot.set(r.production_lot_id, arr);
