@@ -155,24 +155,52 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   // el par entrada/seco sea físicamente posible y que la conversión
   // caiga en el rango típico del stage. HARD se rechaza; CONFIRM
   // requiere body.override_plausibility.
+  let skipInputDerivedRecalc = false;
   if (update.kg_dried_output != null || update.kg_input_initial != null) {
     const { data: curLot } = await sb
       .from('production_lots')
-      .select('kg_input_initial, kg_dried_output, processing_stage')
+      .select('kg_input_initial, kg_dried_output, kg_green_expected, kg_green_actual, processing_stage, is_blend')
       .eq('id', lot_id).maybeSingle();
     if (!curLot) return notFound('Lot not found');
-    const effInitial = update.kg_input_initial != null ? update.kg_input_initial : curLot.kg_input_initial;
-    const effDried   = update.kg_dried_output  != null ? update.kg_dried_output  : curLot.kg_dried_output;
-    if (effDried != null && Number(effDried) > 0) {
-      const check = checkDriedPlausibility({
-        kgInputInitial: effInitial,
-        kgDried: effDried,
-        processingStage: curLot.processing_stage,
-      });
-      if (check.hardError) return badReq(check.hardError, 'IMPLAUSIBLE_WEIGHT');
-      if (check.confirmWarning && !body.override_plausibility) {
-        return conflict(check.confirmWarning, 'PLAUSIBILITY_CONFIRM_REQUIRED',
-          { conversion: check.conversion });
+    if (curLot.is_blend) {
+      // Mezclas: input = seco por construcción (lot-blend-create).
+      // La plausibility de "café que pierde peso" no aplica; si se
+      // ajusta el seco, la entrada lo acompaña para que la
+      // conversión quede en 1× y futuros ajustes no comparen contra
+      // un input desactualizado. El kg_green_expected escala
+      // proporcionalmente (NO con el divisor genérico de stage
+      // 'seco' — los blends usan su propio divisor por proceso al
+      // crearse) y por eso saltamos el recálculo derivado de abajo.
+      if (update.kg_dried_output != null) {
+        update.kg_input_initial = update.kg_dried_output;
+        const oldD = Number(curLot.kg_dried_output || 0);
+        const newD = Number(update.kg_dried_output);
+        if (oldD > 0 && newD > 0) {
+          const ratio = newD / oldD;
+          if (curLot.kg_green_expected != null) {
+            update.kg_green_expected = Math.round(Number(curLot.kg_green_expected) * ratio * 100) / 100;
+          }
+          // Solo escalar el actual si el operario NO mandó uno explícito.
+          if (update.kg_green_actual == null && curLot.kg_green_actual != null) {
+            update.kg_green_actual = Math.round(Number(curLot.kg_green_actual) * ratio * 100) / 100;
+          }
+        }
+        skipInputDerivedRecalc = true;
+      }
+    } else {
+      const effInitial = update.kg_input_initial != null ? update.kg_input_initial : curLot.kg_input_initial;
+      const effDried   = update.kg_dried_output  != null ? update.kg_dried_output  : curLot.kg_dried_output;
+      if (effDried != null && Number(effDried) > 0) {
+        const check = checkDriedPlausibility({
+          kgInputInitial: effInitial,
+          kgDried: effDried,
+          processingStage: curLot.processing_stage,
+        });
+        if (check.hardError) return badReq(check.hardError, 'IMPLAUSIBLE_WEIGHT');
+        if (check.confirmWarning && !body.override_plausibility) {
+          return conflict(check.confirmWarning, 'PLAUSIBILITY_CONFIRM_REQUIRED',
+            { conversion: check.conversion });
+        }
       }
     }
   }
@@ -180,8 +208,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   // Si cambia kg_input_initial, recalcular los campos derivados
   // (kg_cherry_input/kg_despulpado_input/kg_dried_output según stage,
   // y kg_green_expected). Sin esto, la tabla de producción seguía
-  // mostrando los valores viejos.
-  if (update.kg_input_initial != null) {
+  // mostrando los valores viejos. Para mezclas se salta: su expected
+  // ya se escaló proporcionalmente arriba (el divisor genérico de
+  // stage 'seco' no aplica a blends).
+  if (update.kg_input_initial != null && !skipInputDerivedRecalc) {
     const { data: cur } = await sb
       .from('production_lots')
       .select('processing_stage, kg_cherry_input, kg_despulpado_input, kg_dried_output')

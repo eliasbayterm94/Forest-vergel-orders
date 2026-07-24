@@ -971,9 +971,12 @@ async function adjustDriedModal(lot) {
         ? oldGreen * (newDried / oldDried)
         : newGreen;
       const newAvail = newDried - alreadyOut;
-      const newFactor = lot.kg_input_initial > 0 && newDried > 0
-        ? Number(lot.kg_input_initial) / newDried
-        : null;
+      // Mezclas: la entrada acompaña al seco → conversión siempre 1×.
+      const newFactor = lot.is_blend
+        ? (newDried > 0 ? 1 : null)
+        : (lot.kg_input_initial > 0 && newDried > 0
+            ? Number(lot.kg_input_initial) / newDried
+            : null);
       previewGreen.textContent  = `${fmtKg(newGreen)} verde`;
       previewAvail.textContent  = `${fmtKg(Math.max(0, newAvail))} kg`;
       previewFactor.textContent = newFactor != null ? `${Math.round(newFactor * 100) / 100}×` : '—';

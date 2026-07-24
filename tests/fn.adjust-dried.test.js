@@ -117,6 +117,77 @@ test('happy path: ajuste hacia arriba revierte Delivered → Ready con saldo', a
   assert.match(lot.notes, /\[Ajuste seco · finca \(Juan Pérez\) · \d{4}-\d{2}-\d{2}\] 350 kg → 400 kg/);
 });
 
+// ── Mezclas ──────────────────────────────────────────────────────────
+// Los blends nacen con input = dried y stage 'seco' (lot-blend-create).
+// La regla "el café solo pierde peso al secar" no aplica: ajustar el
+// peso hacia arriba (componente mal registrado) debe pasar sin
+// plausibility, moviendo input junto al seco y escalando el expected.
+
+function blendFixture(overrides = {}) {
+  return createFakeSupabase({
+    production_lots: [{
+      id: LOT, status: 'Delivered', delivered_date: '2026-07-01',
+      bache_code: 'MZ-2026-0001', blend_code: 'MZ-2026-0001', lot_code: 'LOT-MZ',
+      is_blend: true, processing_stage: 'seco',
+      kg_input_initial: 400, kg_dried_output: 400,
+      kg_green_actual: null, kg_green_expected: 250,
+      factor_rendimiento: null, conversion_factor: 1,
+      notes: null, lot_partials: [],
+      ...(overrides.lot || {}),
+    }],
+    lot_blend_components: [],
+    shipment_lots: overrides.shipment_lots || [
+      { production_lot_id: LOT, kg_dried_shipped: 400, lot_partial_id: null },
+    ],
+    lot_order_assignments: [],
+    demand_orders: [],
+  });
+}
+
+test('mezcla despachada: ajustar hacia ARRIBA no rebota por plausibility (bug reportado)', async () => {
+  const fake = blendFixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    lot_id: LOT, kg_dried_output: 450,
+    reason: 'Un componente se registró con 50 kg menos',
+  }), {}));
+  assert.equal(r.status, 200, `esperaba 200, obtuvo ${r.status}: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.reverted_to_ready, true);
+  assert.equal(r.body.new_available_kg, 50);   // 450 − 400 despachados
+
+  const lot = fake._db.production_lots[0];
+  assert.equal(lot.status, 'Ready');
+  assert.equal(lot.kg_dried_output, 450);
+  // La entrada acompaña al seco → conversión 1×
+  assert.equal(lot.kg_input_initial, 450);
+  assert.equal(lot.conversion_factor, 1);
+  // Expected escala proporcionalmente: 250 × (450/400) = 281.25
+  assert.equal(lot.kg_green_expected, 281.25);
+});
+
+test('mezcla: ajustar hacia abajo sigue respetando lo ya despachado', async () => {
+  setFake(blendFixture());
+  const r = parseRes(await handler(postEvent({
+    lot_id: LOT, kg_dried_output: 350,
+    reason: 'Motivo del ajuste hacia abajo',
+  }), {}));
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'NEW_LESS_THAN_OUT');
+});
+
+test('mezcla: no requiere override_plausibility aunque el salto sea grande', async () => {
+  // 400 → 800 en un bache normal sería IMPLAUSIBLE_WEIGHT; en un
+  // blend es un ajuste legítimo de registro.
+  const fake = blendFixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    lot_id: LOT, kg_dried_output: 800,
+    reason: 'Dos componentes duplicados mal capturados',
+  }), {}));
+  assert.equal(r.status, 200);
+  assert.equal(fake._db.production_lots[0].kg_input_initial, 800);
+});
+
 test('ajuste que NO deja saldo mantiene Delivered', async () => {
   // Despachados 350 (todo). Ajuste a 350 exacto — nada que revertir.
   const fake = fixture({

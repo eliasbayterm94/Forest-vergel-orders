@@ -89,7 +89,15 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   // Plausibility del nuevo peso: HARD (seco > entrada) rechaza;
   // conversión fuera del rango del stage pide confirmación.
-  {
+  //
+  // EXCEPCIÓN — mezclas: en un blend kg_input_initial no es un peso
+  // físico de entrada sino una copia del seco total al crearlo
+  // (lot-blend-create setea input = dried, stage 'seco'). La regla
+  // "el café solo pierde peso al secar" no aplica: ajustar el peso
+  // de una mezcla (p.ej. un componente mal registrado) mueve ambos
+  // números juntos y la conversión se queda en 1×.
+  const isBlend = !!lot.is_blend;
+  if (!isBlend) {
     const check = checkDriedPlausibility({
       kgInputInitial: lot.kg_input_initial,
       kgDried: newDried,
@@ -115,8 +123,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     newGreen = round2((newDried / Number(lot.factor_rendimiento)) * 70);
   }
 
-  // Recalcular conversion_factor
-  const initial = Number(lot.kg_input_initial || 0);
+  // Mezclas: kg_green_expected también escala con el seco (los blends
+  // no tienen kg_green_actual y Punto Final cae a expected — sin esto
+  // el verde quedaría stale tras el ajuste).
+  let newGreenExpected = null;
+  if (isBlend && oldDried > 0 && lot.kg_green_expected != null) {
+    newGreenExpected = round2(Number(lot.kg_green_expected) * (newDried / oldDried));
+  }
+
+  // Recalcular conversion_factor. Para mezclas la entrada se mueve
+  // junto al seco (mismo número por construcción) → conversión 1×.
+  const initial = isBlend ? newDried : Number(lot.kg_input_initial || 0);
   const newConversion = initial > 0 && newDried > 0
     ? Math.round((initial / newDried) * 10000) / 10000
     : lot.conversion_factor;
@@ -136,6 +153,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     conversion_factor: newConversion,
     notes: newNotes,
   };
+  // Mezclas: kg_input_initial acompaña al seco (ver excepción arriba)
+  // y el expected escala.
+  if (isBlend) update.kg_input_initial = newDried;
+  if (newGreenExpected != null) update.kg_green_expected = newGreenExpected;
   if (shouldRevert) {
     update.status = LOT_STATUS.Ready;
     update.delivered_date = null;
