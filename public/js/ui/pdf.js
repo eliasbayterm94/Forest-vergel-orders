@@ -30,6 +30,13 @@ const SLATE       = [126, 158, 193];  // resting
 const COFFEE      = [93, 139, 102];   // ready / closed
 const CHERRY_RED  = [168, 53, 28];    // cherry reception
 
+// '#rrggbb' → [r,g,b] o null si no es un hex válido.
+function hexToRgbArr(hex) {
+  const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(hex || '');
+  if (!m) return null;
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
 function ensureLib() {
   if (!(window.jspdf && window.jspdf.jsPDF)) {
     throw new Error('jsPDF no está cargado todavía. Recarga la página.');
@@ -39,9 +46,12 @@ function ensureLib() {
 
 export function generateShipmentPdf(shipment) {
   const jsPDF = ensureLib();
-  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  // Horizontal: 11 columnas (incluye Sacos/Lonas/Empaque/Observaciones
+  // sin sacrificar Variedad, que es vital para la trilladora).
+  const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'landscape' });
 
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const M = 40;
 
   // ── Header band ──────────────────────────────────────────────
@@ -110,8 +120,23 @@ export function generateShipmentPdf(shipment) {
   // Construye las filas: si partials_merged=true (default), una línea
   // por bache con kg sumado. Si false, una línea por partial.
   const rows = [];
+  const rowColors = [];   // color de cinta por fila (hex o null)
   let totalSeco = 0;
   let totalSacos = 0;
+  let totalLonas = 0;
+  let totalGP = 0;
+  let totalBolsas = 0;
+  const empaqueLabel = (e) => e === 'grainpro' ? 'GRAIN PRO' : e === 'bolsa' ? 'BOLSA' : '—';
+  const pushRow = (cells, src) => {
+    const sacos = Number(src.num_sacos || 0);
+    const lonas = Number(src.num_lonas || 0);
+    if (src.empaque_interior === 'grainpro') totalGP += sacos + lonas;
+    else if (src.empaque_interior === 'bolsa') totalBolsas += sacos + lonas;
+    totalSacos += sacos;
+    totalLonas += lonas;
+    rows.push(cells);
+    rowColors.push(src.color_cinta || null);
+  };
   for (const lot of shipment.lots || []) {
     const variedad = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
     const baseLabel = lot.is_blend
@@ -125,10 +150,8 @@ export function generateShipmentPdf(shipment) {
       // shipment_lots.kg_dried_shipped). Sin ese campo (shipments
       // viejos) caemos al total del bache como fallback.
       const kgSeco = Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0);
-      const sacos  = Number(lot.num_sacos || 0);
-      totalSeco  += kgSeco;
-      totalSacos += sacos;
-      rows.push([
+      totalSeco += kgSeco;
+      pushRow([
         baseLabel,
         lot.codigo_trilladora || '—',
         lot.codigo_mezcla     || '—',
@@ -136,20 +159,21 @@ export function generateShipmentPdf(shipment) {
         lot.process_type || '—',
         { content: fmtKg(kgSeco), styles: { halign: 'right' } },
         { content: lot.factor_rendimiento != null ? String(lot.factor_rendimiento) : '—', styles: { halign: 'right' } },
-        { content: sacos > 0 ? String(sacos) : '—', styles: { halign: 'right' } },
-      ]);
+        { content: Number(lot.num_sacos || 0) > 0 ? String(lot.num_sacos) : '—', styles: { halign: 'right' } },
+        { content: Number(lot.num_lonas || 0) > 0 ? String(lot.num_lonas) : '—', styles: { halign: 'right' } },
+        empaqueLabel(lot.empaque_interior),
+        lot.observaciones || '',
+      ], lot);
     } else if (lot.partials_merged !== false) {
       // Una sola fila agrupando todos los parciales del bache.
       const kgSeco = partialsHere.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
-      const sacos  = Number(lot.num_sacos || 0);
       const factorAvg = (() => {
         const w = partialsHere.reduce((s, p) => s + Number(p.factor_rendimiento || 0) * Number(p.kg_dried || 0), 0);
         return kgSeco > 0 ? (Math.round((w / kgSeco) * 100) / 100).toString() : '—';
       })();
-      totalSeco  += kgSeco;
-      totalSacos += sacos;
+      totalSeco += kgSeco;
       const partialLetters = partialsHere.map((p) => p.parcial_letter).join('+');
-      rows.push([
+      pushRow([
         `${baseLabel}  · ${partialLetters}`,
         lot.codigo_trilladora || '—',
         lot.codigo_mezcla     || '—',
@@ -157,16 +181,17 @@ export function generateShipmentPdf(shipment) {
         lot.process_type || '—',
         { content: fmtKg(kgSeco), styles: { halign: 'right' } },
         { content: factorAvg, styles: { halign: 'right' } },
-        { content: sacos > 0 ? String(sacos) : '—', styles: { halign: 'right' } },
-      ]);
+        { content: Number(lot.num_sacos || 0) > 0 ? String(lot.num_sacos) : '—', styles: { halign: 'right' } },
+        { content: Number(lot.num_lonas || 0) > 0 ? String(lot.num_lonas) : '—', styles: { halign: 'right' } },
+        empaqueLabel(lot.empaque_interior),
+        lot.observaciones || '',
+      ], lot);
     } else {
-      // Separar: una fila por partial.
+      // Separar: una fila por partial (empaque/color/obs vienen por línea).
       for (const p of partialsHere) {
         const kgSeco = Number(p.kg_dried || 0);
-        const sacos  = Number(p.num_sacos || 0);
-        totalSeco  += kgSeco;
-        totalSacos += sacos;
-        rows.push([
+        totalSeco += kgSeco;
+        pushRow([
           `${baseLabel}-${p.parcial_letter}`,
           p.codigo_trilladora || '—',
           p.codigo_mezcla     || '—',
@@ -174,35 +199,57 @@ export function generateShipmentPdf(shipment) {
           lot.process_type || '—',
           { content: fmtKg(kgSeco), styles: { halign: 'right' } },
           { content: String(p.factor_rendimiento || '—'), styles: { halign: 'right' } },
-          { content: sacos > 0 ? String(sacos) : '—', styles: { halign: 'right' } },
-        ]);
+          { content: Number(p.num_sacos || 0) > 0 ? String(p.num_sacos) : '—', styles: { halign: 'right' } },
+          { content: Number(p.num_lonas || 0) > 0 ? String(p.num_lonas) : '—', styles: { halign: 'right' } },
+          empaqueLabel(p.empaque_interior),
+          p.observaciones || '',
+        ], p);
       }
     }
   }
 
   // Fila TOTAL al final
+  const dataRowCount = rows.length;
   rows.push([
-    { content: `TOTAL · ${rows.length} línea(s)`, colSpan: 5, styles: { fontStyle: 'bold', fillColor: CREAM } },
+    { content: `TOTAL · ${dataRowCount} línea(s)`, colSpan: 5, styles: { fontStyle: 'bold', fillColor: CREAM } },
     { content: fmtKg(totalSeco), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
     { content: '', styles: { fillColor: CREAM } },
     { content: String(totalSacos), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: String(totalLonas), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: `GP ${totalGP} · Bol ${totalBolsas}`, colSpan: 2, styles: { fontStyle: 'bold', fillColor: CREAM, fontSize: 7 } },
   ]);
 
   doc.autoTable({
     startY: y,
     margin: { left: M, right: M },
-    head: [['Bache', 'Cód. Trilladora', 'Cód. Mezcla', 'Variedad', 'Proceso', 'kg seco', 'Factor', '# Sacos']],
+    head: [['Bache', 'Cód. Trilladora', 'Cód. Mezcla', 'Variedad', 'Proceso', 'kg seco', 'Factor', 'Sacos', 'Lonas', 'Empaque', 'Observaciones']],
     body: rows,
     styles: { font: 'helvetica', fontSize: 8, cellPadding: 4, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
     headStyles: { fillColor: NAVY, textColor: YELLOW, fontStyle: 'bold', fontSize: 7 },
     alternateRowStyles: { fillColor: [251, 251, 248] },
     columnStyles: {
-      0: { cellWidth: 68, fontStyle: 'bold' },
-      1: { cellWidth: 70 }, 2: { cellWidth: 60 },
-      3: { cellWidth: 78 }, 4: { cellWidth: 50 },
-      5: { cellWidth: 56, halign: 'right' },
-      6: { cellWidth: 40, halign: 'right' },
-      7: { cellWidth: 40, halign: 'right' },
+      0: { cellWidth: 66, fontStyle: 'bold' },
+      1: { cellWidth: 62 }, 2: { cellWidth: 54 },
+      3: { cellWidth: 74 }, 4: { cellWidth: 46 },
+      5: { cellWidth: 52, halign: 'right' },
+      6: { cellWidth: 38, halign: 'right' },
+      7: { cellWidth: 32, halign: 'right' },
+      8: { cellWidth: 32, halign: 'right' },
+      9: { cellWidth: 52 },
+      // 10 (Observaciones) flexible
+    },
+    // Pinta cada fila con el color de cinta del lote; el texto pasa a
+    // blanco automáticamente sobre colores oscuros.
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      if (data.row.index >= dataRowCount) return;   // fila TOTAL
+      const hex = rowColors[data.row.index];
+      if (!hex) return;
+      const rgb = hexToRgbArr(hex);
+      if (!rgb) return;
+      data.cell.styles.fillColor = rgb;
+      const luminance = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+      if (luminance < 140) data.cell.styles.textColor = [255, 255, 255];
     },
   });
   y = doc.lastAutoTable.finalY + 6;
@@ -213,10 +260,12 @@ export function generateShipmentPdf(shipment) {
   const totStats = [
     ['# LOTES',       String(shipment.totals?.lot_count ?? shipment.lots.length)],
     ['TOTAL KG SECO', fmtKg(totalSeco)],
-    ['TOTAL LONAS',   String(totalSacos)],
-    ['PEDIDOS',       String(shipment.totals?.order_count ?? '—')],
+    ['SACOS',         String(totalSacos)],
+    ['LONAS',         String(totalLonas)],
+    ['GRAIN PRO',     String(totalGP)],
+    ['BOLSAS PLÁST.', String(totalBolsas)],
   ];
-  const tCellW = (W - M * 2) / 4;
+  const tCellW = (W - M * 2) / 6;
   totStats.forEach(([label, value], i) => {
     const cx = M + tCellW * i + tCellW / 2;
     doc.setFont('helvetica', 'normal');
@@ -231,7 +280,7 @@ export function generateShipmentPdf(shipment) {
   y += 50;
 
   // ── Firmas + footer ──
-  if (y > 700) { doc.addPage(); y = 40; }
+  if (y > H - 130) { doc.addPage(); y = 40; }
   y += 30;
   doc.setDrawColor(...SAND);
   doc.setLineWidth(0.5);

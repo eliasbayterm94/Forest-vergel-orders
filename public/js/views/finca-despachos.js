@@ -180,6 +180,7 @@ export async function fincaDespachosView() {
           el('td', { class: 'text-right font-mono', text: fmtKg(t.kg_dried ?? 0) }),
           el('td', { class: 'text-right font-mono', text: fmtKg(t.kg_green ?? 0) }),
           el('td', { class: 'text-right font-mono text-[12px]', text: String(t.num_sacos || '—') }),
+          el('td', { class: 'text-right font-mono text-[12px]', text: String(t.num_lonas || '—') }),
           el('td', { class: 'whitespace-nowrap text-right' }, [
             el('div', { class: 'inline-flex items-center gap-1' }, [
               el('button', {
@@ -203,7 +204,7 @@ export async function fincaDespachosView() {
 
         if (isExp) {
           tbody.append(el('tr', { class: 'bg-cream' }, [
-            el('td', { colspan: '9', class: 'p-3' }, [renderExpandedDetail(s)]),
+            el('td', { colspan: '10', class: 'p-3' }, [renderExpandedDetail(s)]),
           ]));
         }
       }
@@ -213,6 +214,7 @@ export async function fincaDespachosView() {
       const totalSeco  = shown.reduce((sum, x) => sum + Number(x.totals?.kg_dried || 0), 0);
       const totalVerde = shown.reduce((sum, x) => sum + Number(x.totals?.kg_green || 0), 0);
       const totalSacos = shown.reduce((sum, x) => sum + Number(x.totals?.num_sacos || 0), 0);
+      const totalLonas = shown.reduce((sum, x) => sum + Number(x.totals?.num_lonas || 0), 0);
       const tfoot = el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
         el('td', { class: 'w-8' }, []),
         el('td', { class: 'font-display text-[11px] uppercase tracking-eyebrow text-ink-700',
@@ -223,6 +225,7 @@ export async function fincaDespachosView() {
         el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(totalSeco) }),
         el('td', { class: 'text-right font-mono font-semibold text-navy', text: fmtKg(totalVerde) }),
         el('td', { class: 'text-right font-mono font-semibold text-navy', text: String(totalSacos) }),
+        el('td', { class: 'text-right font-mono font-semibold text-navy', text: String(totalLonas) }),
         el('td', {}, []),
       ])]);
 
@@ -235,6 +238,7 @@ export async function fincaDespachosView() {
           th('Lotes', 'text-right'),
           th('kg seco', 'text-right'),
           th('kg verde esp.', 'text-right'),
+          th('Sacos', 'text-right'),
           th('Lonas', 'text-right'),
           th('Acciones', 'text-right'),
         ])]),
@@ -266,6 +270,7 @@ export async function fincaDespachosView() {
         el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'kg seco' }),
         el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'kg verde' }),
         el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Variedades' }),
+        el('th', { class: 'text-left px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Empaque' }),
         el('th', { class: 'text-right px-3 py-2 uppercase tracking-eyebrow text-[10px]', text: 'Acciones' }),
       ])]),
       el('tbody', {}, allRows),
@@ -305,6 +310,16 @@ export async function fincaDespachosView() {
       el('td', { class: 'px-3 py-2 text-right font-mono', text: fmtKg(kgSeco) }),
       el('td', { class: 'px-3 py-2 text-right font-mono', text: fmtKg(kgVerde) }),
       el('td', { class: 'px-3 py-2 text-[11px] text-ink-500', text: varieties }),
+      el('td', { class: 'px-3 py-2 text-[11px] text-ink-700 whitespace-nowrap' }, [
+        lot.color_cinta
+          ? el('span', {
+              class: 'inline-block w-3 h-3 rounded-sm border border-ink-300 mr-1 align-middle',
+              style: `background:${lot.color_cinta};`,
+              title: `Cinta ${lot.color_cinta}`,
+            })
+          : null,
+        el('span', { text: empaqueSummary(lot) }),
+      ]),
       el('td', { class: 'px-3 py-2 text-right whitespace-nowrap' }, [
         el('div', { class: 'inline-flex items-center gap-1' }, [
           el('button', {
@@ -321,17 +336,33 @@ export async function fincaDespachosView() {
       ]),
     ]);
     const rows = [baseRow];
+    if (lot.observaciones) {
+      rows.push(el('tr', {}, [
+        el('td', { colspan: '8', class: 'px-3 pb-2 pt-0 text-[10px] text-ink-500 italic',
+          text: `Obs.: ${lot.observaciones}` }),
+      ]));
+    }
     if (partials.length > 0) {
       rows.push(el('tr', { class: 'bg-cream' }, [
-        el('td', { colspan: '7', class: 'px-3 py-2' }, [partialsInline(partials)]),
+        el('td', { colspan: '8', class: 'px-3 py-2' }, [partialsInline(partials)]),
       ]));
     }
     if (lot.assignments && lot.assignments.length > 0) {
       rows.push(el('tr', { class: 'bg-cream' }, [
-        el('td', { colspan: '7', class: 'px-3 py-2' }, [assignmentsInline(lot.assignments)]),
+        el('td', { colspan: '8', class: 'px-3 py-2' }, [assignmentsInline(lot.assignments)]),
       ]));
     }
     return rows;
+  }
+
+  // "3 sacos · 2 lonas · Grain Pro" para una línea de despacho.
+  function empaqueSummary(x) {
+    const parts = [];
+    if (Number(x.num_sacos)) parts.push(`${x.num_sacos} sacos`);
+    if (Number(x.num_lonas)) parts.push(`${x.num_lonas} lonas`);
+    if (x.empaque_interior === 'grainpro') parts.push('Grain Pro');
+    else if (x.empaque_interior === 'bolsa') parts.push('Bolsa plást.');
+    return parts.join(' · ') || '—';
   }
 
   function partialsInline(partials) {
@@ -507,13 +538,20 @@ export async function fincaDespachosView() {
         ]),
       ]),
       // Meta strip alineado con las columnas de la vista Tabla:
-      // Destino · Lotes · kg seco · kg verde esp. · Lonas
+      // Destino · Lotes · kg seco · kg verde esp. · Sacos · Lonas · Empaque
       el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
         meta('Destino',  destinoLabel),
         meta('Lotes',    String(t.lot_count ?? s.lots.length)),
         meta('kg seco',  fmtKg(t.kg_dried ?? 0)),
         meta('kg verde esp.', fmtKg(t.kg_green ?? 0)),
-        meta('Lonas',    String(t.num_sacos || '—')),
+        meta('Sacos',    String(t.num_sacos || '—')),
+        meta('Lonas',    String(t.num_lonas || '—')),
+        (t.grainpro_count || t.bolsas_count)
+          ? meta('Empaque', [
+              t.grainpro_count ? `GP ${t.grainpro_count}` : null,
+              t.bolsas_count ? `Bolsa ${t.bolsas_count}` : null,
+            ].filter(Boolean).join(' · '))
+          : null,
       ]),
       // Baches en dropdown colapsable. Por defecto cerrado para que
       // la card sea compacta en móvil; se expande al hacer click en
@@ -568,6 +606,20 @@ export async function fincaDespachosView() {
         el('span', {}, [`kg verde: `, el('strong', { class: 'text-ink-700', text: fmtKg(kgVerdeShipped) })]),
         lot.varieties && lot.varieties.length
           ? el('span', {}, [`Variedades: `, el('strong', { class: 'text-ink-700', text: lot.varieties.map((v) => v.name).join(', ') })])
+          : null,
+        el('span', {}, [
+          `Empaque: `,
+          lot.color_cinta
+            ? el('span', {
+                class: 'inline-block w-3 h-3 rounded-sm border border-ink-300 mr-1 align-middle',
+                style: `background:${lot.color_cinta};`,
+                title: `Cinta ${lot.color_cinta}`,
+              })
+            : null,
+          el('strong', { class: 'text-ink-700', text: empaqueSummary(lot) }),
+        ]),
+        lot.observaciones
+          ? el('span', { class: 'italic', text: `Obs.: ${lot.observaciones}` })
           : null,
         // Acciones por bache (mismas de la sub-tabla del dropdown)
         el('span', { class: 'ml-auto flex items-center gap-1' }, [
@@ -739,6 +791,7 @@ export async function fincaDespachosView() {
       if (!lotFields.has(lotId)) {
         lotFields.set(lotId, {
           codigo_trilladora: '', codigo_mezcla: '', num_sacos: '',
+          num_lonas: '', empaque_interior: '', color_cinta: '', observaciones: '',
           partials_merged: true, kg_mode: 'todo', kg_dried_to_ship: '',
         });
       }
@@ -923,16 +976,55 @@ export async function fincaDespachosView() {
       const codMIn = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-24',
         placeholder: '—', value: lf.codigo_mezcla || '' });
       codMIn.addEventListener('input', () => { lf.codigo_mezcla = codMIn.value; });
-      const sacosIn = el('input', {
-        type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
-        class: 'ctrm-input mono text-[11px] text-right w-16', value: lf.num_sacos || '',
+      const numIn = (field, width = 'w-14') => {
+        const inp = el('input', {
+          type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
+          class: `ctrm-input mono text-[11px] text-right ${width}`, value: lf[field] || '',
+        });
+        inp.addEventListener('input', () => {
+          // Solo dígitos: descarta cualquier otro caracter
+          const cleaned = (inp.value || '').replace(/[^0-9]/g, '');
+          if (cleaned !== inp.value) inp.value = cleaned;
+          lf[field] = cleaned === '' ? '' : Number(cleaned);
+          recountSummary();
+        });
+        return inp;
+      };
+      const sacosIn = numIn('num_sacos');
+      const lonasIn = numIn('num_lonas');
+
+      // Empaque interior: una sola opción por lote (GP o bolsa).
+      const empaqueSel = el('select', { class: 'ctrm-input text-[10px] w-24' }, [
+        el('option', { value: '', selected: !lf.empaque_interior }, ['Ninguno']),
+        el('option', { value: 'grainpro', selected: lf.empaque_interior === 'grainpro' }, ['Grain Pro']),
+        el('option', { value: 'bolsa', selected: lf.empaque_interior === 'bolsa' }, ['Bolsa plást.']),
+      ]);
+      empaqueSel.addEventListener('change', () => { lf.empaque_interior = empaqueSel.value; recountSummary(); });
+
+      // Color de cinta: input nativo (se abre al click, gana espacio) +
+      // × para quitarlo. La fila se pinta en vivo para previsualizar
+      // cómo saldrá en la remisión.
+      const colorIn = el('input', {
+        type: 'color', value: lf.color_cinta || '#ffffff',
+        class: 'cursor-pointer', style: 'width:26px;height:22px;border:1px solid #d8d8d0;border-radius:4px;padding:0;background:none;',
+        title: 'Color de cinta del lote — pinta la fila en la remisión',
       });
-      sacosIn.addEventListener('input', () => {
-        // Solo dígitos: descarta cualquier otro caracter
-        const cleaned = (sacosIn.value || '').replace(/[^0-9]/g, '');
-        if (cleaned !== sacosIn.value) sacosIn.value = cleaned;
-        lf.num_sacos = cleaned === '' ? '' : Number(cleaned);
-      });
+      const paintRow = () => {
+        tr.style.background = lf.color_cinta ? hexToRgba(lf.color_cinta, 0.35) : '';
+      };
+      colorIn.addEventListener('input', () => { lf.color_cinta = colorIn.value; paintRow(); });
+      const colorClear = el('button', {
+        type: 'button', class: 'text-ink-300 text-[12px] hover:text-crit',
+        style: 'background:none;border:none;padding:0 2px;cursor:pointer;',
+        title: 'Quitar color',
+        onClick: () => { lf.color_cinta = ''; colorIn.value = '#ffffff'; paintRow(); },
+      }, ['×']);
+      const colorCell = el('div', { class: 'flex items-center gap-0.5' }, [colorIn, colorClear]);
+
+      const obsIn = el('input', { type: 'text', class: 'ctrm-input text-[11px] w-32',
+        placeholder: 'Observaciones', maxlength: '200', value: lf.observaciones || '' });
+      obsIn.addEventListener('input', () => { lf.observaciones = obsIn.value; });
+
       const removeBtn = el('button', { type: 'button',
         class: 'text-crit text-[16px] font-bold hover:bg-crit-bg rounded px-1',
         title: 'Quitar del despacho',
@@ -945,7 +1037,7 @@ export async function fincaDespachosView() {
           recountSummary();
         },
       }, ['×']);
-      return el('tr', { class: 'border-b border-sand hover:bg-cream/40' }, [
+      const tr = el('tr', { class: 'border-b border-sand hover:bg-cream/40' }, [
         el('td', { class: 'px-2 py-2 text-ink-300 text-[11px] font-mono', text: String(idx) }),
         el('td', { class: 'px-2 py-2' }, [codeNode]),
         el('td', { class: 'px-2 py-2' }, [refProcCell]),
@@ -953,9 +1045,15 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-2' }, [codTIn]),
         el('td', { class: 'px-2 py-2' }, [codMIn]),
         el('td', { class: 'px-2 py-2 text-right' }, [sacosIn]),
+        el('td', { class: 'px-2 py-2 text-right' }, [lonasIn]),
+        el('td', { class: 'px-2 py-2' }, [empaqueSel]),
+        el('td', { class: 'px-2 py-2' }, [colorCell]),
+        el('td', { class: 'px-2 py-2' }, [obsIn]),
         el('td', { class: 'px-2 py-2' }, [renderKgCell(lf, avail)]),
         el('td', { class: 'px-2 py-2 text-center' }, [removeBtn]),
       ]);
+      paintRow();
+      return tr;
     }
 
     function renderLotHeaderRow(idx, l, lf, eligPartialsList) {
@@ -992,8 +1090,8 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-2' }, [codeNode]),
         el('td', { class: 'px-2 py-2' }, [refProcCell]),
         el('td', { class: 'px-2 py-2 text-right font-mono text-[12px]', text: `${fmtKg(totalKg)}` }),
-        el('td', { colspan: '4', class: 'px-2 py-2 text-[10px] text-ink-500 italic',
-          text: 'Códigos y sacos por parcial ↓' }),
+        el('td', { colspan: '8', class: 'px-2 py-2 text-[10px] text-ink-500 italic',
+          text: 'Códigos y sacos por parcial ↓ (empaque/color/observaciones se toman del bache)' }),
         el('td', { class: 'px-2 py-2 text-center' }, [removeBtn]),
       ]);
     }
@@ -1025,6 +1123,7 @@ export async function fincaDespachosView() {
         el('td', { class: 'px-2 py-1.5' }, [codTIn]),
         el('td', { class: 'px-2 py-1.5' }, [codMIn]),
         el('td', { class: 'px-2 py-1.5 text-right' }, [sIn]),
+        el('td', { colspan: '4', class: 'px-2 py-1.5 text-[10px] text-ink-300 italic', text: 'hereda del bache' }),
         el('td', { class: 'px-2 py-1.5 text-right font-mono text-[11px] text-ok font-bold', text: `${fmtKg(kg)}` }),
         el('td', { class: 'px-2 py-1.5 text-center' }, [removeBtn]),
       ]);
@@ -1040,6 +1139,14 @@ export async function fincaDespachosView() {
       let idx = 1;
       let totalDried = 0;
       let totalSacos = 0;
+      let totalLonas = 0;
+      let totalGP = 0;
+      let totalBolsas = 0;
+      const addEmpaque = (lf) => {
+        const bultos = Number(lf.num_sacos || 0) + Number(lf.num_lonas || 0);
+        if (lf.empaque_interior === 'grainpro') totalGP += bultos;
+        else if (lf.empaque_interior === 'bolsa') totalBolsas += bultos;
+      };
       const tbody = el('tbody', {});
       for (const lotId of [...selectedLots]) {
         const l = readyLotsById.get(lotId);
@@ -1052,6 +1159,8 @@ export async function fincaDespachosView() {
             ? Number(lf.kg_dried_to_ship) : avail;
           totalDried += kgToShip;
           totalSacos += Number(lf.num_sacos || 0);
+          totalLonas += Number(lf.num_lonas || 0);
+          addEmpaque(lf);
           tbody.append(renderLotRow(idx++, l, lf, avail));
         } else {
           const elig = eligPartials(l);
@@ -1061,6 +1170,8 @@ export async function fincaDespachosView() {
               ? Number(lf.kg_dried_to_ship) : avail;
             totalDried += kgToShip;
             totalSacos += Number(lf.num_sacos || 0);
+            totalLonas += Number(lf.num_lonas || 0);
+            addEmpaque(lf);
             tbody.append(renderLotRow(idx++, l, lf, avail, { hasPartials: true, partialsCount: elig.length }));
           } else {
             const selectedPartials = elig.filter((p) => partialIds.has(p.id));
@@ -1083,7 +1194,11 @@ export async function fincaDespachosView() {
           el('th', { class: 'px-2 py-2 text-right uppercase tracking-eyebrow text-[9px]' }, ['kg seco disp.']),
           el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, ['Cód. Trilladora']),
           el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, ['Cód. Mezcla']),
-          el('th', { class: 'px-2 py-2 text-right uppercase tracking-eyebrow text-[9px]' }, ['# Sacos']),
+          el('th', { class: 'px-2 py-2 text-right uppercase tracking-eyebrow text-[9px]' }, ['Sacos']),
+          el('th', { class: 'px-2 py-2 text-right uppercase tracking-eyebrow text-[9px]' }, ['Lonas']),
+          el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, ['Empaque']),
+          el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, ['Color']),
+          el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, ['Observaciones']),
           el('th', { class: 'px-2 py-2 text-right uppercase tracking-eyebrow text-[9px]' }, ['kg seco a desp.']),
           el('th', { class: 'px-2 py-2 text-center uppercase tracking-eyebrow text-[9px]' }, ['']),
         ])]),
@@ -1094,6 +1209,9 @@ export async function fincaDespachosView() {
           el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: '' }),
           el('td', { colspan: '2' }, []),
           el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: String(totalSacos) }),
+          el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: String(totalLonas) }),
+          el('td', { colspan: '3', class: 'px-2 py-2 text-[10px] font-mono font-semibold text-ink-700',
+            text: `GP: ${totalGP} · Bolsa: ${totalBolsas}` }),
           el('td', { class: 'px-2 py-2 text-right font-mono font-bold text-navy', text: `${fmtKg(totalDried)}` }),
           el('td', {}, []),
         ])]),
@@ -1263,6 +1381,10 @@ function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) 
       codigo_trilladora: (f.codigo_trilladora || '').trim() || null,
       codigo_mezcla:     (f.codigo_mezcla || '').trim() || null,
       num_sacos:         f.num_sacos === '' || f.num_sacos == null ? null : Number(f.num_sacos),
+      num_lonas:         f.num_lonas === '' || f.num_lonas == null ? null : Number(f.num_lonas),
+      empaque_interior:  f.empaque_interior || null,
+      color_cinta:       f.color_cinta || null,
+      observaciones:     (f.observaciones || '').trim() || null,
     };
     // kg parcial a despachar (si se indica, despacho parcial)
     if (f.kg_dried_to_ship != null && f.kg_dried_to_ship !== '') {
@@ -1293,11 +1415,17 @@ function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) 
         });
       } else {
         // Separar: una entrada por parcial con sus propios códigos.
+        // Empaque, color y observaciones se heredan del bache (lf).
         for (const pid of selected) {
           const pf = partialFields.get(pid) || { codigo_trilladora: '', codigo_mezcla: '', num_sacos: '' };
           items.push({
             production_lot_id: l.id, partial_ids: [pid],
-            ...norm(pf),
+            ...norm({
+              ...pf,
+              empaque_interior: lf.empaque_interior,
+              color_cinta: lf.color_cinta,
+              observaciones: lf.observaciones,
+            }),
             partials_merged: false,
           });
         }
@@ -1310,6 +1438,14 @@ function buildItems(readyLots, wholeLots, partialIds, lotFields, partialFields) 
 // ── helpers ────────────────────────────────────────────────────────
 function labelled(label, child) {
   return el('div', {}, [el('label', { class: 'ctrm-label', text: label }), child]);
+}
+
+// #rrggbb → rgba() con alpha, para pintar la fila del modal con el
+// color de cinta sin tapar los inputs.
+function hexToRgba(hex, alpha) {
+  const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(hex || '');
+  if (!m) return '';
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`;
 }
 
 function meta(label, value) {

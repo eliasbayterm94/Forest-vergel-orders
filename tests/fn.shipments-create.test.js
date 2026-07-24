@@ -116,6 +116,61 @@ test('lote con parciales exige partial_ids', async () => {
   assert.equal(r.body.code, 'PARTIAL_IDS_REQUIRED');
 });
 
+test('empaque: lonas, empaque_interior, color y observaciones se guardan', async () => {
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    items: [{
+      production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 200,
+      num_sacos: 3, num_lonas: 2, empaque_interior: 'grainpro',
+      color_cinta: '#FF00AA', observaciones: 'Cinta rosada, va a trilla fina',
+    }],
+    destino_kind: 'Vertical',
+  }), {}));
+  assert.equal(r.status, 200);
+  const link = fake._db.shipment_lots[0];
+  assert.equal(link.num_sacos, 3);
+  assert.equal(link.num_lonas, 2);
+  assert.equal(link.empaque_interior, 'grainpro');
+  assert.equal(link.color_cinta, '#FF00AA');
+  assert.equal(link.observaciones, 'Cinta rosada, va a trilla fina');
+});
+
+test('empaque: campos vacíos quedan null', async () => {
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    items: [{
+      production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 200,
+      num_lonas: '', empaque_interior: '', color_cinta: '', observaciones: '',
+    }],
+  }), {}));
+  assert.equal(r.status, 200);
+  const link = fake._db.shipment_lots[0];
+  assert.equal(link.num_lonas, null);
+  assert.equal(link.empaque_interior, null);
+  assert.equal(link.color_cinta, null);
+  assert.equal(link.observaciones, null);
+});
+
+test('empaque_interior inválido rebota INVALID_EMPAQUE', async () => {
+  setFake(fixture());
+  const r = parseRes(await handler(postEvent({
+    items: [{ production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 200, empaque_interior: 'vacio' }],
+  }), {}));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'INVALID_EMPAQUE');
+});
+
+test('color_cinta inválido rebota INVALID_COLOR', async () => {
+  setFake(fixture());
+  const r = parseRes(await handler(postEvent({
+    items: [{ production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 200, color_cinta: 'rosado' }],
+  }), {}));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'INVALID_COLOR');
+});
+
 test('kg consumido en mezclas también descuenta del disponible', async () => {
   // 350 total − 300 en mezcla = 50 disponibles. Pedir 100 rebota.
   setFake(fixture({

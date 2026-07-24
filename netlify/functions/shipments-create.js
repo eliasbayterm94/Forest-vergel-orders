@@ -23,7 +23,9 @@ const { driedLedger } = require('./_lib/lotInventory');
  *   items          [
  *     { production_lot_id: uuid, partial_ids: null | [uuid],
  *       codigo_trilladora?: string, codigo_mezcla?: string,
- *       num_sacos?: int, partials_merged?: boolean }
+ *       num_sacos?: int, num_lonas?: int,
+ *       empaque_interior?: 'grainpro'|'bolsa', color_cinta?: '#rrggbb',
+ *       observaciones?: string, partials_merged?: boolean }
  *   ]
  *
  *   - partial_ids null/empty → ship the whole lot. Only allowed when
@@ -141,11 +143,26 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     const partials = lot.lot_partials || [];
     const wantPartialIds = (it.partial_ids || []).filter(Boolean);
     // Campos por bache que se aplican a cada shipment_lots de este item
+    const empaque = it.empaque_interior == null || it.empaque_interior === ''
+      ? null : String(it.empaque_interior);
+    if (empaque != null && !['grainpro', 'bolsa'].includes(empaque)) {
+      return badReq('empaque_interior must be grainpro or bolsa', 'INVALID_EMPAQUE');
+    }
+    const colorCinta = it.color_cinta == null || it.color_cinta === ''
+      ? null : String(it.color_cinta).trim();
+    if (colorCinta != null && !/^#[0-9a-fA-F]{6}$/.test(colorCinta)) {
+      return badReq('color_cinta must be a #rrggbb hex', 'INVALID_COLOR');
+    }
     const extras = {
       codigo_trilladora: it.codigo_trilladora == null ? null : String(it.codigo_trilladora).trim(),
       codigo_mezcla:     it.codigo_mezcla     == null ? null : String(it.codigo_mezcla).trim(),
-      num_sacos:         it.num_sacos == null ? null
+      num_sacos:         it.num_sacos == null || it.num_sacos === '' ? null
                           : (Number.isFinite(Number(it.num_sacos)) ? Math.max(0, Math.floor(Number(it.num_sacos))) : null),
+      num_lonas:         it.num_lonas == null || it.num_lonas === '' ? null
+                          : (Number.isFinite(Number(it.num_lonas)) ? Math.max(0, Math.floor(Number(it.num_lonas))) : null),
+      empaque_interior:  empaque,
+      color_cinta:       colorCinta,
+      observaciones:     it.observaciones == null ? null : String(it.observaciones).trim().slice(0, 200) || null,
       partials_merged:   it.partials_merged === false ? false : true,
     };
 

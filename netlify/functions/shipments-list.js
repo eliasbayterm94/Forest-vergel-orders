@@ -23,6 +23,7 @@ exports.handler = requireAuth(async (event) => {
       shipment_lots (
         id, lot_partial_id, kg_dried_shipped,
         codigo_trilladora, codigo_mezcla, num_sacos, partials_merged,
+        num_lonas, empaque_interior, color_cinta, observaciones,
         lot_partials ( id, parcial_letter, kg_dried, factor_rendimiento, kg_green_yield ),
         production_lots (
           id, lot_code, bache_code, blend_code, is_blend,
@@ -78,6 +79,10 @@ exports.handler = requireAuth(async (event) => {
           codigo_trilladora: sl.codigo_trilladora,
           codigo_mezcla:     sl.codigo_mezcla,
           num_sacos:         sl.num_sacos,
+          num_lonas:         sl.num_lonas,
+          empaque_interior:  sl.empaque_interior,
+          color_cinta:       sl.color_cinta,
+          observaciones:     sl.observaciones,
           partials_merged:   sl.partials_merged !== false,
           reference_name: l.coffee_references && l.coffee_references.name,
           varieties: (l.production_lot_varieties || [])
@@ -120,6 +125,10 @@ exports.handler = requireAuth(async (event) => {
           codigo_trilladora: sl.codigo_trilladora,
           codigo_mezcla:     sl.codigo_mezcla,
           num_sacos:         sl.num_sacos,
+          num_lonas:         sl.num_lonas,
+          empaque_interior:  sl.empaque_interior,
+          color_cinta:       sl.color_cinta,
+          observaciones:     sl.observaciones,
         });
       } else {
         g.whole_lot_in_shipment = true;
@@ -173,6 +182,27 @@ exports.handler = requireAuth(async (event) => {
       // Si separados, sumar de partials.
       return s + (l.partials_in_shipment || []).reduce((ss, p) => ss + (Number(p.num_sacos) || 0), 0);
     }, 0);
+    const totalLonas = lots.reduce((s, l) => {
+      if (l.partials_merged !== false) return s + (Number(l.num_lonas) || 0);
+      return s + (l.partials_in_shipment || []).reduce((ss, p) => ss + (Number(p.num_lonas) || 0), 0);
+    }, 0);
+    // Empaques interiores: 1 por cada bulto (sacos + lonas) de las
+    // líneas marcadas con grainpro / bolsa.
+    let totalGrainpro = 0, totalBolsas = 0;
+    const countEmpaque = (empaque, sacos, lonas) => {
+      const bultos = (Number(sacos) || 0) + (Number(lonas) || 0);
+      if (empaque === 'grainpro') totalGrainpro += bultos;
+      else if (empaque === 'bolsa') totalBolsas += bultos;
+    };
+    for (const l of lots) {
+      if (l.partials_merged !== false) {
+        countEmpaque(l.empaque_interior, l.num_sacos, l.num_lonas);
+      } else {
+        for (const p of l.partials_in_shipment || []) {
+          countEmpaque(p.empaque_interior, p.num_sacos, p.num_lonas);
+        }
+      }
+    }
     const orderIds = new Set();
     lots.forEach((l) => l.assignments.forEach((a) => a.order && orderIds.add(a.order.id)));
 
@@ -196,6 +226,9 @@ exports.handler = requireAuth(async (event) => {
         kg_green_allocated: Math.round(totalAllocated * 100) / 100,
         kg_dried: Math.round(totalKgDried * 100) / 100,
         num_sacos: totalSacos,
+        num_lonas: totalLonas,
+        grainpro_count: totalGrainpro,
+        bolsas_count: totalBolsas,
       },
     };
   });
