@@ -4,7 +4,7 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { ok, serverErr, methodNotAllowed } = require('./_lib/respond');
 const {
-  sumBlendedKg, sumShippedFromPartials, sumAllocatedGreen,
+  sumBlendedKg, sumShippedFromPartials, sumHeldFromPartials, sumAllocatedGreen,
   driedLedger, greenLedger, round2,
 } = require('./_lib/lotInventory');
 
@@ -48,7 +48,7 @@ exports.handler = requireAuth(async (event) => {
       completed_at, notes, created_at,
       rejected_at, rejection_reason,
       shipment_lots!lot_partial_id (
-        shipment_id, shipments ( shipment_code, shipment_date )
+        shipment_id, shipments ( shipment_code, shipment_date, status )
       )
     ),
     lot_order_assignments (
@@ -76,21 +76,23 @@ exports.handler = requireAuth(async (event) => {
   // eso necesitamos esta segunda consulta para que kg_dried_available
   // descuente también los partial-by-kg.
   const lotIdsAll = (data || []).map((l) => l.id);
-  const wholeShipKgByLot = new Map();
-  const wholeShipDetailsByLot = new Map();   // lot_id → [{ shipment_id, shipment_code, shipment_date, kg }]
+  const wholeShipKgByLot = new Map();        // CONFIRMADO (whole+merma)
+  const wholeHeldKgByLot = new Map();        // BORRADOR apartado (whole+merma)
+  const wholeShipDetailsByLot = new Map();   // lot_id → [{ shipment_id, shipment_code, shipment_date, kg, draft }]
   if (lotIdsAll.length > 0) {
     const { data: wholeShips, error: wsErr } = await sb
       .from('shipment_lots')
-      .select('production_lot_id, kg_dried_shipped, kg_dried_merma, split_label, shipment_id, shipments(shipment_code, shipment_date)')
+      .select('production_lot_id, kg_dried_shipped, kg_dried_merma, split_label, shipment_id, shipments(shipment_code, shipment_date, status)')
       .in('production_lot_id', lotIdsAll)
       .is('lot_partial_id', null);
     if (!wsErr) {
       for (const r of wholeShips || []) {
+        const isDraft = r.shipments && r.shipments.status === 'draft';
         // La merma (despacho total con peso real de báscula) cuenta
         // como kg salidos de bodega — sin esto quedaría saldo fantasma.
-        wholeShipKgByLot.set(r.production_lot_id,
-          (wholeShipKgByLot.get(r.production_lot_id) || 0)
-          + Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0));
+        const kg = Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0);
+        const bucket = isDraft ? wholeHeldKgByLot : wholeShipKgByLot;
+        bucket.set(r.production_lot_id, (bucket.get(r.production_lot_id) || 0) + kg);
         const arr = wholeShipDetailsByLot.get(r.production_lot_id) || [];
         arr.push({
           shipment_id: r.shipment_id,
@@ -99,6 +101,7 @@ exports.handler = requireAuth(async (event) => {
           kg_dried: Number(r.kg_dried_shipped || 0),
           kg_dried_merma: r.kg_dried_merma == null ? null : Number(r.kg_dried_merma),
           split_label: r.split_label || null,
+          draft: !!isDraft,
           via: 'whole',
         });
         wholeShipDetailsByLot.set(r.production_lot_id, arr);
@@ -150,6 +153,9 @@ exports.handler = requireAuth(async (event) => {
       blendedKg: sumBlendedKg(l.lot_blend_components),
       shippedPartialsKg: sumShippedFromPartials(l.lot_partials),
       shippedWholeKg: wholeShipKgByLot.get(l.id) || 0,
+      // Apartado en borradores (parciales + whole/by-kg): reduce el
+      // disponible pero no cuenta como salida física.
+      heldKg: sumHeldFromPartials(l.lot_partials) + (wholeHeldKgByLot.get(l.id) || 0),
     });
     const gl = greenLedger({
       kgGreenActual: l.kg_green_actual,
@@ -167,6 +173,7 @@ exports.handler = requireAuth(async (event) => {
     varieties: (l.production_lot_varieties || []).map((j) => j.coffee_varieties).filter(Boolean),
     kg_dried_used_in_blends: round2(dl.blended),
     kg_dried_shipped:        round2(dl.shipped),
+    kg_dried_held:           round2(dl.held),
     kg_dried_available:      round2(dl.available),
     // Detalle de despachos: cada elemento referencia un shipment con
     // el kg seco que aportó este bache. Soporta tanto despachos por

@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  sumBlendedKg, sumShippedFromLinks, sumShippedFromPartials, sumAllocatedGreen,
+  sumBlendedKg, sumShippedFromLinks, sumShippedFromPartials, sumHeldFromPartials, sumAllocatedGreen,
   driedLedger, greenLedger, round2,
 } = require('../netlify/functions/_lib/lotInventory');
 
@@ -35,6 +35,22 @@ test('sumShippedFromPartials: solo parciales con links', () => {
   ]), 150);
 });
 
+test('sumShippedFromPartials: borradores NO cuentan como despachado', () => {
+  assert.equal(sumShippedFromPartials([
+    { kg_dried: 150, shipment_lots: [{ shipment_id: 's1', shipments: { status: 'confirmed' } }] },
+    { kg_dried: 80,  shipment_lots: [{ shipment_id: 's2', shipments: { status: 'draft' } }] },  // apartado
+    { kg_dried: 40,  shipment_lots: [{ shipment_id: 's3' }] },                                   // sin status → confirmado
+  ]), 190);   // 150 + 40, NO el borrador
+});
+
+test('sumHeldFromPartials: solo parciales apartados en borrador', () => {
+  assert.equal(sumHeldFromPartials([
+    { kg_dried: 150, shipment_lots: [{ shipment_id: 's1', shipments: { status: 'confirmed' } }] },
+    { kg_dried: 80,  shipment_lots: [{ shipment_id: 's2', shipments: { status: 'draft' } }] },
+    { kg_dried: 50,  shipment_lots: [] },
+  ]), 80);
+});
+
 test('sumAllocatedGreen', () => {
   assert.equal(sumAllocatedGreen([{ kg_green_allocated: 300 }, { kg_green_allocated: 50 }]), 350);
   assert.equal(sumAllocatedGreen(undefined), 0);
@@ -64,6 +80,28 @@ test('driedLedger clampa a 0 y tolera nulls', () => {
   assert.equal(driedLedger({ kgDriedOutput: 100, shippedWholeKg: 150 }).available, 0);
   assert.equal(driedLedger({ kgDriedOutput: null }).available, 0);
   assert.equal(driedLedger({ kgDriedOutput: 100 }).available, 100);
+});
+
+test('driedLedger: borrador aparta inventario (held) sin contar como salida', () => {
+  const dl = driedLedger({ kgDriedOutput: 350, heldKg: 200 });
+  assert.equal(dl.held, 200);
+  assert.equal(dl.shipped, 0);
+  assert.equal(dl.out, 0);            // held NO es salida física
+  assert.equal(dl.available, 150);    // pero sí reduce el disponible
+});
+
+test('driedLedger: shipped + held combinados reducen el disponible', () => {
+  const dl = driedLedger({ kgDriedOutput: 1000, shippedWholeKg: 300, heldKg: 200 });
+  assert.equal(dl.shipped, 300);
+  assert.equal(dl.held, 200);
+  assert.equal(dl.out, 300);          // solo lo confirmado es salida
+  assert.equal(dl.available, 500);    // 1000 - 300 - 200
+});
+
+test('driedLedger: held por defecto 0 (compat)', () => {
+  const dl = driedLedger({ kgDriedOutput: 350, shippedWholeKg: 200 });
+  assert.equal(dl.held, 0);
+  assert.equal(dl.available, 150);
 });
 
 // ── greenLedger ──────────────────────────────────────────────────────

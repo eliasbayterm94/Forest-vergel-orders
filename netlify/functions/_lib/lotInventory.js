@@ -18,9 +18,13 @@
  *   SECO  (kg físicos en bodega)
  *     total      = kg_dried_output
  *     blended    = Σ kg_dried_used en mezclas donde el bache es fuente
- *     shipped    = Σ despachado (whole/partial-by-kg + vía parciales)
+ *     shipped    = Σ despachado en despachos CONFIRMADOS (whole/
+ *                  partial-by-kg + vía parciales)
+ *     held       = Σ apartado en despachos BORRADOR (preparación de
+ *                  bodega): físicamente sigue en bodega pero reservado,
+ *                  no disponible para planear otro despacho
  *     out        = blended + shipped
- *     available  = max(0, total − out)
+ *     available  = max(0, total − out − held)
  *
  *   VERDE (kg comerciales esperados)
  *     totalGreen   = kg_green_actual ?? kg_green_expected ?? 0
@@ -57,14 +61,35 @@ function sumShippedFromLinks(links) {
   }, 0);
 }
 
+// Un link de despacho embebido pertenece a un borrador si su
+// shipment tiene status 'draft'. Sin el embed (o sin status) se
+// asume confirmado (compat con datos previos a migration 0047).
+function _linkIsDraft(link) {
+  return !!(link && link.shipments && link.shipments.status === 'draft');
+}
+
 /**
- * Σ kg seco despachado vía parciales, leyendo el embed
- * lot_partials[].shipment_lots (shape de production-lots-list):
- * un parcial cuenta si tiene al menos un link de despacho.
+ * Σ kg seco despachado vía parciales en despachos CONFIRMADOS,
+ * leyendo el embed lot_partials[].shipment_lots (shape de
+ * production-lots-list): un parcial cuenta si tiene un link a un
+ * despacho confirmado.
  */
 function sumShippedFromPartials(partials) {
   return (partials || [])
-    .filter((p) => p.shipment_lots && p.shipment_lots.length > 0)
+    .filter((p) => (p.shipment_lots || []).some((sl) => !_linkIsDraft(sl)))
+    .reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+}
+
+/**
+ * Σ kg seco APARTADO vía parciales en BORRADORES: un parcial cuenta
+ * si su único link es a un despacho en borrador.
+ */
+function sumHeldFromPartials(partials) {
+  return (partials || [])
+    .filter((p) => {
+      const links = p.shipment_lots || [];
+      return links.length > 0 && links.every((sl) => _linkIsDraft(sl));
+    })
     .reduce((s, p) => s + Number(p.kg_dried || 0), 0);
 }
 
@@ -80,20 +105,25 @@ function sumAllocatedGreen(rows) {
  * @param {object} p
  * @param {number|null} p.kgDriedOutput
  * @param {number} [p.blendedKg=0]
- * @param {number} [p.shippedPartialsKg=0]
- * @param {number} [p.shippedWholeKg=0]
+ * @param {number} [p.shippedPartialsKg=0]  despachos CONFIRMADOS vía parciales
+ * @param {number} [p.shippedWholeKg=0]     despachos CONFIRMADOS whole/by-kg
+ * @param {number} [p.heldKg=0]             apartado en borradores (preparación)
  */
-function driedLedger({ kgDriedOutput, blendedKg = 0, shippedPartialsKg = 0, shippedWholeKg = 0 }) {
+function driedLedger({ kgDriedOutput, blendedKg = 0, shippedPartialsKg = 0, shippedWholeKg = 0, heldKg = 0 }) {
   const total = Number(kgDriedOutput || 0);
   const blended = Number(blendedKg || 0);
   const shipped = Number(shippedPartialsKg || 0) + Number(shippedWholeKg || 0);
+  const held = Number(heldKg || 0);
   const out = blended + shipped;
   return {
     total,
     blended,
     shipped,
+    held,
     out,
-    available: Math.max(0, total - out),
+    // El apartado de borradores reduce el disponible para planear otro
+    // despacho, pero NO cuenta como salida física (out).
+    available: Math.max(0, total - out - held),
   };
 }
 
@@ -135,6 +165,7 @@ module.exports = {
   sumBlendedKg,
   sumShippedFromLinks,
   sumShippedFromPartials,
+  sumHeldFromPartials,
   sumAllocatedGreen,
   driedLedger,
   greenLedger,

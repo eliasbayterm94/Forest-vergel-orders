@@ -18,6 +18,7 @@ exports.handler = requireAuth(async (event) => {
     .from('shipments')
     .select(`
       id, shipment_code, shipment_date, notes, created_by, created_at,
+      status, confirmed_at,
       destino_kind, destino_other,
       driver_cedula, driver_placas, driver_name,
       shipment_lots (
@@ -126,9 +127,13 @@ exports.handler = requireAuth(async (event) => {
           // Merma/ganancia de humedad si la línea cerró el bache con
           // peso real de báscula (>0 merma, <0 ganancia).
           kg_dried_merma: null,
+          // Ids de shipment_lots que componen este grupo (para editar
+          // la logística de un borrador línea por línea).
+          shipment_lot_ids: [],
         };
         groups.set(gKey, g);
       }
+      g.shipment_lot_ids.push(sl.id);
       if (sl.lot_partial_id && sl.lot_partials) {
         g.partials_in_shipment.push({
           id: sl.lot_partials.id,
@@ -229,6 +234,8 @@ exports.handler = requireAuth(async (event) => {
       id: s.id,
       shipment_code: s.shipment_code,
       shipment_date: s.shipment_date,
+      status: s.status || 'confirmed',
+      confirmed_at: s.confirmed_at,
       notes: s.notes,
       created_by: s.created_by,
       created_at: s.created_at,

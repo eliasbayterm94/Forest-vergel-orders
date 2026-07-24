@@ -309,6 +309,154 @@ export function generateShipmentPdf(shipment) {
   doc.save(`remision-${shipment.shipment_code || 'despacho'}.pdf`);
 }
 
+// ── PDF de PREPARACIÓN (borrador para bodega) ──────────────────
+// Hoja de alistamiento marcada BORRADOR. Muestra lo esencial para
+// que bodega prepare el despacho: bache, referencia, variedad,
+// proceso y kg a alistar (+ empaque si ya se sabe). SIN códigos de
+// trilladora ni firmas oficiales — no es una remisión.
+export function generateShipmentPrepPdf(shipment) {
+  const jsPDF = ensureLib();
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const M = 40;
+
+  // ── Header band (naranja borrador, no navy) ──
+  const DRAFT = [176, 98, 22];   // ámbar/naranja para diferenciar
+  doc.setFillColor(...DRAFT);
+  doc.rect(0, 0, W, 70, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FOREST · EL VERGEL', M, 30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(255, 236, 200);
+  doc.text('BORRADOR · PREPARACIÓN DE BODEGA', M, 46);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('No es remisión oficial · para alistar el despacho', M, 58);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(255, 255, 255);
+  doc.text(shipment.shipment_code || 'BORRADOR', W - M, 30, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Fecha: ${fmtDate(shipment.shipment_date)}`, W - M, 48, { align: 'right' });
+
+  let y = 86;
+  const destLabel = shipment.destino_kind === 'Otro'
+    ? (shipment.destino_other || 'Otro') : (shipment.destino_kind || '— (por definir) —');
+  doc.setFillColor(...CREAM);
+  doc.roundedRect(M, y, W - M * 2, 30, 5, 5, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...INK_500);
+  doc.text('DESTINO', M + 10, y + 12);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...NAVY);
+  doc.text(destLabel, M + 10, y + 25);
+  y += 44;
+
+  // Filas: una por bache/parcial con kg a alistar.
+  const rows = [];
+  let totalSeco = 0, totalSacos = 0, totalLonas = 0;
+  const empaqueLabel = (e) => e === 'grainpro' ? 'Grain Pro' : e === 'bolsa' ? 'Bolsa plást.' : '—';
+  const pushRow = (label, src, kg, variedad, proceso) => {
+    totalSeco += Number(kg || 0);
+    totalSacos += Number(src.num_sacos || 0);
+    totalLonas += Number(src.num_lonas || 0);
+    const empaque = [
+      Number(src.num_sacos || 0) ? `${src.num_sacos} sacos` : null,
+      Number(src.num_lonas || 0) ? `${src.num_lonas} lonas` : null,
+      src.empaque_interior ? empaqueLabel(src.empaque_interior) : null,
+    ].filter(Boolean).join(' · ') || '—';
+    rows.push([
+      label, variedad || '—', proceso || '—',
+      { content: fmtKg(kg), styles: { halign: 'right' } },
+      empaque, src.observaciones || '',
+    ]);
+  };
+  for (const lot of shipment.lots || []) {
+    const variedad = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
+    let baseLabel = lot.is_blend
+      ? `[MZ] ${lot.blend_code || lot.bache_code || lot.lot_code || '—'}`
+      : (lot.bache_code || lot.lot_code || '—');
+    if (lot.split_label) baseLabel = `${baseLabel}-${lot.split_label}`;
+    const partialsHere = lot.partials_in_shipment || [];
+    if (lot.whole_lot_in_shipment || partialsHere.length === 0) {
+      pushRow(baseLabel, lot, Number(lot.kg_dried_shipped ?? lot.kg_dried_output ?? 0),
+        variedad, lot.process_type);
+    } else if (lot.partials_merged !== false) {
+      const kg = partialsHere.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+      pushRow(`${baseLabel} · ${partialsHere.map((p) => p.parcial_letter).join('+')}`,
+        lot, kg, variedad, lot.process_type);
+    } else {
+      for (const p of partialsHere) {
+        pushRow(`${baseLabel}-${p.parcial_letter}`, p, Number(p.kg_dried || 0), variedad, lot.process_type);
+      }
+    }
+  }
+  const dataRowCount = rows.length;
+  rows.push([
+    { content: `TOTAL · ${dataRowCount} línea(s) a alistar`, colSpan: 3, styles: { fontStyle: 'bold', fillColor: CREAM } },
+    { content: fmtKg(totalSeco), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
+    { content: `${totalSacos} sacos · ${totalLonas} lonas`, styles: { fontStyle: 'bold', fillColor: CREAM, fontSize: 8 } },
+    { content: '', styles: { fillColor: CREAM } },
+  ]);
+
+  doc.autoTable({
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Bache', 'Variedad', 'Proceso', 'kg a alistar', 'Empaque', 'Observaciones']],
+    body: rows,
+    styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
+    headStyles: { fillColor: DRAFT, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: [251, 251, 248] },
+    columnStyles: {
+      0: { cellWidth: 90, fontStyle: 'bold' },
+      1: { cellWidth: 100 }, 2: { cellWidth: 60 },
+      3: { cellWidth: 66, halign: 'right' },
+      4: { cellWidth: 110 },
+    },
+  });
+  y = doc.lastAutoTable.finalY + 20;
+
+  // Marca de agua diagonal BORRADOR.
+  doc.saveGraphicsState();
+  doc.setGState(new doc.GState({ opacity: 0.08 }));
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(90);
+  doc.setTextColor(...DRAFT);
+  doc.text('BORRADOR', W / 2, H / 2, { align: 'center', angle: 30 });
+  doc.restoreGraphicsState();
+
+  // Checkbox de preparado + firma de bodega.
+  if (y > H - 90) { doc.addPage(); y = 40; }
+  doc.setDrawColor(...INK_300);
+  doc.setLineWidth(0.8);
+  doc.rect(M, y, 12, 12);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...INK_700);
+  doc.text('Despacho preparado y verificado por bodega', M + 20, y + 10);
+  y += 40;
+  doc.setDrawColor(...SAND);
+  doc.line(M, y, M + 220, y);
+  doc.setFontSize(8);
+  doc.setTextColor(...INK_500);
+  doc.text('Preparó (bodega)', M, y + 12);
+
+  doc.setFontSize(7);
+  doc.text(
+    `Preparación (borrador) · Generado: ${new Date().toLocaleString('es-CO')}  ·  Forest Production Bridge`,
+    W / 2, H - 20, { align: 'center' },
+  );
+
+  doc.save(`preparacion-${shipment.shipment_code || 'borrador'}.pdf`);
+}
+
 // ── PDF de asignaciones (documento interno de Forest) ──────────
 // Mismo header que la remisión pero con sello "ASIGNACIONES — USO
 // INTERNO" para no confundirse. Por cada bache lista las

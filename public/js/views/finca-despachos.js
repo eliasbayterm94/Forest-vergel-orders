@@ -7,7 +7,7 @@ import { fmtKg, fmtDate, statusLabel } from '../ui/format.js';
 import { api } from '../api.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { currentQuery, navigate } from '../router.js';
-import { generateShipmentPdf, generateShipmentAssignmentsPdf } from '../ui/pdf.js';
+import { generateShipmentPdf, generateShipmentAssignmentsPdf, generateShipmentPrepPdf } from '../ui/pdf.js';
 import { emptyStateCard } from '../ui/empty.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { openAssignModal } from './_assign-modal.js';
@@ -173,6 +173,7 @@ export async function fincaDespachosView() {
           el('td', { class: 'w-8 text-center' }, [expandBtn]),
           el('td', { class: 'font-mono text-navy font-semibold' }, [
             el('span', { class: 'ctrm-code', text: s.shipment_code || '—' }),
+            s.status === 'draft' ? draftChip() : null,
           ]),
           el('td', { class: 'font-mono text-[12px]', text: fmtDate(s.shipment_date) }),
           el('td', { class: 'text-[12px]', text: destinoLabel }),
@@ -182,23 +183,7 @@ export async function fincaDespachosView() {
           el('td', { class: 'text-right font-mono text-[12px]', text: String(t.num_sacos || '—') }),
           el('td', { class: 'text-right font-mono text-[12px]', text: String(t.num_lonas || '—') }),
           el('td', { class: 'whitespace-nowrap text-right' }, [
-            el('div', { class: 'inline-flex items-center gap-1' }, [
-              el('button', {
-                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
-                title: 'Remisión para la trilladora',
-                onClick: (e) => { e.stopPropagation(); downloadPdf(s); },
-              }, ['↓ Remisión']),
-              el('button', {
-                class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
-                title: 'Documento interno · asignaciones',
-                onClick: (e) => { e.stopPropagation(); downloadAssignmentsPdf(s); },
-              }, ['↓ Asign.']),
-              el('button', {
-                class: 'ctrm-btn ctrm-btn-danger ctrm-btn-xs',
-                title: 'Cancelar despacho completo',
-                onClick: (e) => { e.stopPropagation(); cancelShipment(s); },
-              }, ['× Cancelar']),
-            ]),
+            el('div', { class: 'inline-flex items-center gap-1' }, shipmentActions(s, 'xs')),
           ]),
         ]));
 
@@ -516,30 +501,21 @@ export async function fincaDespachosView() {
       ? `Otro${s.destino_other ? ': ' + s.destino_other : ''}`
       : (s.destino_kind || '—');
 
-    return el('div', { class: 'ctrm-card ctrm-card-pad space-y-3', 'data-shipment-id': s.id }, [
+    const isDraft = s.status === 'draft';
+    return el('div', {
+      class: `ctrm-card ctrm-card-pad space-y-3 ${isDraft ? 'border-l-4' : ''}`,
+      style: isDraft ? 'border-left-color:#b06216;' : '',
+      'data-shipment-id': s.id,
+    }, [
       el('div', { class: 'flex flex-wrap items-center justify-between gap-2' }, [
         el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
           el('span', { class: 'ctrm-code', text: s.shipment_code }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px]', text: fmtDate(s.shipment_date) }),
-          el('span', { class: 'ctrm-pill ok', text: 'Despachado' }),
+          isDraft
+            ? el('span', { class: 'ctrm-pill', style: 'background:#f3e3cf;color:#8a5216;', text: '📋 Borrador' })
+            : el('span', { class: 'ctrm-pill ok', text: 'Despachado' }),
         ]),
-        el('div', { class: 'flex items-center gap-2' }, [
-          el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
-            title: 'Remisión para la trilladora · solo data del envío',
-            onClick: () => downloadPdf(s),
-          }, ['↓ Remisión']),
-          el('button', {
-            class: 'ctrm-btn ctrm-btn-soft ctrm-btn-sm',
-            title: 'Documento interno · asignaciones por bache a pedidos',
-            onClick: () => downloadAssignmentsPdf(s),
-          }, ['↓ Asignaciones']),
-          el('button', {
-            class: 'ctrm-btn ctrm-btn-danger ctrm-btn-sm',
-            title: 'Cancelar despacho · revierte lotes y pedidos',
-            onClick: () => cancelShipment(s),
-          }, ['× Cancelar']),
-        ]),
+        el('div', { class: 'flex items-center gap-2 flex-wrap' }, shipmentActions(s, 'sm')),
       ]),
       // Meta strip alineado con las columnas de la vista Tabla:
       // Destino · Lotes · kg seco · kg verde esp. · Sacos · Lonas · Empaque
@@ -738,6 +714,230 @@ export async function fincaDespachosView() {
   function downloadAssignmentsPdf(shipment) {
     try {
       generateShipmentAssignmentsPdf(shipment);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  function downloadPrepPdf(shipment) {
+    try {
+      generateShipmentPrepPdf(shipment);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  function draftChip() {
+    return el('span', {
+      class: 'ctrm-pill ml-1 text-[9px]',
+      style: 'background:#f3e3cf;color:#8a5216;', text: '📋 Borrador',
+    });
+  }
+
+  // Acciones de una fila/card de despacho, según sea borrador o
+  // definitivo. size: 'xs' (tabla) | 'sm' (card).
+  function shipmentActions(s, size) {
+    const cls = `ctrm-btn ctrm-btn-${size}`;
+    const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+    if (s.status === 'draft') {
+      return [
+        el('button', { class: `${cls} ctrm-btn-soft`, title: 'Hoja de preparación para bodega (borrador)',
+          onClick: stop(() => downloadPrepPdf(s)) }, ['↓ Preparación']),
+        el('button', { class: `${cls} ctrm-btn-action`, title: 'Completar la info y confirmar como despacho definitivo',
+          onClick: stop(() => completeDraftModal(s)) }, ['✓ Completar / Confirmar']),
+        el('button', { class: `${cls} ctrm-btn-danger`, title: 'Descartar borrador · libera el inventario apartado',
+          onClick: stop(() => discardDraft(s)) }, ['× Descartar']),
+      ];
+    }
+    return [
+      el('button', { class: `${cls} ctrm-btn-soft`, title: 'Remisión para la trilladora',
+        onClick: stop(() => downloadPdf(s)) }, ['↓ Remisión']),
+      el('button', { class: `${cls} ctrm-btn-soft`, title: 'Documento interno · asignaciones',
+        onClick: stop(() => downloadAssignmentsPdf(s)) }, [size === 'xs' ? '↓ Asign.' : '↓ Asignaciones']),
+      el('button', { class: `${cls} ctrm-btn-danger`, title: 'Cancelar despacho completo',
+        onClick: stop(() => cancelShipment(s)) }, ['× Cancelar']),
+    ];
+  }
+
+  // Modal para completar la logística de un borrador y (opcional)
+  // confirmarlo. NO cambia baches/kg — solo destino, conductor y los
+  // datos de empaque por bache que suelen ir incompletos.
+  function completeDraftModal(shipment) {
+    return openModal(({ close }) => {
+      const header = {
+        shipment_date: shipment.shipment_date,
+        destino_kind: shipment.destino_kind || '',
+        destino_other: shipment.destino_other || '',
+        driver_cedula: shipment.driver_cedula || '',
+        driver_name: shipment.driver_name || '',
+        driver_placas: shipment.driver_placas || '',
+        notes: shipment.notes || '',
+      };
+      // Estado editable por bache (grupo).
+      const groupState = (shipment.lots || []).map((g) => ({
+        ids: g.shipment_lot_ids || [],
+        code: (g.bache_code || g.blend_code || g.lot_code || '—') + (g.split_label ? `-${g.split_label}` : ''),
+        ref: g.reference_name || '—',
+        codigo_trilladora: g.codigo_trilladora || '',
+        codigo_mezcla: g.codigo_mezcla || '',
+        num_sacos: g.num_sacos ?? '',
+        num_lonas: g.num_lonas ?? '',
+        empaque_interior: g.empaque_interior || '',
+        color_cinta: g.color_cinta || '',
+        observaciones: g.observaciones || '',
+      }));
+
+      const dateIn = el('input', { type: 'date', class: 'ctrm-input', value: header.shipment_date });
+      const destinoSel = el('select', { class: 'ctrm-input' }, [
+        el('option', { value: '' }, ['— Sin especificar —']),
+        ...['Vertical', 'Tribox', 'Trillanova', 'Otro'].map((d) =>
+          el('option', { value: d, selected: header.destino_kind === d }, [d])),
+      ]);
+      const destinoOther = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'Especificar destino', value: header.destino_other });
+      destinoOther.style.display = header.destino_kind === 'Otro' ? '' : 'none';
+      destinoSel.addEventListener('change', () => { destinoOther.style.display = destinoSel.value === 'Otro' ? '' : 'none'; });
+      const ccIn = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'CC conductor', value: header.driver_cedula });
+      const nameIn = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'Nombre conductor', value: header.driver_name });
+      const placasIn = el('input', { type: 'text', class: 'ctrm-input mono', placeholder: 'Placas', value: header.driver_placas });
+      const notesIn = el('textarea', { rows: '2', class: 'ctrm-textarea', value: header.notes });
+
+      const numIn = (st, field) => {
+        const inp = el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*',
+          class: 'ctrm-input mono text-[11px] text-right w-16', value: st[field] === '' ? '' : String(st[field]) });
+        inp.addEventListener('input', () => {
+          const c = (inp.value || '').replace(/[^0-9]/g, '');
+          if (c !== inp.value) inp.value = c;
+          st[field] = c === '' ? '' : Number(c);
+        });
+        return inp;
+      };
+      const rows = groupState.map((st) => {
+        const codT = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-24', placeholder: 'PP-XXXX', value: st.codigo_trilladora });
+        codT.addEventListener('input', () => { st.codigo_trilladora = codT.value; });
+        const codM = el('input', { type: 'text', class: 'ctrm-input mono text-[11px] w-20', placeholder: '—', value: st.codigo_mezcla });
+        codM.addEventListener('input', () => { st.codigo_mezcla = codM.value; });
+        const empSel = el('select', { class: 'ctrm-input text-[10px] w-24' }, [
+          el('option', { value: '', selected: !st.empaque_interior }, ['Ninguno']),
+          el('option', { value: 'grainpro', selected: st.empaque_interior === 'grainpro' }, ['Grain Pro']),
+          el('option', { value: 'bolsa', selected: st.empaque_interior === 'bolsa' }, ['Bolsa plást.']),
+        ]);
+        empSel.addEventListener('change', () => { st.empaque_interior = empSel.value; });
+        const colorIn = el('input', { type: 'color', value: st.color_cinta || '#ffffff',
+          class: 'cursor-pointer', style: 'width:26px;height:22px;border:1px solid #d8d8d0;border-radius:4px;padding:0;background:none;' });
+        colorIn.addEventListener('input', () => { st.color_cinta = colorIn.value; });
+        const colorClear = el('button', { type: 'button', class: 'text-ink-300 text-[12px]',
+          style: 'background:none;border:none;padding:0 2px;cursor:pointer;', title: 'Quitar color',
+          onClick: () => { st.color_cinta = ''; colorIn.value = '#ffffff'; } }, ['×']);
+        const obsIn = el('input', { type: 'text', class: 'ctrm-input text-[11px] w-32', maxlength: '200', placeholder: 'Observaciones', value: st.observaciones });
+        obsIn.addEventListener('input', () => { st.observaciones = obsIn.value; });
+        return el('tr', { class: 'border-b border-sand' }, [
+          el('td', { class: 'px-2 py-1.5 font-mono font-semibold text-navy text-[11px]' }, [st.code]),
+          el('td', { class: 'px-2 py-1.5 text-[11px] text-ink-500' }, [st.ref]),
+          el('td', { class: 'px-2 py-1.5' }, [codT]),
+          el('td', { class: 'px-2 py-1.5' }, [codM]),
+          el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_sacos')]),
+          el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_lonas')]),
+          el('td', { class: 'px-2 py-1.5' }, [empSel]),
+          el('td', { class: 'px-2 py-1.5' }, [el('div', { class: 'flex items-center gap-0.5' }, [colorIn, colorClear])]),
+          el('td', { class: 'px-2 py-1.5' }, [obsIn]),
+        ]);
+      });
+
+      function buildPatch() {
+        const lines = [];
+        for (const st of groupState) {
+          const vals = {
+            codigo_trilladora: st.codigo_trilladora.trim() || null,
+            codigo_mezcla: st.codigo_mezcla.trim() || null,
+            num_sacos: st.num_sacos === '' ? null : Number(st.num_sacos),
+            num_lonas: st.num_lonas === '' ? null : Number(st.num_lonas),
+            empaque_interior: st.empaque_interior || null,
+            color_cinta: st.color_cinta || null,
+            observaciones: st.observaciones.trim() || null,
+          };
+          for (const id of st.ids) lines.push({ id, ...vals });
+        }
+        return {
+          header: {
+            shipment_date: dateIn.value,
+            destino_kind: destinoSel.value || null,
+            destino_other: destinoSel.value === 'Otro' ? destinoOther.value.trim() : null,
+            driver_cedula: ccIn.value.trim() || null,
+            driver_name: nameIn.value.trim() || null,
+            driver_placas: placasIn.value.trim() || null,
+            notes: notesIn.value.trim() || null,
+          },
+          lines,
+        };
+      }
+
+      const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-soft', type: 'button' }, ['Guardar borrador']);
+      const confirmBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['✓ Confirmar despacho']);
+      saveBtn.addEventListener('click', async () => {
+        if (saveBtn.disabled) return;
+        saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
+        try {
+          await api.shipmentsUpdate({ shipment_id: shipment.id, ...buildPatch() });
+          toast(`Borrador ${shipment.shipment_code} actualizado`, 'success');
+          close({ ok: true }); await reload();
+        } catch (e) { toast(e.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Guardar borrador'; }
+      });
+      confirmBtn.addEventListener('click', async () => {
+        if (confirmBtn.disabled) return;
+        if (destinoSel.value === 'Otro' && !destinoOther.value.trim()) { toast('Especifica el destino "Otro"', 'warning'); return; }
+        const ok = await confirmModal(
+          `Confirmar ${shipment.shipment_code} como despacho definitivo. Los baches pasan a Despachado ` +
+          `y los pedidos asignados podrán completarse. ¿Continuar?`,
+          { title: 'Confirmar despacho' });
+        if (!ok) return;
+        confirmBtn.disabled = true; confirmBtn.textContent = 'Confirmando…';
+        try {
+          const r = await api.shipmentsConfirm({ shipment_id: shipment.id, ...buildPatch() });
+          const compl = (r.completions || []).length;
+          toast(`Despacho ${shipment.shipment_code} confirmado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`, 'success', 4500);
+          close({ ok: true }); await reload();
+        } catch (e) {
+          toast(e.message, 'error'); confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirmar despacho';
+        }
+      });
+
+      return el('div', { class: 'space-y-3' }, [
+        el('p', { class: 'text-[12px] text-ink-500', text: 'Completa la logística que faltaba. Los baches y kg no cambian; para eso descarta y crea de nuevo.' }),
+        el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
+          labelled('Fecha', dateIn),
+          labelled('Destino', destinoSel),
+        ]),
+        destinoSel.value === 'Otro' ? labelled('Especificar destino', destinoOther) : destinoOther,
+        el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, [
+          labelled('Conductor — CC', ccIn),
+          labelled('Conductor — Nombre', nameIn),
+          labelled('Placas', placasIn),
+        ]),
+        labelled('Notas', notesIn),
+        el('div', { class: 'overflow-x-auto border border-sand rounded-md' }, [
+          el('table', { class: 'w-full text-[12px]' }, [
+            el('thead', {}, [el('tr', { class: 'bg-navy text-yellow' },
+              ['Bache', 'Ref', 'Cód. Trilladora', 'Cód. Mezcla', 'Sacos', 'Lonas', 'Empaque', 'Color', 'Observaciones']
+                .map((h) => el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, [h])))]),
+            el('tbody', {}, rows),
+          ]),
+        ]),
+        el('div', { class: 'flex flex-wrap justify-end gap-2 pt-3 border-t border-sand' }, [
+          el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cerrar']),
+          saveBtn, confirmBtn,
+        ]),
+      ]);
+    }, { title: `Completar borrador · ${shipment.shipment_code}`, size: 'xl' });
+  }
+
+  async function discardDraft(shipment) {
+    const ok = await confirmModal(
+      `¿Descartar el borrador ${shipment.shipment_code}? Se libera el inventario apartado ` +
+      `(${fmtKg(shipment.totals?.kg_dried ?? 0)} kg) y no queda registro de despacho.`,
+      { title: 'Descartar borrador', confirmText: 'Descartar', danger: true },
+    );
+    if (!ok) return;
+    try {
+      // shipments-cancel borra las líneas; como el borrador nunca marcó
+      // baches Delivered, no hay nada que revertir.
+      await api.shipmentsCancel({ shipment_id: shipment.id });
+      toast(`Borrador ${shipment.shipment_code} descartado · inventario liberado`, 'success', 4500);
+      await reload();
     } catch (e) { toast(e.message, 'error'); }
   }
 
@@ -1457,16 +1657,19 @@ export async function fincaDespachosView() {
       // Tabla
       tableEl,
       counter,
-      el('div', { class: 'flex justify-end gap-2 pt-3 border-t border-sand' }, [
+      el('div', { class: 'flex flex-wrap justify-end gap-2 pt-3 border-t border-sand' }, [
         el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cancelar']),
         (() => {
+          const draftBtn = el('button', {
+            class: 'ctrm-btn ctrm-btn-soft', type: 'button',
+            title: 'Guarda un borrador de preparación para bodega. Aparta el inventario pero no despacha ni completa pedidos.',
+          }, ['📋 Guardar borrador']);
           const submitBtn = el('button', {
             class: 'ctrm-btn ctrm-btn-primary', type: 'button',
           }, ['Generar despacho']);
-          submitBtn.addEventListener('click', async () => {
-            if (submitBtn.disabled) return;
-            // Validar divisiones: cada línea con kg > 0 y la suma
-            // dentro del disponible del bache.
+
+          // Validación de divisiones común a ambos modos.
+          function validateSplits() {
             for (const lid of selectedLots) {
               const l = readyLotsById.get(lid);
               const lf = lotFields.get(lid);
@@ -1474,79 +1677,90 @@ export async function fincaDespachosView() {
               const code = l.bache_code || l.blend_code || l.lot_code;
               const kgs = lf.splits.map((sf) => Number(sf.kg_dried_to_ship || 0));
               if (kgs.some((k) => !(k > 0))) {
-                toast(`División de ${code}: cada línea necesita kg > 0`, 'warning'); return;
+                toast(`División de ${code}: cada línea necesita kg > 0`, 'warning'); return false;
               }
               const avail = Number(l.kg_dried_available != null ? l.kg_dried_available : (l.kg_dried_output || 0));
               const sum = kgs.reduce((a, b) => a + b, 0);
               if (sum > avail + 0.01) {
-                toast(`División de ${code}: la suma (${fmtKg(sum)} kg) supera los ${fmtKg(avail)} kg disponibles`, 'warning'); return;
+                toast(`División de ${code}: la suma (${fmtKg(sum)} kg) supera los ${fmtKg(avail)} kg disponibles`, 'warning'); return false;
               }
             }
+            return true;
+          }
+          function basePayload(items) {
+            return {
+              shipment_code: codeInput.value.trim() || undefined,
+              shipment_date: dateInput.value,
+              notes: notesInput.value || undefined,
+              destino_kind: destinoSelect.value || undefined,
+              destino_other: destinoSelect.value === 'Otro' ? destinoOtherInput.value.trim() : undefined,
+              driver_cedula: driverCedula.value.trim() || undefined,
+              driver_placas: driverPlacas.value.trim() || undefined,
+              driver_name:   driverName.value.trim()   || undefined,
+              items,
+            };
+          }
+
+          // mode: 'confirm' (despacho real) | 'draft' (borrador)
+          async function submit(mode) {
+            const btn = mode === 'draft' ? draftBtn : submitBtn;
+            const label = mode === 'draft' ? '📋 Guardar borrador' : 'Generar despacho';
+            if (btn.disabled) return;
+            if (!validateSplits()) return;
             const items = buildItems(readyLots, selectedLots, partialIds, lotFields, partialFields);
             if (items.length === 0) { toast('Selecciona al menos un bache', 'warning'); return; }
-            if (destinoSelect.value === 'Otro' && !destinoOtherInput.value.trim()) {
+            // El destino "Otro" sin especificar solo bloquea el despacho
+            // definitivo; un borrador puede ir sin destino aún.
+            if (mode === 'confirm' && destinoSelect.value === 'Otro' && !destinoOtherInput.value.trim()) {
               toast('Especifica el destino "Otro"', 'warning'); return;
             }
-            const partialCount = items.reduce((s, it) => s + (it.partial_ids ? it.partial_ids.length : 0), 0);
-            const wholeCount   = items.filter((it) => !it.partial_ids).length;
-            const summary = [
-              wholeCount   > 0 ? `${wholeCount} lote(s) completos` : null,
-              partialCount > 0 ? `${partialCount} parcial(es)`     : null,
-            ].filter(Boolean).join(' + ');
-            const ok = await confirmModal(
-              `Despacho con ${summary}. Los pedidos asignados podrán completarse. ¿Continuar?`,
-              { title: 'Confirmar despacho' },
-            );
-            if (!ok) return;
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Generando…';
+            if (mode === 'confirm') {
+              const partialCount = items.reduce((s, it) => s + (it.partial_ids ? it.partial_ids.length : 0), 0);
+              const wholeCount   = items.filter((it) => !it.partial_ids).length;
+              const summary = [
+                wholeCount   > 0 ? `${wholeCount} lote(s) completos` : null,
+                partialCount > 0 ? `${partialCount} parcial(es)`     : null,
+              ].filter(Boolean).join(' + ');
+              const ok = await confirmModal(
+                `Despacho con ${summary}. Los pedidos asignados podrán completarse. ¿Continuar?`,
+                { title: 'Confirmar despacho' },
+              );
+              if (!ok) return;
+            }
+            btn.disabled = true;
+            btn.textContent = mode === 'draft' ? 'Guardando…' : 'Generando…';
             try {
-              const payload = {
-                shipment_code: codeInput.value.trim() || undefined,
-                shipment_date: dateInput.value,
-                notes: notesInput.value || undefined,
-                destino_kind: destinoSelect.value || undefined,
-                destino_other: destinoSelect.value === 'Otro' ? destinoOtherInput.value.trim() : undefined,
-                driver_cedula: driverCedula.value.trim() || undefined,
-                driver_placas: driverPlacas.value.trim() || undefined,
-                driver_name:   driverName.value.trim()   || undefined,
-                items,
-              };
+              const payload = { ...basePayload(items), draft: mode === 'draft' };
               let r;
               try {
                 r = await api.shipmentsCreate(payload);
               } catch (e) {
-                // Peso de báscula difiere >3% del registrado: el
-                // servidor pide confirmación explícita.
                 if (e && e.code === 'PESO_REAL_CONFIRM_REQUIRED') {
                   const okReal = await confirmModal(
                     `${e.message}\n\nSi el peso de báscula es correcto, el bache cierra con esa diferencia registrada como merma/ganancia de humedad.`,
                     { title: 'Peso báscula difiere del registrado' },
                   );
-                  if (!okReal) {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Generar despacho';
-                    return;
-                  }
+                  if (!okReal) { btn.disabled = false; btn.textContent = label; return; }
                   r = await api.shipmentsCreate({ ...payload, override_peso_real: true });
-                } else {
-                  throw e;
-                }
+                } else { throw e; }
               }
-              const compl = (r.completions || []).length;
-              toast(
-                `Despacho ${r.shipment.shipment_code} creado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`,
-                'success', 4500,
-              );
+              if (mode === 'draft') {
+                toast(`Borrador ${r.shipment.shipment_code} guardado · inventario apartado`, 'success', 4500);
+              } else {
+                const compl = (r.completions || []).length;
+                toast(`Despacho ${r.shipment.shipment_code} creado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`, 'success', 4500);
+              }
               close({ ok: true });
               await reload();
             } catch (e) {
               toast(e.message, 'error');
-              submitBtn.disabled = false;
-              submitBtn.textContent = 'Generar despacho';
+              btn.disabled = false;
+              btn.textContent = label;
             }
-          });
-          return submitBtn;
+          }
+          draftBtn.addEventListener('click', () => submit('draft'));
+          submitBtn.addEventListener('click', () => submit('confirm'));
+          return el('div', { class: 'flex gap-2' }, [draftBtn, submitBtn]);
         })(),
       ]),
     ]);

@@ -321,6 +321,56 @@ test('división: una sola línea con split=true recibe P1', async () => {
   assert.equal(fake._db.shipment_lots[0].split_label, 'P1');
 });
 
+// ── Borrador (draft) ─────────────────────────────────────────────
+
+test('borrador: guarda la línea pero NO despacha ni cierra el bache', async () => {
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    items: [{ production_lot_id: LOT, partial_ids: null }],
+    draft: true,
+  }), {}));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.draft, true);
+  assert.equal(r.body.completions.length, 0);
+  assert.equal(fake._db.shipments[0].status, 'draft');
+  assert.equal(fake._db.shipments[0].confirmed_at, null);
+  // El bache sigue Ready (no Delivered)
+  assert.equal(fake._db.production_lots[0].status, 'Ready');
+  assert.equal(fake._db.shipment_lots[0].kg_dried_shipped, 350);
+});
+
+test('borrador aparta inventario: otro despacho no puede tomar lo apartado', async () => {
+  // Ya hay un BORRADOR que apartó 350 (todo el bache). Un nuevo
+  // despacho por 100 debe rebotar: disponible 0.
+  setFake(fixture({
+    shipment_lots: [{
+      production_lot_id: LOT, lot_partial_id: null, kg_dried_shipped: 350,
+      shipments: { status: 'draft' },
+    }],
+  }));
+  const r = parseRes(await handler(postEvent({
+    items: [{ production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 100 }],
+  }), {}));
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'EXCEEDS_AVAILABLE');
+});
+
+test('borrador parcial aparta solo lo suyo; queda saldo para otro', async () => {
+  // Borrador apartó 200; disponible 150. Un despacho por 150 pasa.
+  const fake = fixture({
+    shipment_lots: [{
+      production_lot_id: LOT, lot_partial_id: null, kg_dried_shipped: 200,
+      shipments: { status: 'draft' },
+    }],
+  });
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    items: [{ production_lot_id: LOT, partial_ids: null, kg_dried_to_ship: 150 }],
+  }), {}));
+  assert.equal(r.status, 200);
+});
+
 test('kg consumido en mezclas también descuenta del disponible', async () => {
   // 350 total − 300 en mezcla = 50 disponibles. Pedir 100 rebota.
   setFake(fixture({

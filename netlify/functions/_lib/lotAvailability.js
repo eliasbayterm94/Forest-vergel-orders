@@ -33,16 +33,22 @@ async function computeGreenAvailability(sb, lotId) {
       sb.from('lot_order_assignments').select('kg_green_allocated').eq('production_lot_id', lotId),
       sb.from('lot_purchases').select('kg_green_allocated').eq('production_lot_id', lotId),
       sb.from('lot_blend_components').select('kg_dried_used').eq('source_lot_id', lotId),
-      sb.from('shipment_lots').select('kg_dried_shipped, kg_dried_merma, lot_partial_id, lot_partials(kg_dried)')
+      sb.from('shipment_lots').select('kg_dried_shipped, kg_dried_merma, lot_partial_id, lot_partials(kg_dried), shipments(status)')
         .eq('production_lot_id', lotId),
     ]);
+
+  // Solo los despachos CONFIRMADOS reducen el verde disponible para
+  // asignar. Los borradores apartan el seco físico pero no consumen
+  // asignaciones (no completan ni reservan pedidos).
+  const confirmedLinks = (shipLinks || []).filter(
+    (x) => !(x.shipments && x.shipments.status === 'draft'));
 
   const dl = driedLedger({
     kgDriedOutput: lot.kg_dried_output,
     blendedKg: sumBlendedKg(blendUse),
     // Todos los links (whole y por parcial) vienen en shipLinks; el
     // sumador resuelve kg_dried_shipped ?? kg del parcial embebido.
-    shippedWholeKg: sumShippedFromLinks(shipLinks),
+    shippedWholeKg: sumShippedFromLinks(confirmedLinks),
   });
   const gl = greenLedger({
     kgGreenActual: lot.kg_green_actual,

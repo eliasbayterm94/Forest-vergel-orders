@@ -61,7 +61,10 @@ export async function fincaPuntoFinalView() {
   // por estar enteros en mezclas y/o despachados). Se cuentan aparte
   // para mostrar un aviso.
   const enriched = enrichedAll.filter((l) =>
-    l.kg_dried_available == null || Number(l.kg_dried_available) > 0.01);
+    l.kg_dried_available == null || Number(l.kg_dried_available) > 0.01
+    // Mantener visibles los baches cuyo saldo está apartado en un
+    // borrador de despacho (en preparación), aunque disponible = 0.
+    || Number(l.kg_dried_held || 0) > 0.01);
   const hiddenConsumed = enrichedAll.length - enriched.length;
 
   // ── Orden por columna (toggle asc/desc al clickear el header) ──
@@ -496,11 +499,16 @@ export async function fincaPuntoFinalView() {
           (() => {
             const dispo = Number(l.kg_dried_available != null ? l.kg_dried_available : l.kg_dried_output || 0);
             const inMix = Number(l.kg_dried_used_in_blends || 0);
+            const held  = Number(l.kg_dried_held || 0);
             return el('div', {}, [
               el('div', {
                 class: `font-semibold ${dispo > 0.01 ? 'text-navy' : 'text-ink-300'}`,
                 text: fmtKg(dispo),
               }),
+              held > 0.01
+                ? el('div', { class: 'text-[9px]', style: 'color:#8a5216;',
+                    text: `${fmtKg(held)} en preparación` })
+                : null,
               inMix > 0.01
                 ? el('div', { class: 'text-[9px] text-ok',
                     text: `${fmtKg(inMix)} en mezcla` })

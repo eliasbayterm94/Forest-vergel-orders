@@ -2,12 +2,12 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
-const { LOT_STATUS, ORDER_STATUS } = require('./_lib/schema');
+const { LOT_STATUS } = require('./_lib/schema');
 const { ok, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
-const { notifyOrderCompleted } = require('./_lib/notifications');
 const { bogotaToday } = require('./_lib/bogotaTime');
 const { driedLedger, round2 } = require('./_lib/lotInventory');
 const { actorLabel } = require('./_lib/actor');
+const { applyDeliveryAndCompletion } = require('./_lib/shipmentDeliver');
 
 /**
  * POST /shipments-create  (finca, admin)
@@ -126,26 +126,40 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   // Pull existing shipment_lots rows for these lots (to detect
   // already-shipped wholes / partials and acumular kg ya despachados).
+  // Traemos el status del despacho: los CONFIRMADOS cuentan como
+  // despachado (reduce disponible y puede cerrar el bache); los
+  // BORRADOR cuentan como apartado (held) — reduce disponible pero
+  // no cierra nada.
   const { data: existingLinks, error: exErr } = await sb
     .from('shipment_lots')
-    .select('production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma, split_label')
+    .select('production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma, split_label, shipments(status)')
     .in('production_lot_id', lotIds);
   if (exErr) return serverErr('Existing-link lookup failed', exErr.message);
 
+  const linkStatus = (x) => (x.shipments && x.shipments.status) || 'confirmed';
+  // Un parcial ocupado (en cualquier despacho, borrador o confirmado)
+  // no se puede volver a poner en otro.
   const partialAlreadyShipped = new Set((existingLinks || [])
     .filter((x) => x.lot_partial_id != null).map((x) => x.lot_partial_id));
+  // Para la decisión de entrega solo cuentan los parciales en
+  // despachos CONFIRMADOS (un parcial apartado en borrador no cierra
+  // el bache).
+  const partialConfirmedShipped = new Set((existingLinks || [])
+    .filter((x) => x.lot_partial_id != null && linkStatus(x) !== 'draft')
+    .map((x) => x.lot_partial_id));
 
-  // Acumular kg seco ya despachado por lote (para despachos parciales).
-  // La merma de despachos totales previos también cuenta como salida.
-  const kgAlreadyShippedByLot = new Map();
+  // Acumular kg seco por lote separando confirmado (despachado) vs
+  // borrador (apartado). La merma de totales previos también cuenta.
+  const kgAlreadyShippedByLot = new Map();   // confirmado
+  const kgHeldByLot = new Map();             // borradores
   // Mayor número P ya usado en líneas de división del lote (para que
   // la numeración continúe entre despachos: P1 hoy, P2 mañana).
   const priorMaxPByLot = new Map();
   for (const x of existingLinks || []) {
     if (x.lot_partial_id != null) continue;
-    const prev = kgAlreadyShippedByLot.get(x.production_lot_id) || 0;
-    kgAlreadyShippedByLot.set(x.production_lot_id,
-      prev + Number(x.kg_dried_shipped || 0) + Number(x.kg_dried_merma || 0));
+    const kg = Number(x.kg_dried_shipped || 0) + Number(x.kg_dried_merma || 0);
+    const bucket = linkStatus(x) === 'draft' ? kgHeldByLot : kgAlreadyShippedByLot;
+    bucket.set(x.production_lot_id, (bucket.get(x.production_lot_id) || 0) + kg);
     const m = /^P(\d+)$/.exec(x.split_label || '');
     if (m) {
       const n = Number(m[1]);
@@ -227,6 +241,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
         kgDriedOutput: lot.kg_dried_output,
         blendedKg: kgInBlendsByLot.get(lot.id) || 0,
         shippedWholeKg: kgAlreadyShippedByLot.get(lot.id) || 0,
+        heldKg: kgHeldByLot.get(lot.id) || 0,
       }).available;
       const inRequest = requestedSoFarByLot.get(lot.id) || 0;
       const kgAvailable = ledgerAvailable - inRequest;
@@ -235,6 +250,16 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
         if (inRequest > 0) {
           return conflict(
             `Lote ${lot.bache_code || lot.lot_code}: las líneas de la división exceden los ${round2(ledgerAvailable)} kg disponibles`,
+            'EXCEEDS_AVAILABLE',
+          );
+        }
+        // Si el disponible está en 0 porque un BORRADOR lo apartó, se
+        // avisa distinto: no está despachado, está en preparación.
+        const held = kgHeldByLot.get(lot.id) || 0;
+        if (held > 0.01) {
+          return conflict(
+            `Lote ${lot.bache_code || lot.lot_code}: ${round2(held)} kg están apartados en un borrador de despacho. ` +
+            `Confírmalo o descártalo para liberarlos.`,
             'EXCEEDS_AVAILABLE',
           );
         }
@@ -346,12 +371,18 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   if (linkRows.length === 0) return badReq('No partials/lots to ship', 'NOTHING_TO_SHIP');
 
+  // Borrador: se guarda apartando inventario pero sin marcar baches
+  // Delivered ni completar pedidos. La logística puede ir incompleta.
+  const isDraft = body.draft === true || body.status === 'draft';
+
   // ── Insert shipment + links ────────────────────────────────────
   const { data: ship, error: sErr } = await sb
     .from('shipments').insert({
       shipment_code, shipment_date, notes,
       destino_kind, destino_other,
       driver_cedula, driver_placas, driver_name,
+      status: isDraft ? 'draft' : 'confirmed',
+      confirmed_at: isDraft ? null : new Date().toISOString(),
       created_by: session.role,
     }).select().single();
   if (sErr) {
@@ -368,98 +399,45 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     return serverErr('Failed to link lots', linkErr.message);
   }
 
-  // ── Decide which lots become Delivered ─────────────────────────
+  // Borrador: no se corre la cascada de entrega — solo aparta inventario.
+  if (isDraft) return ok({ shipment: ship, completions: [], draft: true });
+
+  // ── Cascada de entrega (fuente única compartida con confirm) ────
   const today = bogotaToday();
-  const completions = [];
+  // kg (whole+merma) confirmado en esta operación, por lote.
+  const newlyShippedWholeByLot = new Map();
+  const newlyShippedPartialIds = new Set();
+  const notesByLot = new Map();
+  for (const r of linkRows) {
+    if (r.lot_partial_id != null) { newlyShippedPartialIds.add(r.lot_partial_id); continue; }
+    const kg = Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0);
+    newlyShippedWholeByLot.set(r.production_lot_id, (newlyShippedWholeByLot.get(r.production_lot_id) || 0) + kg);
+  }
+  for (const [lotId, pr] of pesoRealByLot) {
+    const kind = pr.merma > 0 ? 'merma' : 'ganancia';
+    notesByLot.set(lotId,
+      `[Despacho total · ${actorLabel(session, body)} · ${today}] ` +
+      `Peso báscula: ${pr.real} kg vs ${pr.registered} kg registrados ` +
+      `(${kind} de ${Math.abs(pr.merma)} kg por humedad). Despacho ${ship.shipment_code || ship.id}.`);
+  }
+
   const lotsThatGotShipped = [...new Set(linkRows.map((r) => r.production_lot_id))];
-
-  for (const lotId of lotsThatGotShipped) {
-    const lot = lotById.get(lotId);
-    const partials = lot.lot_partials || [];
-
-    let shouldDeliver = false;
-    if (partials.length === 0) {
-      // Despacho completo o parcial. Solo marcar Delivered si ya no
-      // queda kg (la merma de peso real también cuenta como salida),
-      // o si la línea cerró el bache con peso de báscula (close_lot).
-      const newlySent = linkRows
-        .filter((r) => r.production_lot_id === lotId && r.lot_partial_id == null)
-        .reduce((s, r) => s + Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0), 0);
-      const remaining = driedLedger({
-        kgDriedOutput: lot.kg_dried_output,
-        blendedKg: kgInBlendsByLot.get(lotId) || 0,
-        shippedWholeKg: (kgAlreadyShippedByLot.get(lotId) || 0) + newlySent,
-      }).available;
-      shouldDeliver = remaining <= 0.01 || forceDeliverLots.has(lotId);
-    } else {
-      // Lot fully accounted for if every partial is shipped (in this
-      // shipment or previously) or rejected.
-      const newlyShippedPartialIds = new Set(
-        linkRows.filter((r) => r.production_lot_id === lotId && r.lot_partial_id != null)
-                .map((r) => r.lot_partial_id));
-      shouldDeliver = partials.every((p) =>
-        p.rejected_at != null ||
-        partialAlreadyShipped.has(p.id) ||
-        newlyShippedPartialIds.has(p.id));
-    }
-
-    if (!shouldDeliver) continue;
-
-    const update = { status: LOT_STATUS.Delivered, delivered_date: today };
-    // Peso real de báscula: dejar la diferencia en la bitácora.
-    const pr = pesoRealByLot.get(lotId);
-    if (pr) {
-      const kind = pr.merma > 0 ? 'merma' : 'ganancia';
-      const auditLine =
-        `[Despacho total · ${actorLabel(session, body)} · ${today}] ` +
-        `Peso báscula: ${pr.real} kg vs ${pr.registered} kg registrados ` +
-        `(${kind} de ${Math.abs(pr.merma)} kg por humedad). Despacho ${ship.shipment_code || ship.id}.`;
-      update.notes = lot.notes ? `${lot.notes}\n${auditLine}` : auditLine;
-    }
-    const { error: upErr } = await sb
-      .from('production_lots')
-      .update(update)
-      .eq('id', lotId);
-    if (upErr) return serverErr(`Failed to deliver lot ${lot.bache_code || lot.lot_code}`, upErr.message);
-
-    const { data: assigns, error: aErr } = await sb
-      .from('lot_order_assignments').select('demand_order_id').eq('production_lot_id', lotId);
-    if (aErr) return serverErr('Assignment lookup failed', aErr.message);
-    for (const a of assigns || []) {
-      const result = await maybeCompleteOrder(sb, a.demand_order_id);
-      if (result) completions.push(result);
-    }
+  let completions;
+  try {
+    ({ completions } = await applyDeliveryAndCompletion(sb, {
+      lots: lotsThatGotShipped.map((id) => lotById.get(id)),
+      today,
+      blendedByLot: kgInBlendsByLot,
+      priorShippedWholeByLot: kgAlreadyShippedByLot,
+      newlyShippedWholeByLot,
+      priorShippedPartialIds: partialConfirmedShipped,
+      newlyShippedPartialIds,
+      forceDeliverLots,
+      notesByLot,
+    }));
+  } catch (e) {
+    return serverErr('Delivery cascade failed', e.message);
   }
 
   return ok({ shipment: ship, completions });
 });
-
-async function maybeCompleteOrder(sb, order_id) {
-  const { data: order, error } = await sb
-    .from('demand_orders')
-    .select(`*, coffee_references(id,name)`)
-    .eq('id', order_id).maybeSingle();
-  if (error || !order) return null;
-  if (order.status !== ORDER_STATUS.InProduction) return null;
-
-  const { data: delivered, error: dErr } = await sb
-    .from('lot_order_assignments')
-    .select('kg_green_allocated, production_lots!inner(status)')
-    .eq('demand_order_id', order_id)
-    .eq('production_lots.status', LOT_STATUS.Delivered);
-  if (dErr) return null;
-
-  const totalDelivered = (delivered || []).reduce((s, r) => s + Number(r.kg_green_allocated || 0), 0);
-  if (totalDelivered + 1e-6 < Number(order.kg_green_accepted)) return null;
-
-  const { data: completed, error: upErr } = await sb
-    .from('demand_orders').update({
-      status: ORDER_STATUS.Completed,
-      completed_at: new Date().toISOString(),
-    }).eq('id', order_id).select().single();
-  if (upErr) return null;
-
-  const ref = order.coffee_references || { name: '' };
-  const notif = await notifyOrderCompleted(completed, ref);
-  return { order_id, notification: notif };
-}
