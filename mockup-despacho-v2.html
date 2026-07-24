@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Despachos v2 — observaciones · color · empaques</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px;
+    background: #2a2a28;
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: #2a2a28;
+    display: flex; flex-direction: column; gap: 28px; align-items: center;
+  }
+  .panel {
+    width: 940px; background: #fff; border-radius: 8px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.45); padding: 24px;
+  }
+  .panel h2 {
+    margin: 0 0 4px; font-size: 14px; letter-spacing: .06em;
+    text-transform: uppercase; color: #1b203d;
+  }
+  .panel p.sub { margin: 0 0 16px; font-size: 11px; color: #5a5a55; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  th {
+    background: #1b203d; color: #e7e244; text-transform: uppercase;
+    font-size: 8.5px; letter-spacing: .08em; padding: 6px 6px; text-align: left;
+  }
+  td { border-bottom: 1px solid #e8e8e2; padding: 5px 6px; vertical-align: middle; }
+  .num { text-align: right; font-family: "JetBrains Mono", monospace; }
+  input[type=text], input[type=number], select {
+    border: 1px solid #d8d8d0; border-radius: 5px; padding: 4px 6px;
+    font-size: 11px; font-family: inherit; width: 100%;
+  }
+  input.w-kg { width: 68px; text-align: right; font-family: monospace; }
+  input.w-n  { width: 46px; text-align: right; font-family: monospace; }
+  input.w-obs{ width: 130px; }
+  select.w-emp { width: 92px; }
+  .mono { font-family: "JetBrains Mono", monospace; }
+  .code { font-weight: 700; color: #1b203d; }
+
+  /* Paleta de colores de cinta */
+  .swatches { display: flex; gap: 3px; }
+  .sw {
+    width: 16px; height: 16px; border-radius: 4px; cursor: pointer;
+    border: 1.5px solid rgba(0,0,0,.15);
+  }
+  .sw.active { outline: 2.5px solid #1b203d; outline-offset: 1px; }
+  .sw.none { background:
+    linear-gradient(to top right, #fff 46%, #c44 48%, #c44 52%, #fff 54%);
+    border-color: #bbb; }
+
+  /* fila pintada en el modal */
+  tr.painted-blue > td { background: #4f86e0; color: #fff; }
+  tr.painted-blue input, tr.painted-blue select { background: rgba(255,255,255,.92); color: #222; }
+
+  /* ── Remisión ── */
+  .rem { width: 940px; background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+  .rem-head {
+    background: #0c0c0b; color: #fff; border-radius: 6px;
+    padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px;
+  }
+  .rem-head .logo { display: flex; gap: 10px; align-items: center; }
+  .rem-head .sq { width: 28px; height: 28px; background: #e7e244; color: #0c0c0b;
+    border-radius: 5px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .rem-head .t1 { font-weight: 700; font-size: 12px; }
+  .rem-head .t2 { font-size: 9px; color: #e7e244; }
+  .rem-head .code { color: #e7e244; font-size: 13px; font-weight: 800; }
+  table.rem-t th { font-size: 8px; padding: 5px 5px; }
+  table.rem-t td { font-size: 10px; padding: 5px 5px; border-bottom: 1px solid #eceae2; }
+
+  /* colores de cinta — ejemplo real de la finca */
+  tr.c-rosa    > td { background: #f4c7c3; }
+  tr.c-magenta > td { background: #ee00ee; color: #fff; }
+  tr.c-gris    > td { background: #4a4a4a; color: #fff; }
+  tr.c-verde   > td { background: #35e02c; }
+  tr.c-azul    > td { background: #4f86e0; color: #fff; }
+  tr.c-amarillo> td { background: #f6e34c; }
+
+  tr.total-row > td {
+    background: #f5f4ee; font-weight: 800; border-top: 2px solid #1b203d;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .tot-strip {
+    margin-top: 12px; background: #1b203d; border-radius: 6px;
+    display: grid; grid-template-columns: repeat(6, 1fr); padding: 10px 6px;
+  }
+  .tot-strip div { text-align: center; }
+  .tot-strip .lbl { color: #95b5ce; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+  .tot-strip .val { color: #e7e244; font-size: 15px; font-weight: 800; font-family: monospace; }
+  .note { font-size: 10px; color: #5a5a55; margin-top: 10px; font-style: italic; }
+  .badge { display: inline-block; font-size: 8.5px; font-weight: 700; padding: 1.5px 6px; border-radius: 8px; }
+  .badge.gp { background: #2e4a2e; color: #d8f0d0; }
+  .badge.bp { background: #e0e7f5; color: #1b2044; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ 1. MODAL DE CREAR DESPACHO ══════════ -->
+<div class="panel">
+  <h2>1 · Modal "Nuevo despacho" — tabla editable con los campos nuevos</h2>
+  <p class="sub">Por cada bache: sacos + lonas (mixtos permitidos) · empaque interior (Bolsa plástica / Grain Pro / Ninguno) · color de cinta (paleta) · observaciones libres. El color pinta la fila en vivo para previsualizar cómo saldrá en la remisión.</p>
+  <table>
+    <thead><tr>
+      <th>#</th><th>Bache</th><th>Ref / Proceso</th>
+      <th style="text-align:right">kg a desp.</th>
+      <th style="text-align:right"># Sacos</th>
+      <th style="text-align:right"># Lonas</th>
+      <th>Empaque int.</th>
+      <th>Color cinta</th>
+      <th>Observaciones</th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td class="code mono">26-265</td>
+        <td>Café X · Lavado</td>
+        <td class="num"><input class="w-kg" type="text" value="1.070" /></td>
+        <td class="num"><input class="w-n" type="text" value="12" /></td>
+        <td class="num"><input class="w-n" type="text" value="14" /></td>
+        <td><select class="w-emp"><option>Grain Pro</option><option>Bolsa plástica</option><option selected>Ninguno</option></select></td>
+        <td>
+          <div class="swatches">
+            <span class="sw none active" title="Sin color"></span>
+            <span class="sw" style="background:#f4c7c3" title="Rosa"></span>
+            <span class="sw" style="background:#ee00ee" title="Magenta"></span>
+            <span class="sw" style="background:#35e02c" title="Verde"></span>
+            <span class="sw" style="background:#4f86e0" title="Azul"></span>
+            <span class="sw" style="background:#f6e34c" title="Amarillo"></span>
+            <span class="sw" style="background:#4a4a4a" title="Gris"></span>
+            <span class="sw" style="background:#e8853d" title="Naranja"></span>
+          </div>
+        </td>
+        <td><input class="w-obs" type="text" value="14 Emp + 12 Lon" /></td>
+        <td style="color:#a8351c;font-weight:700">×</td>
+      </tr>
+      <tr class="painted-blue">
+        <td>2</td>
+        <td class="code mono" style="color:#fff">26-328</td>
+        <td>Café Y · Natural</td>
+        <td class="num"><input class="w-kg" type="text" value="124" /></td>
+        <td class="num"><input class="w-n" type="text" value="0" /></td>
+        <td class="num"><input class="w-n" type="text" value="3" /></td>
+        <td><select class="w-emp"><option selected>Grain Pro</option><option>Bolsa plástica</option><option>Ninguno</option></select></td>
+        <td>
+          <div class="swatches">
+            <span class="sw none" title="Sin color"></span>
+            <span class="sw" style="background:#f4c7c3"></span>
+            <span class="sw" style="background:#ee00ee"></span>
+            <span class="sw" style="background:#35e02c"></span>
+            <span class="sw active" style="background:#4f86e0" title="Azul — seleccionado"></span>
+            <span class="sw" style="background:#f6e34c"></span>
+            <span class="sw" style="background:#4a4a4a"></span>
+            <span class="sw" style="background:#e8853d"></span>
+          </div>
+        </td>
+        <td><input class="w-obs" type="text" value="Lonas" /></td>
+        <td style="color:#ffd7d0;font-weight:700">×</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td colspan="3">TOTAL · 2 baches</td>
+        <td class="num">1.194 kg</td>
+        <td class="num">12</td>
+        <td class="num">17</td>
+        <td colspan="4" style="font-weight:600;font-size:10px">Grain Pro: 3 · Bolsa plástica: 0</td>
+      </tr>
+    </tfoot>
+  </table>
+  <p class="note">La bolsa/grain pro cuenta 1 por cada empaque del lote: el bache 26-328 lleva 3 lonas con Grain Pro → 3 unidades de Grain Pro. Los totales se calculan en vivo.</p>
+</div>
+
+<!-- ══════════ 2. REMISIÓN PDF ══════════ -->
+<div class="rem">
+  <h2 style="color:#1b203d;font-size:14px;letter-spacing:.06em;text-transform:uppercase;margin:0 0 12px">2 · Remisión PDF — filas pintadas + columnas nuevas</h2>
+  <div class="rem-head">
+    <div class="logo">
+      <div class="sq">F</div>
+      <div>
+        <div class="t1">FOREST · EL VERGEL</div>
+        <div class="t2">Despacho de café</div>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="code">DSP-2026-0031</div>
+      <div style="font-size:9px">Fecha: 15/07/2026</div>
+    </div>
+  </div>
+
+  <table class="rem-t">
+    <thead><tr>
+      <th>Bache</th><th>Cód. Trill.</th><th>Cód. Mezcla</th><th>Proceso</th>
+      <th style="text-align:right">kg seco</th><th style="text-align:right">Factor</th>
+      <th style="text-align:right">Sacos</th><th style="text-align:right">Lonas</th>
+      <th>Empaque</th><th>Observaciones</th>
+    </tr></thead>
+    <tbody>
+      <tr class="c-rosa">
+        <td class="code mono">ACAFETO</td><td class="mono">PP-1685</td><td>—</td><td>Lavado</td>
+        <td class="num">1.070</td><td class="num">—</td><td class="num">12</td><td class="num">14</td>
+        <td>—</td><td><b>14 Emp + 12 Lon</b></td>
+      </tr>
+      <tr class="c-magenta">
+        <td class="code mono" style="color:#fff">278</td><td class="mono">PP-1686</td><td>—</td><td>Lavado</td>
+        <td class="num">1.091</td><td class="num">—</td><td class="num">27</td><td class="num">0</td>
+        <td><span class="badge bp">BOLSA</span></td><td></td>
+      </tr>
+      <tr class="c-gris">
+        <td class="code mono" style="color:#fff">311</td><td class="mono">PP-1687</td><td>—</td><td>Natural</td>
+        <td class="num">309</td><td class="num">129,26</td><td class="num">8</td><td class="num">0</td>
+        <td><span class="badge gp">GRAIN PRO</span></td><td></td>
+      </tr>
+      <tr class="c-verde">
+        <td class="code mono">327</td><td class="mono">PP-1688</td><td>—</td><td>Natural</td>
+        <td class="num">274</td><td class="num">124,60</td><td class="num">7</td><td class="num">0</td>
+        <td><span class="badge gp">GRAIN PRO</span></td><td></td>
+      </tr>
+      <tr class="c-azul">
+        <td class="code mono" style="color:#fff">328</td><td class="mono">PP-1689</td><td>—</td><td>Natural</td>
+        <td class="num">124</td><td class="num">140,00</td><td class="num">0</td><td class="num">3</td>
+        <td><span class="badge gp">GRAIN PRO</span></td><td><b>Lonas</b></td>
+      </tr>
+      <tr>
+        <td class="code mono">332</td><td class="mono">PP-1690</td><td>—</td><td>Honey</td>
+        <td class="num">2.690</td><td class="num">108</td><td class="num">71</td><td class="num">0</td>
+        <td><span class="badge bp">BOLSA</span></td><td><b>Cinta Blanca</b></td>
+      </tr>
+      <tr class="total-row">
+        <td colspan="4">TOTAL · 6 línea(s)</td>
+        <td class="num">5.558 kg</td><td></td>
+        <td class="num">125</td><td class="num">17</td>
+        <td colspan="2" style="font-size:9.5px">GP: 18 · Bolsa: 98</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="tot-strip">
+    <div><div class="lbl"># Lotes</div><div class="val">6</div></div>
+    <div><div class="lbl">Total kg seco</div><div class="val">5.558</div></div>
+    <div><div class="lbl">Sacos</div><div class="val">125</div></div>
+    <div><div class="lbl">Lonas</div><div class="val">17</div></div>
+    <div><div class="lbl">Grain Pro</div><div class="val">18</div></div>
+    <div><div class="lbl">Bolsas plást.</div><div class="val">98</div></div>
+  </div>
+  <p class="note">El color de la fila = color de cinta del lote, para que la trilladora lo identifique de un vistazo (igual que su formato actual). Los colores oscuros (gris, magenta, azul) cambian el texto a blanco automáticamente. Se quitó la columna "Variedad" para hacer espacio — ver pregunta 3.</p>
+</div>
+
+</body>
+</html>
