@@ -82,3 +82,78 @@ test('destino Otro sin especificar rebota', async () => {
   assert.equal(r.status, 400);
   assert.equal(r.body.code, 'DESTINO_OTHER_REQUIRED');
 });
+
+// ── Editar kg (whole/by-kg) ──────────────────────────────────────
+
+// Fixture con contexto de inventario para validar kg: bache de 350,
+// borrador con una línea whole de 200.
+function kgFixture() {
+  return createFakeSupabase({
+    shipments: [{ id: SHIP, shipment_code: 'DSP-1', status: 'draft' }],
+    shipment_lots: [{
+      id: 'sl1', shipment_id: SHIP, production_lot_id: 'L1', lot_partial_id: null,
+      kg_dried_shipped: 200, kg_dried_merma: null, lot_partials: null,
+      num_sacos: null, num_lonas: null, empaque_interior: null, color_cinta: null, observaciones: null,
+    }],
+    production_lots: [{ id: 'L1', kg_dried_output: 350, bache_code: '29-1000', lot_code: 'L' }],
+    lot_blend_components: [],
+  });
+}
+
+test('editar kg dentro del disponible actualiza la línea', async () => {
+  const fake = kgFixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'sl1', kg_dried_shipped: 300 }],
+  }), {}));
+  assert.equal(r.status, 200);
+  assert.equal(fake._db.shipment_lots[0].kg_dried_shipped, 300);
+});
+
+test('editar kg por encima del disponible rebota EXCEEDS_AVAILABLE', async () => {
+  setFake(kgFixture());
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'sl1', kg_dried_shipped: 400 }],
+  }), {}));
+  assert.equal(r.body.code, 'EXCEEDS_AVAILABLE');
+});
+
+test('editar kg a 0 rebota INVALID_KG', async () => {
+  setFake(kgFixture());
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'sl1', kg_dried_shipped: 0 }],
+  }), {}));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'INVALID_KG');
+});
+
+test('editar kg de una línea de parcial rebota KG_NOT_EDITABLE', async () => {
+  const fake = createFakeSupabase({
+    shipments: [{ id: SHIP, shipment_code: 'DSP-1', status: 'draft' }],
+    shipment_lots: [{
+      id: 'slp', shipment_id: SHIP, production_lot_id: 'L1', lot_partial_id: 'p1',
+      kg_dried_shipped: null, kg_dried_merma: null, lot_partials: { kg_dried: 100 },
+    }],
+    production_lots: [{ id: 'L1', kg_dried_output: 350, bache_code: '29', lot_code: 'L' }],
+    lot_blend_components: [],
+  });
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'slp', kg_dried_shipped: 120 }],
+  }), {}));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'KG_NOT_EDITABLE');
+});
+
+test('editar kg + logística en la misma llamada', async () => {
+  const fake = kgFixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'sl1', kg_dried_shipped: 250, num_sacos: 6, empaque_interior: 'grainpro' }],
+  }), {}));
+  assert.equal(r.status, 200);
+  const line = fake._db.shipment_lots[0];
+  assert.equal(line.kg_dried_shipped, 250);
+  assert.equal(line.num_sacos, 6);
+  assert.equal(line.empaque_interior, 'grainpro');
+});

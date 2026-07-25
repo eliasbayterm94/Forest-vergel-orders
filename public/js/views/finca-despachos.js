@@ -768,19 +768,40 @@ export async function fincaDespachosView() {
         driver_placas: shipment.driver_placas || '',
         notes: shipment.notes || '',
       };
-      // Estado editable por bache (grupo).
-      const groupState = (shipment.lots || []).map((g) => ({
-        ids: g.shipment_lot_ids || [],
-        code: (g.bache_code || g.blend_code || g.lot_code || '—') + (g.split_label ? `-${g.split_label}` : ''),
-        ref: g.reference_name || '—',
-        codigo_trilladora: g.codigo_trilladora || '',
-        codigo_mezcla: g.codigo_mezcla || '',
-        num_sacos: g.num_sacos ?? '',
-        num_lonas: g.num_lonas ?? '',
-        empaque_interior: g.empaque_interior || '',
-        color_cinta: g.color_cinta || '',
-        observaciones: g.observaciones || '',
-      }));
+      // Disponible por bache (excluye el apartado de ESTE borrador,
+      // sumándolo de vuelta) para validar el kg que se ingresa.
+      const readyById = new Map(readyLots.map((l) => [l.id, l]));
+
+      // Estado editable por bache (grupo). El kg solo es editable en
+      // líneas whole/by-kg (una sola línea); en despachos por parciales
+      // el kg lo fija cada parcial y va de solo lectura.
+      const groupState = (shipment.lots || []).map((g) => {
+        const ids = g.shipment_lot_ids || [];
+        const partials = g.partials_in_shipment || [];
+        const editableKg = g.whole_lot_in_shipment === true && ids.length === 1;
+        const currentKg = editableKg
+          ? Number(g.kg_dried_shipped ?? g.kg_dried_output ?? 0)
+          : partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
+        const availLot = Number(readyById.get(g.id)?.kg_dried_available || 0);
+        return {
+          ids,
+          lineId: editableKg ? ids[0] : null,
+          code: (g.bache_code || g.blend_code || g.lot_code || '—') + (g.split_label ? `-${g.split_label}` : ''),
+          ref: g.reference_name || '—',
+          editableKg,
+          kg: currentKg,
+          // Techo: lo disponible del bache (ya descuenta este borrador)
+          // + lo que este borrador tenía apartado en esta línea.
+          maxKg: editableKg ? Math.round((availLot + currentKg) * 100) / 100 : currentKg,
+          codigo_trilladora: g.codigo_trilladora || '',
+          codigo_mezcla: g.codigo_mezcla || '',
+          num_sacos: g.num_sacos ?? '',
+          num_lonas: g.num_lonas ?? '',
+          empaque_interior: g.empaque_interior || '',
+          color_cinta: g.color_cinta || '',
+          observaciones: g.observaciones || '',
+        };
+      });
 
       const dateIn = el('input', { type: 'date', class: 'ctrm-input', value: header.shipment_date });
       const destinoSel = el('select', { class: 'ctrm-input' }, [
@@ -825,11 +846,35 @@ export async function fincaDespachosView() {
           onClick: () => { st.color_cinta = ''; colorIn.value = '#ffffff'; } }, ['×']);
         const obsIn = el('input', { type: 'text', class: 'ctrm-input text-[11px] w-32', maxlength: '200', placeholder: 'Observaciones', value: st.observaciones });
         obsIn.addEventListener('input', () => { st.observaciones = obsIn.value; });
+        // Celda de kg: editable en whole/by-kg, solo lectura en parciales.
+        let kgCell;
+        if (st.editableKg) {
+          const kgIn = el('input', {
+            type: 'number', step: '0.01', min: '0.01', max: String(st.maxKg),
+            class: 'ctrm-input mono text-[11px] text-right w-20',
+            value: st.kg ? String(st.kg) : '',
+          });
+          const hint = el('div', { class: 'text-[9px] text-ink-300 mono', text: `máx ${fmtKg(st.maxKg)}` });
+          kgIn.addEventListener('input', () => {
+            st.kg = kgIn.value === '' ? '' : Number(kgIn.value);
+            const over = st.kg !== '' && Number(st.kg) > st.maxKg + 0.01;
+            kgIn.style.borderColor = over ? '#c0392b' : '';
+            hint.textContent = over ? `supera el disponible (máx ${fmtKg(st.maxKg)})` : `máx ${fmtKg(st.maxKg)}`;
+            hint.className = over ? 'text-[9px] text-crit mono' : 'text-[9px] text-ink-300 mono';
+          });
+          kgCell = el('div', { class: 'flex flex-col items-end gap-0.5' }, [kgIn, hint]);
+        } else {
+          kgCell = el('div', { class: 'text-right' }, [
+            el('span', { class: 'font-mono text-[11px] text-ink-700', text: fmtKg(st.kg) }),
+            el('div', { class: 'text-[9px] text-ink-300', text: 'por parciales' }),
+          ]);
+        }
         return el('tr', { class: 'border-b border-sand' }, [
           el('td', { class: 'px-2 py-1.5 font-mono font-semibold text-navy text-[11px]' }, [st.code]),
           el('td', { class: 'px-2 py-1.5 text-[11px] text-ink-500' }, [st.ref]),
           el('td', { class: 'px-2 py-1.5' }, [codT]),
           el('td', { class: 'px-2 py-1.5' }, [codM]),
+          el('td', { class: 'px-2 py-1.5' }, [kgCell]),
           el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_sacos')]),
           el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_lonas')]),
           el('td', { class: 'px-2 py-1.5' }, [empSel]),
@@ -837,6 +882,19 @@ export async function fincaDespachosView() {
           el('td', { class: 'px-2 py-1.5' }, [obsIn]),
         ]);
       });
+
+      // Valida que cada kg editado sea > 0 y no supere el disponible.
+      function validateKg() {
+        for (const st of groupState) {
+          if (!st.editableKg) continue;
+          const kg = Number(st.kg);
+          if (!(kg > 0)) { toast(`${st.code}: ingresa los kg a despachar`, 'warning'); return false; }
+          if (kg > st.maxKg + 0.01) {
+            toast(`${st.code}: ${fmtKg(kg)} kg supera el disponible (máx ${fmtKg(st.maxKg)})`, 'warning'); return false;
+          }
+        }
+        return true;
+      }
 
       function buildPatch() {
         const lines = [];
@@ -850,6 +908,10 @@ export async function fincaDespachosView() {
             color_cinta: st.color_cinta || null,
             observaciones: st.observaciones.trim() || null,
           };
+          // kg solo en líneas whole/by-kg (una sola línea).
+          if (st.editableKg && st.kg !== '' && st.lineId) {
+            vals.kg_dried_shipped = Number(st.kg);
+          }
           for (const id of st.ids) lines.push({ id, ...vals });
         }
         return {
@@ -870,6 +932,7 @@ export async function fincaDespachosView() {
       const confirmBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['✓ Confirmar despacho']);
       saveBtn.addEventListener('click', async () => {
         if (saveBtn.disabled) return;
+        if (!validateKg()) return;
         saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
         try {
           await api.shipmentsUpdate({ shipment_id: shipment.id, ...buildPatch() });
@@ -879,6 +942,7 @@ export async function fincaDespachosView() {
       });
       confirmBtn.addEventListener('click', async () => {
         if (confirmBtn.disabled) return;
+        if (!validateKg()) return;
         if (destinoSel.value === 'Otro' && !destinoOther.value.trim()) { toast('Especifica el destino "Otro"', 'warning'); return; }
         const ok = await confirmModal(
           `Confirmar ${shipment.shipment_code} como despacho definitivo. Los baches pasan a Despachado ` +
@@ -897,7 +961,7 @@ export async function fincaDespachosView() {
       });
 
       return el('div', { class: 'space-y-3' }, [
-        el('p', { class: 'text-[12px] text-ink-500', text: 'Completa la logística que faltaba. Los baches y kg no cambian; para eso descarta y crea de nuevo.' }),
+        el('p', { class: 'text-[12px] text-ink-500', text: 'Completa la logística y ajusta los kg a despachar (bodega los pesa al alistar). Para cambiar qué baches entran, descarta y crea de nuevo.' }),
         el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
           labelled('Fecha', dateIn),
           labelled('Destino', destinoSel),
@@ -912,7 +976,7 @@ export async function fincaDespachosView() {
         el('div', { class: 'overflow-x-auto border border-sand rounded-md' }, [
           el('table', { class: 'w-full text-[12px]' }, [
             el('thead', {}, [el('tr', { class: 'bg-navy text-yellow' },
-              ['Bache', 'Ref', 'Cód. Trilladora', 'Cód. Mezcla', 'Sacos', 'Lonas', 'Empaque', 'Color', 'Observaciones']
+              ['Bache', 'Ref', 'Cód. Trilladora', 'Cód. Mezcla', 'kg a despachar', 'Sacos', 'Lonas', 'Empaque', 'Color', 'Observaciones']
                 .map((h) => el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, [h])))]),
             el('tbody', {}, rows),
           ]),

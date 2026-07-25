@@ -94,6 +94,46 @@ test('confirmar con peso real (merma) deja nota en la bitácora del bache', asyn
   assert.match(fake._db.production_lots[0].notes || '', /merma de 2 kg/);
 });
 
+test('confirmar ajustando kg: usa el kg nuevo y deja saldo en bodega', async () => {
+  // Borrador apartó 350 (todo). Al confirmar se baja a 300 → el
+  // bache NO cierra (quedan 50 en bodega).
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP,
+    lines: [{ id: 'sl1', kg_dried_shipped: 300 }],
+  }), {}));
+  assert.equal(r.status, 200);
+  assert.equal(fake._db.shipment_lots[0].kg_dried_shipped, 300);
+  assert.equal(fake._db.production_lots[0].status, 'Ready');   // 50 en bodega
+});
+
+test('confirmar ajustando kg al total cierra el bache', async () => {
+  const fake = fixture({ kg: 300 });   // borrador tenía 300
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP,
+    lines: [{ id: 'sl1', kg_dried_shipped: 350 }],   // sube al total
+  }), {}));
+  assert.equal(r.status, 200);
+  assert.equal(fake._db.shipment_lots[0].kg_dried_shipped, 350);
+  assert.equal(fake._db.production_lots[0].status, 'Delivered');
+});
+
+test('confirmar con kg > disponible rebota EXCEEDS_AVAILABLE y no confirma', async () => {
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP,
+    lines: [{ id: 'sl1', kg_dried_shipped: 400 }],
+  }), {}));
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'EXCEEDS_AVAILABLE');
+  // Nada se confirmó ni entregó (la validación corre antes del flip).
+  assert.equal(fake._db.shipments[0].status, 'draft');
+  assert.equal(fake._db.production_lots[0].status, 'Ready');
+});
+
 test('confirmar completa el pedido cuando todo lo asignado queda entregado', async () => {
   const ORDER = 'cccccccc-0000-0000-0000-000000000001';
   const fake = fixture({

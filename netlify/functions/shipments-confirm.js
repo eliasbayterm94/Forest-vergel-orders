@@ -56,23 +56,32 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const myLines = ship.shipment_lots || [];
   if (myLines.length === 0) return conflict('El borrador no tiene líneas', 'EMPTY_DRAFT');
 
-  // Completar logística que faltaba (si el confirm trae cambios).
-  if (body.header || body.lines) {
-    const r = await patchDraft(sb, shipment_id, { header: body.header, lines: body.lines });
-    if (!r.ok) {
-      if (['UPDATE_FAILED', 'LINE_LOOKUP_FAILED', 'LINE_UPDATE_FAILED'].includes(r.code)) {
-        return serverErr(r.message, r.message);
-      }
-      return badReq(r.message, r.code);
-    }
-  }
-
   const lotById = new Map();
   for (const sl of myLines) {
     const l = sl.production_lots;
     if (l && !lotById.has(l.id)) lotById.set(l.id, l);
   }
   const lotIds = [...lotById.keys()];
+
+  // Completar logística/kg que faltaba (si el confirm trae cambios).
+  // Tras el patch, releemos las líneas para usar el kg ya actualizado.
+  let effectiveLines = myLines;
+  if (body.header || body.lines) {
+    const r = await patchDraft(sb, shipment_id, { header: body.header, lines: body.lines });
+    if (!r.ok) {
+      if (['UPDATE_FAILED', 'LINE_LOOKUP_FAILED', 'LINE_UPDATE_FAILED'].includes(r.code)) {
+        return serverErr(r.message, r.message);
+      }
+      if (r.code === 'EXCEEDS_AVAILABLE') return conflict(r.message, r.code);
+      return badReq(r.message, r.code);
+    }
+    const { data: fresh, error: fErr } = await sb
+      .from('shipment_lots')
+      .select('id, production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma')
+      .eq('shipment_id', shipment_id);
+    if (fErr) return serverErr('Line re-read failed', fErr.message);
+    if (fresh) effectiveLines = fresh;
+  }
 
   // Kg consumido en mezclas.
   const { data: blendUse } = await sb
@@ -103,7 +112,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const newlyShippedWholeByLot = new Map();
   const newlyShippedPartialIds = new Set();
   const notesByLot = new Map();
-  for (const sl of myLines) {
+  for (const sl of effectiveLines) {
     if (sl.lot_partial_id != null) { newlyShippedPartialIds.add(sl.lot_partial_id); continue; }
     const kg = Number(sl.kg_dried_shipped || 0) + Number(sl.kg_dried_merma || 0);
     newlyShippedWholeByLot.set(sl.production_lot_id, (newlyShippedWholeByLot.get(sl.production_lot_id) || 0) + kg);

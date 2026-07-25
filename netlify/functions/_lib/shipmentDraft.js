@@ -1,15 +1,20 @@
 'use strict';
 
 /**
- * Aplicar cambios de LOGÍSTICA / EMPAQUE a un despacho en BORRADOR.
- * Compartido por shipments-update (editar) y shipments-confirm (que
- * puede completar la info que faltaba al momento de confirmar).
+ * Aplicar cambios de LOGÍSTICA / EMPAQUE / KG a un despacho en
+ * BORRADOR. Compartido por shipments-update (editar) y
+ * shipments-confirm (que puede completar la info que faltaba al
+ * momento de confirmar).
  *
- * NO cambia la estructura (qué baches / cuántos kg / divisiones): eso
- * se define al crear el borrador. Solo completa los datos que suelen
- * ir incompletos: destino, conductor, códigos de trilladora/mezcla,
- * sacos/lonas, empaque interior, color de cinta y observaciones.
+ * NO cambia QUÉ baches entran ni sus divisiones (eso se define al
+ * crear el borrador). Sí completa lo que suele ir incompleto:
+ * destino, conductor, códigos, sacos/lonas, empaque, color,
+ * observaciones y — para líneas whole/by-kg — los KG a despachar
+ * (bodega los pesa al alistar). El kg se valida contra el disponible
+ * del bache excluyendo lo apartado por este mismo borrador.
  */
+
+const { round2 } = require('./lotInventory');
 
 const DESTINOS = new Set(['Vertical', 'Tribox', 'Trillanova', 'Otro']);
 
@@ -81,21 +86,108 @@ async function patchDraft(sb, shipmentId, patch = {}) {
   // ── Líneas (por shipment_lots.id, deben pertenecer al despacho) ──
   const lines = Array.isArray(patch.lines) ? patch.lines : [];
   if (lines.length > 0) {
+    // Detalle de las líneas de ESTE despacho (para ownership + kg).
     const { data: own, error: ownErr } = await sb
-      .from('shipment_lots').select('id').eq('shipment_id', shipmentId);
+      .from('shipment_lots')
+      .select('id, production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma, lot_partials(kg_dried)')
+      .eq('shipment_id', shipmentId);
     if (ownErr) return err(`Line lookup failed: ${ownErr.message}`, 'LINE_LOOKUP_FAILED');
-    const ownIds = new Set((own || []).map((r) => r.id));
+    const ownById = new Map((own || []).map((r) => [r.id, r]));
+
+    // Validar kg editados ANTES de aplicar nada (whole/by-kg solo).
+    const newKgByLine = new Map();
     for (const ln of lines) {
       if (!ln || !ln.id) return err('cada línea necesita id', 'LINE_ID_REQUIRED');
-      if (!ownIds.has(ln.id)) return err(`la línea ${ln.id} no pertenece a este despacho`, 'LINE_NOT_IN_SHIPMENT');
+      const row = ownById.get(ln.id);
+      if (!row) return err(`la línea ${ln.id} no pertenece a este despacho`, 'LINE_NOT_IN_SHIPMENT');
+      if (ln.kg_dried_shipped != null && ln.kg_dried_shipped !== '') {
+        if (row.lot_partial_id != null) return err('el kg de un parcial no se edita aquí', 'KG_NOT_EDITABLE');
+        const kg = Number(ln.kg_dried_shipped);
+        if (!Number.isFinite(kg) || kg <= 0) return err('kg_dried_shipped debe ser > 0', 'INVALID_KG');
+        newKgByLine.set(ln.id, round2(kg));
+      }
+    }
+
+    if (newKgByLine.size > 0) {
+      const kgCheck = await validateDraftKg(sb, shipmentId, own || [], newKgByLine);
+      if (!kgCheck.ok) return kgCheck;
+    }
+
+    // Aplicar: primero logística, luego kg (con merma en 0 porque el
+    // kg pasa a ser el valor manual).
+    for (const ln of lines) {
       const norm = normLineExtras(ln);
       if (!norm.ok) return norm;
-      if (Object.keys(norm.value).length === 0) continue;
-      const { error } = await sb.from('shipment_lots').update(norm.value).eq('id', ln.id);
+      const update = { ...norm.value };
+      if (newKgByLine.has(ln.id)) {
+        update.kg_dried_shipped = newKgByLine.get(ln.id);
+        update.kg_dried_merma = null;
+      }
+      if (Object.keys(update).length === 0) continue;
+      const { error } = await sb.from('shipment_lots').update(update).eq('id', ln.id);
       if (error) return err(`Failed to update line: ${error.message}`, 'LINE_UPDATE_FAILED');
     }
   }
 
+  return { ok: true };
+}
+
+/**
+ * Valida que los kg editados en un borrador no sobrepasen el
+ * disponible del bache. Recalcula desde la BD: total − mezclas −
+ * salidas de OTROS despachos (confirmados y borradores). El uso de
+ * ESTE borrador usa el kg nuevo donde se editó y el actual en el
+ * resto de sus líneas.
+ */
+async function validateDraftKg(sb, shipmentId, ownLines, newKgByLine) {
+  const wholeOut = (r) => Number(r.kg_dried_shipped || 0) + Number(r.kg_dried_merma || 0);
+  const partialKg = (r) => Number((r.lot_partials && r.lot_partials.kg_dried) || 0);
+
+  const lotIds = [...new Set(ownLines.map((r) => r.production_lot_id))];
+
+  const [{ data: lots }, { data: blendUse }, { data: allLinks }] = await Promise.all([
+    sb.from('production_lots').select('id, bache_code, lot_code, kg_dried_output').in('id', lotIds),
+    sb.from('lot_blend_components').select('source_lot_id, kg_dried_used').in('source_lot_id', lotIds),
+    sb.from('shipment_lots')
+      .select('shipment_id, production_lot_id, lot_partial_id, kg_dried_shipped, kg_dried_merma, lot_partials(kg_dried)')
+      .in('production_lot_id', lotIds),
+  ]);
+
+  const lotById = new Map((lots || []).map((l) => [l.id, l]));
+  const blendedByLot = new Map();
+  for (const b of blendUse || []) {
+    blendedByLot.set(b.source_lot_id, (blendedByLot.get(b.source_lot_id) || 0) + Number(b.kg_dried_used || 0));
+  }
+  // Salidas de OTROS despachos (excluye este borrador).
+  const otherOutByLot = new Map();
+  for (const x of allLinks || []) {
+    if (x.shipment_id === shipmentId) continue;
+    const kg = x.lot_partial_id != null ? partialKg(x) : wholeOut(x);
+    otherOutByLot.set(x.production_lot_id, (otherOutByLot.get(x.production_lot_id) || 0) + kg);
+  }
+  // Uso de ESTE borrador (kg nuevo donde se editó, actual en el resto).
+  const thisUseByLot = new Map();
+  for (const r of ownLines) {
+    const kg = newKgByLine.has(r.id)
+      ? newKgByLine.get(r.id)
+      : (r.lot_partial_id != null ? partialKg(r) : wholeOut(r));
+    thisUseByLot.set(r.production_lot_id, (thisUseByLot.get(r.production_lot_id) || 0) + kg);
+  }
+
+  for (const lotId of lotIds) {
+    const lot = lotById.get(lotId);
+    if (!lot) continue;
+    const capacity = Number(lot.kg_dried_output || 0)
+      - (blendedByLot.get(lotId) || 0) - (otherOutByLot.get(lotId) || 0);
+    const use = thisUseByLot.get(lotId) || 0;
+    if (use > capacity + 0.01) {
+      return err(
+        `Lote ${lot.bache_code || lot.lot_code}: los ${round2(use)} kg del borrador superan el disponible ` +
+        `(${round2(Math.max(0, capacity))} kg).`,
+        'EXCEEDS_AVAILABLE',
+      );
+    }
+  }
   return { ok: true };
 }
 
