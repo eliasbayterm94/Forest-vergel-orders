@@ -310,13 +310,14 @@ export function generateShipmentPdf(shipment) {
 }
 
 // ── PDF de PREPARACIÓN (borrador para bodega) ──────────────────
-// Hoja de alistamiento marcada BORRADOR. Muestra lo esencial para
-// que bodega prepare el despacho: bache, referencia, variedad,
-// proceso y kg a alistar (+ empaque si ya se sabe). SIN códigos de
-// trilladora ni firmas oficiales — no es una remisión.
+// Hoja de alistamiento marcada BORRADOR. Muestra lo necesario para
+// que bodega prepare el despacho: bache, códigos de trilladora/mezcla
+// (si ya se conocen), variedad, proceso, kg a alistar y empaque. Si
+// el bache trae color de cinta, la fila se pinta de ese color. SIN
+// firmas oficiales — no es una remisión.
 export function generateShipmentPrepPdf(shipment) {
   const jsPDF = ensureLib();
-  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'landscape' });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const M = 40;
@@ -361,6 +362,7 @@ export function generateShipmentPrepPdf(shipment) {
 
   // Filas: una por bache/parcial con kg a alistar.
   const rows = [];
+  const rowColors = [];   // color de cinta por fila (hex o null)
   let totalSeco = 0, totalSacos = 0, totalLonas = 0;
   const empaqueLabel = (e) => e === 'grainpro' ? 'Grain Pro' : e === 'bolsa' ? 'Bolsa plást.' : '—';
   const pushRow = (label, src, kg, variedad, proceso) => {
@@ -373,10 +375,14 @@ export function generateShipmentPrepPdf(shipment) {
       src.empaque_interior ? empaqueLabel(src.empaque_interior) : null,
     ].filter(Boolean).join(' · ') || '—';
     rows.push([
-      label, variedad || '—', proceso || '—',
+      label,
+      src.codigo_trilladora || '—',
+      src.codigo_mezcla || '—',
+      variedad || '—', proceso || '—',
       { content: fmtKg(kg), styles: { halign: 'right' } },
       empaque, src.observaciones || '',
     ]);
+    rowColors.push(src.color_cinta || null);
   };
   for (const lot of shipment.lots || []) {
     const variedad = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
@@ -400,25 +406,37 @@ export function generateShipmentPrepPdf(shipment) {
   }
   const dataRowCount = rows.length;
   rows.push([
-    { content: `TOTAL · ${dataRowCount} línea(s) a alistar`, colSpan: 3, styles: { fontStyle: 'bold', fillColor: CREAM } },
+    { content: `TOTAL · ${dataRowCount} línea(s) a alistar`, colSpan: 5, styles: { fontStyle: 'bold', fillColor: CREAM } },
     { content: fmtKg(totalSeco), styles: { halign: 'right', fontStyle: 'bold', fillColor: CREAM } },
-    { content: `${totalSacos} sacos · ${totalLonas} lonas`, styles: { fontStyle: 'bold', fillColor: CREAM, fontSize: 8 } },
-    { content: '', styles: { fillColor: CREAM } },
+    { content: `${totalSacos} sacos · ${totalLonas} lonas`, colSpan: 2, styles: { fontStyle: 'bold', fillColor: CREAM, fontSize: 8 } },
   ]);
 
   doc.autoTable({
     startY: y,
     margin: { left: M, right: M },
-    head: [['Bache', 'Variedad', 'Proceso', 'kg a alistar', 'Empaque', 'Observaciones']],
+    head: [['Bache', 'Cód. Trilladora', 'Cód. Mezcla', 'Variedad', 'Proceso', 'kg a alistar', 'Empaque', 'Observaciones']],
     body: rows,
     styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: INK_700, lineColor: SAND, lineWidth: 0.5 },
     headStyles: { fillColor: DRAFT, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
     alternateRowStyles: { fillColor: [251, 251, 248] },
     columnStyles: {
-      0: { cellWidth: 90, fontStyle: 'bold' },
-      1: { cellWidth: 100 }, 2: { cellWidth: 60 },
-      3: { cellWidth: 66, halign: 'right' },
-      4: { cellWidth: 110 },
+      0: { cellWidth: 84, fontStyle: 'bold' },
+      1: { cellWidth: 74 }, 2: { cellWidth: 66 },
+      3: { cellWidth: 96 }, 4: { cellWidth: 54 },
+      5: { cellWidth: 62, halign: 'right' },
+      6: { cellWidth: 104 },
+      // 7 (Observaciones) flexible
+    },
+    // Pinta cada fila con el color de cinta del bache (si lo tiene);
+    // el texto pasa a blanco sobre colores oscuros.
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      if (data.row.index >= dataRowCount) return;   // fila TOTAL
+      const rgb = hexToRgbArr(rowColors[data.row.index]);
+      if (!rgb) return;
+      data.cell.styles.fillColor = rgb;
+      const luminance = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+      if (luminance < 140) data.cell.styles.textColor = [255, 255, 255];
     },
   });
   y = doc.lastAutoTable.finalY + 20;
