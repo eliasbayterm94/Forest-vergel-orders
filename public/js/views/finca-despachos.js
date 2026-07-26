@@ -747,6 +747,8 @@ export async function fincaDespachosView() {
     return [
       el('button', { class: `${cls} ctrm-btn-soft`, title: 'Remisión para la trilladora',
         onClick: stop(() => downloadPdf(s)) }, ['↓ Remisión']),
+      el('button', { class: `${cls} ctrm-btn-action`, title: 'Agregar o editar los PP\'s (código trilladora) y datos de empaque',
+        onClick: stop(() => completeDraftModal(s)) }, ['＋ PP\'s']),
       el('button', { class: `${cls} ctrm-btn-soft`, title: 'Documento interno · asignaciones',
         onClick: stop(() => downloadAssignmentsPdf(s)) }, [size === 'xs' ? '↓ Asign.' : '↓ Asignaciones']),
       el('button', { class: `${cls} ctrm-btn-danger`, title: 'Cancelar despacho completo',
@@ -754,10 +756,13 @@ export async function fincaDespachosView() {
     ];
   }
 
-  // Modal para completar la logística de un borrador y (opcional)
-  // confirmarlo. NO cambia baches/kg — solo destino, conductor y los
-  // datos de empaque por bache que suelen ir incompletos.
+  // Modal para completar la logística de un despacho.
+  //  · Borrador: edita logística + kg, y permite Confirmar.
+  //  · Confirmado: edita solo la logística (agregar PP's, etc.) — los
+  //    kg quedan bloqueados porque el inventario ya se movió — y deja
+  //    descargar la remisión final.
   function completeDraftModal(shipment) {
+    const isDraft = shipment.status === 'draft';
     return openModal(({ close }) => {
       const header = {
         shipment_date: shipment.shipment_date,
@@ -778,7 +783,9 @@ export async function fincaDespachosView() {
       const groupState = (shipment.lots || []).map((g) => {
         const ids = g.shipment_lot_ids || [];
         const partials = g.partials_in_shipment || [];
-        const editableKg = g.whole_lot_in_shipment === true && ids.length === 1;
+        // Los kg solo se editan en borradores (en confirmados el
+        // inventario ya se movió).
+        const editableKg = isDraft && g.whole_lot_in_shipment === true && ids.length === 1;
         const currentKg = editableKg
           ? Number(g.kg_dried_shipped ?? g.kg_dried_output ?? 0)
           : partials.reduce((s, p) => s + Number(p.kg_dried || 0), 0);
@@ -874,7 +881,8 @@ export async function fincaDespachosView() {
           el('td', { class: 'px-2 py-1.5 text-[11px] text-ink-500' }, [st.ref]),
           el('td', { class: 'px-2 py-1.5' }, [codT]),
           el('td', { class: 'px-2 py-1.5' }, [codM]),
-          el('td', { class: 'px-2 py-1.5' }, [kgCell]),
+          // Columna kg solo en borradores (en confirmados no se muestra).
+          isDraft ? el('td', { class: 'px-2 py-1.5' }, [kgCell]) : null,
           el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_sacos')]),
           el('td', { class: 'px-2 py-1.5 text-right' }, [numIn(st, 'num_lonas')]),
           el('td', { class: 'px-2 py-1.5' }, [empSel]),
@@ -928,40 +936,71 @@ export async function fincaDespachosView() {
         };
       }
 
-      const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-soft', type: 'button' }, ['Guardar borrador']);
-      const confirmBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['✓ Confirmar despacho']);
-      saveBtn.addEventListener('click', async () => {
-        if (saveBtn.disabled) return;
-        if (!validateKg()) return;
-        saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
-        try {
-          await api.shipmentsUpdate({ shipment_id: shipment.id, ...buildPatch() });
-          toast(`Borrador ${shipment.shipment_code} actualizado`, 'success');
-          close({ ok: true }); await reload();
-        } catch (e) { toast(e.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Guardar borrador'; }
-      });
-      confirmBtn.addEventListener('click', async () => {
-        if (confirmBtn.disabled) return;
-        if (!validateKg()) return;
-        if (destinoSel.value === 'Otro' && !destinoOther.value.trim()) { toast('Especifica el destino "Otro"', 'warning'); return; }
-        const ok = await confirmModal(
-          `Confirmar ${shipment.shipment_code} como despacho definitivo. Los baches pasan a Despachado ` +
-          `y los pedidos asignados podrán completarse. ¿Continuar?`,
-          { title: 'Confirmar despacho' });
-        if (!ok) return;
-        confirmBtn.disabled = true; confirmBtn.textContent = 'Confirmando…';
-        try {
-          const r = await api.shipmentsConfirm({ shipment_id: shipment.id, ...buildPatch() });
-          const compl = (r.completions || []).length;
-          toast(`Despacho ${shipment.shipment_code} confirmado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`, 'success', 4500);
-          close({ ok: true }); await reload();
-        } catch (e) {
-          toast(e.message, 'error'); confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirmar despacho';
-        }
-      });
+      // ── Botones según estado ────────────────────────────────────
+      let actionButtons;
+      if (isDraft) {
+        const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-soft', type: 'button' }, ['Guardar borrador']);
+        const confirmBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['✓ Confirmar despacho']);
+        saveBtn.addEventListener('click', async () => {
+          if (saveBtn.disabled) return;
+          if (!validateKg()) return;
+          saveBtn.disabled = true; saveBtn.textContent = 'Guardando…';
+          try {
+            await api.shipmentsUpdate({ shipment_id: shipment.id, ...buildPatch() });
+            toast(`Borrador ${shipment.shipment_code} actualizado`, 'success');
+            close({ ok: true }); await reload();
+          } catch (e) { toast(e.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Guardar borrador'; }
+        });
+        confirmBtn.addEventListener('click', async () => {
+          if (confirmBtn.disabled) return;
+          if (!validateKg()) return;
+          if (destinoSel.value === 'Otro' && !destinoOther.value.trim()) { toast('Especifica el destino "Otro"', 'warning'); return; }
+          const ok = await confirmModal(
+            `Confirmar ${shipment.shipment_code} como despacho definitivo. Los baches pasan a Despachado ` +
+            `y los pedidos asignados podrán completarse. ¿Continuar?`,
+            { title: 'Confirmar despacho' });
+          if (!ok) return;
+          confirmBtn.disabled = true; confirmBtn.textContent = 'Confirmando…';
+          try {
+            const r = await api.shipmentsConfirm({ shipment_id: shipment.id, ...buildPatch() });
+            const compl = (r.completions || []).length;
+            toast(`Despacho ${shipment.shipment_code} confirmado${compl ? ` · ${compl} pedido(s) completado(s)` : ''}`, 'success', 4500);
+            close({ ok: true }); await reload();
+          } catch (e) {
+            toast(e.message, 'error'); confirmBtn.disabled = false; confirmBtn.textContent = '✓ Confirmar despacho';
+          }
+        });
+        actionButtons = [saveBtn, confirmBtn];
+      } else {
+        // Confirmado: guardar logística/PP's y (opcional) descargar la
+        // remisión final con los códigos ya puestos.
+        const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-soft', type: 'button' }, ['Guardar']);
+        const saveDlBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Guardar y descargar remisión']);
+        const doSave = async (btn, download) => {
+          if (btn.disabled) return;
+          btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
+          try {
+            await api.shipmentsUpdate({ shipment_id: shipment.id, ...buildPatch() });
+            close({ ok: true });
+            await reload();
+            if (download) {
+              const updated = shipments.find((x) => x.id === shipment.id);
+              if (updated) downloadPdf(updated);
+            }
+            toast(`Remisión ${shipment.shipment_code} actualizada`, 'success');
+          } catch (e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = orig; }
+        };
+        saveBtn.addEventListener('click', () => doSave(saveBtn, false));
+        saveDlBtn.addEventListener('click', () => doSave(saveDlBtn, true));
+        actionButtons = [saveBtn, saveDlBtn];
+      }
 
+      const cols = ['Bache', 'Ref', 'Cód. Trilladora', 'Cód. Mezcla',
+        ...(isDraft ? ['kg a despachar'] : []), 'Sacos', 'Lonas', 'Empaque', 'Color', 'Observaciones'];
       return el('div', { class: 'space-y-3' }, [
-        el('p', { class: 'text-[12px] text-ink-500', text: 'Completa la logística y ajusta los kg a despachar (bodega los pesa al alistar). Para cambiar qué baches entran, descarta y crea de nuevo.' }),
+        el('p', { class: 'text-[12px] text-ink-500', text: isDraft
+          ? 'Completa la logística y ajusta los kg a despachar (bodega los pesa al alistar). Para cambiar qué baches entran, descarta y crea de nuevo.'
+          : 'Agrega o edita los PP\'s (código trilladora) y datos de empaque. Los kg no cambian: el despacho ya salió. Al guardar puedes descargar la remisión final.' }),
         el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
           labelled('Fecha', dateIn),
           labelled('Destino', destinoSel),
@@ -976,17 +1015,16 @@ export async function fincaDespachosView() {
         el('div', { class: 'overflow-x-auto border border-sand rounded-md' }, [
           el('table', { class: 'w-full text-[12px]' }, [
             el('thead', {}, [el('tr', { class: 'bg-navy text-yellow' },
-              ['Bache', 'Ref', 'Cód. Trilladora', 'Cód. Mezcla', 'kg a despachar', 'Sacos', 'Lonas', 'Empaque', 'Color', 'Observaciones']
-                .map((h) => el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, [h])))]),
+              cols.map((h) => el('th', { class: 'px-2 py-2 text-left uppercase tracking-eyebrow text-[9px]' }, [h])))]),
             el('tbody', {}, rows),
           ]),
         ]),
         el('div', { class: 'flex flex-wrap justify-end gap-2 pt-3 border-t border-sand' }, [
           el('button', { class: 'ctrm-btn ctrm-btn-ghost', type: 'button', onClick: () => close(null) }, ['Cerrar']),
-          saveBtn, confirmBtn,
+          ...actionButtons,
         ]),
       ]);
-    }, { title: `Completar borrador · ${shipment.shipment_code}`, size: 'xl' });
+    }, { title: isDraft ? `Completar borrador · ${shipment.shipment_code}` : `PP's / remisión · ${shipment.shipment_code}`, size: 'xl' });
   }
 
   async function discardDraft(shipment) {

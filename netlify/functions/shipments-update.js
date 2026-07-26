@@ -9,13 +9,17 @@ const { patchDraft } = require('./_lib/shipmentDraft');
  * POST /shipments-update  (finca, admin)
  * Body: { shipment_id, header?: {...}, lines?: [{id, ...logística}] }
  *
- * Edita un despacho en BORRADOR completando la logística/empaque que
- * faltaba (destino, conductor, códigos, sacos/lonas, empaque, color,
- * observaciones). NO cambia qué baches / cuántos kg — eso se define
- * al crear el borrador; si hay que cambiar la estructura, se descarta
- * y se crea de nuevo.
+ * Edita la LOGÍSTICA de un despacho: destino, conductor, códigos de
+ * trilladora (PP's) / mezcla, sacos/lonas, empaque, color,
+ * observaciones. Ninguno de esos campos toca el inventario.
  *
- * Solo aplica a borradores: un despacho confirmado es inmutable.
+ * - En BORRADOR también se pueden ajustar los kg a despachar.
+ * - En un despacho CONFIRMADO se permite completar/editar la
+ *   logística (p.ej. agregar los PP's que llegan de la trilladora
+ *   después) pero NO los kg — el inventario ya se movió.
+ *
+ * Lo que NO cambia: qué baches entran ni sus divisiones (para eso se
+ * descarta el borrador y se crea de nuevo).
  */
 exports.handler = requireAuth(['finca', 'admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -30,17 +34,17 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     .from('shipments').select('id, status').eq('id', shipment_id).maybeSingle();
   if (sErr) return serverErr('Lookup failed', sErr.message);
   if (!ship) return notFound('Shipment not found');
-  if (ship.status !== 'draft') {
-    return conflict('Solo se puede editar un despacho en borrador', 'NOT_A_DRAFT');
-  }
 
-  const r = await patchDraft(sb, shipment_id, { header: body.header, lines: body.lines });
+  // En confirmados solo se edita logística (kg bloqueado).
+  const allowKg = ship.status === 'draft';
+  const r = await patchDraft(sb, shipment_id, { header: body.header, lines: body.lines }, { allowKg });
   if (!r.ok) {
     if (['UPDATE_FAILED', 'LINE_LOOKUP_FAILED', 'LINE_UPDATE_FAILED'].includes(r.code)) {
       return serverErr(r.message, r.message);
     }
+    if (r.code === 'EXCEEDS_AVAILABLE') return conflict(r.message, r.code);
     return badReq(r.message, r.code);
   }
 
-  return ok({ updated: true, shipment_id });
+  return ok({ updated: true, shipment_id, status: ship.status });
 });

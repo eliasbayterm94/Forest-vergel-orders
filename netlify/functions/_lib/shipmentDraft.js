@@ -53,9 +53,11 @@ function normLineExtras(it) {
  * @param {object} sb
  * @param {string} shipmentId
  * @param {object} patch  { header?: {...}, lines?: [{id, ...logistics}] }
+ * @param {object} [opts] { allowKg=true } — en confirmados va false:
+ *                        la logística se edita pero los kg no.
  * @returns {Promise<{ok:boolean, message?:string, code?:string}>}
  */
-async function patchDraft(sb, shipmentId, patch = {}) {
+async function patchDraft(sb, shipmentId, patch = {}, { allowKg = true } = {}) {
   // ── Header ──────────────────────────────────────────────────────
   const h = patch.header || {};
   const headerUpdate = {};
@@ -101,6 +103,7 @@ async function patchDraft(sb, shipmentId, patch = {}) {
       const row = ownById.get(ln.id);
       if (!row) return err(`la línea ${ln.id} no pertenece a este despacho`, 'LINE_NOT_IN_SHIPMENT');
       if (ln.kg_dried_shipped != null && ln.kg_dried_shipped !== '') {
+        if (!allowKg) return err('los kg no se editan en un despacho confirmado', 'KG_LOCKED');
         if (row.lot_partial_id != null) return err('el kg de un parcial no se edita aquí', 'KG_NOT_EDITABLE');
         const kg = Number(ln.kg_dried_shipped);
         if (!Number.isFinite(kg) || kg <= 0) return err('kg_dried_shipped debe ser > 0', 'INVALID_KG');

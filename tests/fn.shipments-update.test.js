@@ -38,13 +38,34 @@ test('editar borrador: patch de header y línea', async () => {
   assert.equal(line.observaciones, 'urgente');
 });
 
-test('no se puede editar un despacho confirmado', async () => {
-  setFake(fixture('confirmed'));
+test('en confirmado SÍ se puede editar la logística (agregar PP\'s)', async () => {
+  const fake = fixture('confirmed');
+  setFake(fake);
   const r = parseRes(await handler(postEvent({
     shipment_id: SHIP, header: { driver_name: 'X' },
+    lines: [{ id: 'sl1', codigo_trilladora: 'PP-9001' }],
   }), {}));
-  assert.equal(r.status, 409);
-  assert.equal(r.body.code, 'NOT_A_DRAFT');
+  assert.equal(r.status, 200);
+  assert.equal(fake._db.shipments[0].driver_name, 'X');
+  assert.equal(fake._db.shipment_lots[0].codigo_trilladora, 'PP-9001');
+});
+
+test('en confirmado NO se puede editar el kg (KG_LOCKED)', async () => {
+  const fake = createFakeSupabase({
+    shipments: [{ id: SHIP, shipment_code: 'DSP-1', status: 'confirmed' }],
+    shipment_lots: [{ id: 'sl1', shipment_id: SHIP, production_lot_id: 'L1', lot_partial_id: null,
+      kg_dried_shipped: 200, kg_dried_merma: null, lot_partials: null }],
+    production_lots: [{ id: 'L1', kg_dried_output: 350, bache_code: '29', lot_code: 'L' }],
+    lot_blend_components: [],
+  });
+  setFake(fake);
+  const r = parseRes(await handler(postEvent({
+    shipment_id: SHIP, lines: [{ id: 'sl1', kg_dried_shipped: 300 }],
+  }), {}));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'KG_LOCKED');
+  // El kg no cambió.
+  assert.equal(fake._db.shipment_lots[0].kg_dried_shipped, 200);
 });
 
 test('empaque inválido rebota INVALID_EMPAQUE', async () => {
