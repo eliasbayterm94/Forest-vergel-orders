@@ -265,7 +265,10 @@ export function generateShipmentPdf(shipment) {
   doc.setFillColor(...NAVY);
   doc.roundedRect(M, y, W - M * 2, 36, 4, 4, 'F');
   const totStats = [
-    ['# LOTES',       String(shipment.totals?.lot_count ?? shipment.lots.length)],
+    // Se cuenta por LÍNEA de la remisión (cada parcial/división es una
+    // línea), no por bache: un bache separado en varias líneas cuenta
+    // cada una.
+    ['# LÍNEAS',      String(dataRowCount)],
     ['TOTAL KG SECO', fmtKg(totalSeco)],
     ['SACOS',         String(totalSacos)],
     ['LONAS',         String(totalLonas)],
