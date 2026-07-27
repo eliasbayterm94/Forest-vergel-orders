@@ -16,7 +16,7 @@ import { emptyStateCard } from '../ui/empty.js';
 import { renderFilterButton } from '../ui/filters-sheet.js';
 import { createViewMode } from '../ui/view-mode.js';
 import { openPopover } from '../ui/popover.js';
-import { openModal } from '../ui/modal.js';
+import { openModal, confirmModal } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { renderOrderCard } from './_order-card.js';
 
@@ -99,6 +99,7 @@ export async function fincaColaView() {
       if (!lotsByOrder.has(oid)) lotsByOrder.set(oid, []);
       lotsByOrder.get(oid).push({
         lot,
+        assignment_id: a.id,
         kg_green_allocated: Number(a.kg_green_allocated || 0),
         shipments: shipmentPills,
       });
@@ -171,7 +172,7 @@ export async function fincaColaView() {
         el('strong', { class: 'text-navy', text: o.order_code || o.id.slice(0, 8) }),
         o.client_name ? ` de ${o.client_name}` : '',
         `. El pedido pasa a Cancelado y queda en el historial de Terminados. `,
-        `Si tiene baches asignados sin despachar, primero hay que quitar esas asignaciones desde Producción.`,
+        `Si tiene baches asignados sin despachar, primero quita esas asignaciones (aquí en el dropdown del pedido o desde Producción).`,
       ]),
       el('div', {}, [
         el('label', { class: 'ctrm-label', text: 'Motivo *' }),
@@ -200,12 +201,33 @@ export async function fincaColaView() {
         const baches = ((e.detail && e.detail.assignments) || [])
           .map((a) => a.bache_code).filter(Boolean).join(', ');
         toast(
-          `No se puede cancelar: tiene asignaciones activas${baches ? ` (${baches})` : ''}. Quítalas desde Producción primero.`,
+          `No se puede cancelar: tiene asignaciones activas${baches ? ` (${baches})` : ''}. Quítalas primero (dropdown del pedido o Producción).`,
           'error', 8000,
         );
       } else {
         toast(e.message || 'Error al cancelar', 'error', 6000);
       }
+    }
+  }
+
+  // Desasignar un bache de un pedido desde la cola. Solo se ofrece
+  // para baches que aún no se despacharon (si ya salió, la asignación
+  // la respalda una remisión y no se toca desde aquí).
+  async function unassignFromOrder(entry, order) {
+    const lot = entry.lot;
+    const code = lot.bache_code || lot.blend_code || lot.lot_code || '';
+    const ok = await confirmModal(
+      `¿Quitar la asignación del bache ${code} (${fmtKg(entry.kg_green_allocated)} verde) del pedido ` +
+      `${order.order_code || ''}? El bache queda libre para asignarlo a otro pedido.`,
+      { title: 'Quitar asignación', confirmText: 'Quitar', danger: true },
+    );
+    if (!ok) return;
+    try {
+      await api.assignmentsDelete({ assignment_id: entry.assignment_id });
+      toast(`Asignación del bache ${code} quitada del pedido ${order.order_code || ''}`, 'success');
+      navigate('/finca/cola');
+    } catch (e) {
+      toast(e.message || 'Error al quitar la asignación', 'error', 6000);
     }
   }
 
@@ -285,7 +307,7 @@ export async function fincaColaView() {
       return;
     }
     if (vm.mode() === 'table') {
-      list.append(queueTable(shown, today, lotsByOrder, expandedOrders, redraw, cancelOrderModal));
+      list.append(queueTable(shown, today, lotsByOrder, expandedOrders, redraw, cancelOrderModal, unassignFromOrder));
     } else {
       for (const o of shown) list.append(queueRow(o, today, earliest, latest, cancelOrderModal));
     }
@@ -477,7 +499,7 @@ function finishedTable(orders, lotsByOrder, expanded, redraw) {
 
 // ─── Table renderer ────────────────────────────────────────────────
 // COLSPAN = 12 (chevron + 11 columnas de datos)
-function queueTable(orders, today, lotsByOrder, expanded, redraw, onCancel) {
+function queueTable(orders, today, lotsByOrder, expanded, redraw, onCancel, onUnassign) {
   const cell = (label, classes, content) => {
     const td = el('td', { class: classes });
     td.setAttribute('data-label', label);
@@ -573,7 +595,9 @@ function queueTable(orders, today, lotsByOrder, expanded, redraw, onCancel) {
 
       const lots = lotsByOrder.get(o.id) || [];
       const subRow = el('tr', { class: 'bg-cream' }, [
-        el('td', { colspan: '13', class: 'p-3' }, [assignmentsBlock(lots)]),
+        el('td', { colspan: '13', class: 'p-3' }, [
+          assignmentsBlock(lots, { onUnassign: onUnassign ? (entry) => onUnassign(entry, o) : null }),
+        ]),
       ]);
       const frag = document.createDocumentFragment();
       frag.append(mainRow, subRow);
@@ -585,7 +609,8 @@ function queueTable(orders, today, lotsByOrder, expanded, redraw, onCancel) {
 // Mini-tabla con los baches asignados a un pedido específico. Cada
 // fila: bache · status · proceso · variedad · kg verde asignado a
 // ESTE pedido · pills de despachos que lo cubrieron para este pedido.
-function assignmentsBlock(lots) {
+function assignmentsBlock(lots, opts = {}) {
+  const canUnassign = typeof opts.onUnassign === 'function';
   if (lots.length === 0) {
     return el('p', { class: 'text-[12px] text-ink-300 italic px-1',
       text: 'Este pedido no tiene baches asignados todavía.' });
@@ -602,9 +627,14 @@ function assignmentsBlock(lots) {
           el('th', { class: 'px-3 py-1.5 text-left', text: 'Variedad' }),
           el('th', { class: 'px-3 py-1.5 text-right', text: 'kg verde asignado' }),
           el('th', { class: 'px-3 py-1.5 text-left', text: 'Despacho(s)' }),
+          canUnassign ? el('th', { class: 'px-3 py-1.5 text-right', text: '' }) : null,
         ])]),
-        el('tbody', {}, lots.map(({ lot, kg_green_allocated, shipments: shipPills }) => {
+        el('tbody', {}, lots.map((entry) => {
+          const { lot, kg_green_allocated, shipments: shipPills } = entry;
           const varieties = (lot.varieties || []).map((v) => v.name).join(', ') || '—';
+          // Se puede quitar solo si aún no salió (no Delivered y sin
+          // despachos que lo cubran para este pedido).
+          const shipped = (shipPills || []).length > 0 || lot.status === 'Delivered';
           return el('tr', { class: 'border-t border-sand hover:bg-cream' }, [
             el('td', { class: 'px-3 py-1.5' }, [
               el('button', {
@@ -635,13 +665,25 @@ function assignmentsBlock(lots) {
                       text: s.shipment_code,
                     }))),
             ]),
+            canUnassign
+              ? el('td', { class: 'px-3 py-1.5 text-right whitespace-nowrap' }, [
+                  shipped
+                    ? el('span', { class: 'text-ink-300 italic text-[10px]', title: 'Ya despachado; no se puede desasignar desde aquí', text: 'despachado' })
+                    : el('button', {
+                        type: 'button',
+                        class: 'ctrm-btn ctrm-btn-danger ctrm-btn-xs',
+                        title: 'Quitar la asignación de este bache al pedido',
+                        onClick: (e) => { e.stopPropagation(); opts.onUnassign(entry); },
+                      }, ['× Quitar']),
+                ])
+              : null,
           ]);
         })),
         el('tfoot', {}, [el('tr', { class: 'border-t-2 border-ink-300 bg-cream' }, [
           el('td', { colspan: '4', class: 'px-3 py-1.5 font-display text-[10px] uppercase tracking-eyebrow text-ink-700 text-right',
             text: 'Total asignado a este pedido' }),
           el('td', { class: 'px-3 py-1.5 text-right font-mono font-bold text-navy', text: fmtKg(total) }),
-          el('td', {}, []),
+          el('td', { colspan: canUnassign ? '2' : '1' }, []),
         ])]),
       ]),
     ]),
