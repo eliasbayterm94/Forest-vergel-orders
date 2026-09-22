@@ -7,5 +7,9 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'GET') return methodNotAllowed(['GET']);
   const session = getSession(event);
   if (!session) return unauth();
-  return ok({ role: session.role, exp: session.exp });
+  return ok({
+    role:     session.role,
+    username: session.username || null,
+    exp:      session.exp,
+  });
 };

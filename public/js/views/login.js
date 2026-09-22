@@ -4,14 +4,16 @@ import { login } from '../auth.js';
 import { defaultRouteFor, navigate, setSession } from '../router.js';
 
 export function loginView() {
-  const roleSelect = el('select', {
-    id: 'role',
-    class: 'ctrm-select',
-  }, [
-    el('option', { value: 'forest' }, ['Forest (comercial)']),
-    el('option', { value: 'finca' },  ['El Vergel (finca)']),
-    el('option', { value: 'admin' },  ['Admin']),
-  ]);
+  const userInput = el('input', {
+    type: 'text',
+    id: 'username',
+    placeholder: 'tu usuario',
+    autocomplete: 'username',
+    autocapitalize: 'none',
+    autocorrect: 'off',
+    spellcheck: 'false',
+    class: 'ctrm-input mono',
+  });
 
   const passInput = el('input', {
     type: 'password',
@@ -30,13 +32,14 @@ export function loginView() {
     class: 'space-y-3',
     onSubmit: async (e) => {
       e.preventDefault();
-      const role = roleSelect.value;
+      const username = userInput.value.trim();
       const password = passInput.value;
+      if (!username) { toast('Ingresa tu usuario', 'warning'); return; }
       if (!password) { toast('Ingresa la contraseña', 'warning'); return; }
       button.disabled = true;
       button.textContent = 'Entrando...';
       try {
-        const session = await login(role, password);
+        const session = await login(username, password);
         setSession(session);
         navigate(defaultRouteFor(session.role));
       } catch (err) {
@@ -47,8 +50,8 @@ export function loginView() {
     },
   }, [
     el('div', {}, [
-      el('label', { class: 'ctrm-label', for: 'role' }, ['Rol']),
-      roleSelect,
+      el('label', { class: 'ctrm-label', for: 'username' }, ['Usuario']),
+      userInput,
     ]),
     el('div', {}, [
       el('label', { class: 'ctrm-label', for: 'password' }, ['Contraseña']),

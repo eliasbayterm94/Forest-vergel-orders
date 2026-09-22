@@ -8,13 +8,14 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes, usersRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
     api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
     api.fermentationTanksList({ include_inactive: 'true' }).catch(() => ({ fermentation_tanks: [] })),
     api.fermentationTypesList({ include_inactive: 'true' }).catch(() => ({ fermentation_types: [] })),
     api.operatorsList({ include_inactive: 'true' }).catch(() => ({ operators: [] })),
+    api.usersList({ include_inactive: 'true' }).catch(() => ({ users: [] })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
@@ -22,6 +23,7 @@ export async function adminConfigView() {
   let fermentationTanks = (ftRes && ftRes.fermentation_tanks) || [];
   let fermentationTypes = (ftypesRes && ftypesRes.fermentation_types) || [];
   let operators = (opsRes && opsRes.operators) || [];
+  let users = (usersRes && usersRes.users) || [];
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -111,6 +113,22 @@ export async function adminConfigView() {
             const r = await api.operatorsUpdate(payload);
             operators = operators.map((o) => o.id === r.operator.id ? r.operator : o);
             toast(`"${r.operator.name}" actualizado`, 'success');
+          }
+          redraw();
+        } catch (e) { toast(e.message, 'error'); }
+      }),
+      usersSection(users, async (action, payload) => {
+        try {
+          if (action === 'create') {
+            const r = await api.usersCreate(payload);
+            users.push(r.user);
+            toast(`Usuario "${r.user.username}" creado`, 'success');
+          } else if (action === 'update') {
+            const r = await api.usersUpdate(payload);
+            users = users.map((u) => u.id === r.user.id ? r.user : u);
+            toast(r.password_changed
+              ? `Contraseña de "${r.user.username}" actualizada`
+              : `"${r.user.username}" actualizado`, 'success');
           }
           redraw();
         } catch (e) { toast(e.message, 'error'); }
@@ -481,6 +499,119 @@ function fermentationTypesSection(types, onAction) {
     ...rows,
     rows.length === 0
       ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tipos. Agrega uno arriba.' })
+      : null,
+  ]);
+}
+
+// ─── Users section ──────────────────────────────────────────────────
+// Usuarios del sistema: quién puede entrar, con qué rol, y reseteo de
+// contraseñas. Reemplaza las claves compartidas en env vars de Netlify
+// (cambiarlas exigía redeploy). Ver migración 0048_users.sql.
+const ROLE_LABELS = {
+  forest: 'Forest (comercial)',
+  finca:  'El Vergel (finca)',
+  admin:  'Admin',
+};
+
+function roleSelect(value) {
+  return el('select', { class: 'ctrm-select text-[12px]' },
+    Object.entries(ROLE_LABELS).map(([v, label]) =>
+      el('option', v === value ? { value: v, selected: 'selected' } : { value: v }, [label])));
+}
+
+function usersSection(users, onAction) {
+  const newUser = el('input', {
+    type: 'text', placeholder: 'ej: juan.perez', class: 'ctrm-input mono text-[12px]',
+    maxlength: '40', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+  });
+  const newName = el('input', {
+    type: 'text', placeholder: 'Juan Pérez', class: 'ctrm-input text-[12px]', maxlength: '80',
+  });
+  const newPass = el('input', {
+    type: 'text', placeholder: 'mínimo 8 caracteres', class: 'ctrm-input mono text-[12px]',
+    autocomplete: 'off',
+  });
+  const newRole = roleSelect('finca');
+
+  const addBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-primary',
+    type: 'button',
+    onClick: async () => {
+      const username = newUser.value.trim();
+      const password = newPass.value;
+      if (!username) { toast('Ingresa el usuario', 'warning'); return; }
+      if (password.length < 8) { toast('La contraseña debe tener al menos 8 caracteres', 'warning'); return; }
+      await onAction('create', {
+        username,
+        password,
+        role: newRole.value,
+        full_name: newName.value.trim() || null,
+      });
+      newUser.value = ''; newName.value = ''; newPass.value = '';
+    },
+  }, ['+ Crear usuario']);
+
+  const rows = (users || []).map((u) => {
+    const rSel = roleSelect(u.role);
+    const resetInput = el('input', {
+      type: 'text', placeholder: 'nueva contraseña', class: 'ctrm-input mono text-[11px]',
+      autocomplete: 'off',
+    });
+    return el('div', {
+      class: `py-2 border-t border-sand ${u.active ? '' : 'opacity-60'}`,
+    }, [
+      el('div', { class: 'grid grid-cols-[1fr_auto_auto] items-center gap-2' }, [
+        el('div', { class: 'min-w-0' }, [
+          el('p', { class: 'font-mono text-[12px] text-navy truncate', text: u.username }),
+          el('p', { class: 'text-[10px] text-ink-300 truncate',
+            text: [u.full_name, u.last_login_at ? `último ingreso ${fmtDate(u.last_login_at)}` : 'nunca ingresó']
+              .filter(Boolean).join(' · ') }),
+        ]),
+        rSel,
+        el('button', {
+          class: `ctrm-btn ctrm-btn-soft ctrm-btn-xs ${u.active ? 'text-crit' : 'text-ok'}`,
+          type: 'button',
+          onClick: () => onAction('update', { id: u.id, fields: { active: !u.active } }),
+        }, [u.active ? 'Desactivar' : 'Reactivar']),
+      ]),
+      el('div', { class: 'grid grid-cols-[1fr_auto_auto] items-center gap-2 mt-1.5' }, [
+        resetInput,
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+          type: 'button',
+          onClick: () => {
+            const pwd = resetInput.value;
+            if (pwd.length < 8) { toast('La contraseña debe tener al menos 8 caracteres', 'warning'); return; }
+            resetInput.value = '';
+            return onAction('update', { id: u.id, fields: { password: pwd } });
+          },
+        }, ['Resetear clave']),
+        el('button', {
+          class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs',
+          type: 'button',
+          onClick: () => onAction('update', { id: u.id, fields: { role: rSel.value } }),
+        }, ['Guardar rol']),
+      ]),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Usuarios y accesos' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'Quién puede entrar al sistema y con qué rol. Las contraseñas se guardan cifradas en la base de datos: cambiar una tiene efecto inmediato, sin redeploy. Al crear un usuario, entrégale la contraseña por un canal seguro y pídele que la cambies contigo si la comparte.' }),
+    el('div', { class: 'grid grid-cols-[1fr_1fr] gap-2 pb-2' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Usuario' }), newUser]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Nombre completo' }), newName]),
+    ]),
+    el('div', { class: 'grid grid-cols-[1fr_1fr_auto] gap-2 items-end pb-2 border-b border-sand' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Contraseña inicial' }), newPass]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Rol' }), newRole]),
+      addBtn,
+    ]),
+    ...rows,
+    rows.length === 0
+      ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center',
+          text: 'Aún no hay usuarios. Mientras no exista ninguno, el login sigue aceptando las claves por rol de Netlify.' })
       : null,
   ]);
 }

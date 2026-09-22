@@ -70,9 +70,13 @@ export const api = {
   post: (p, body, query)  => request('POST', `/api/${p}`, { body, query }),
 
   // Sugar
-  me:                     () => request('GET',  '/api/me'),
-  login:  (role, password)=> request('POST', '/api/login',  { body: { role, password } }),
-  logout: ()              => request('POST', '/api/logout'),
+  me:                        () => request('GET',  '/api/me'),
+  login:  (username, password) => request('POST', '/api/login', { body: { username, password } }),
+  logout: ()                 => request('POST', '/api/logout'),
+
+  usersList:   (query)   => request('GET',  '/api/users-list',   { query }),
+  usersCreate: (payload) => request('POST', '/api/users-create', { body: payload }),
+  usersUpdate: (payload) => request('POST', '/api/users-update', { body: payload }),
 
   varieties:    () => request('GET',  '/api/varieties-list'),
   varietyAdd:   (name) => request('POST', '/api/varieties-create', { body: { name } }),
