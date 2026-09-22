@@ -55,6 +55,14 @@ const CANNED = {
   '/api/badges':                     { pending_orders: 0, urgent_orders: 0, ready_lots_unshipped: 0 },
   '/api/email-log-list':             { emails: [] },
   '/api/production-config-get':      { config: { weekly_cherry_capacity_kg: 60000 } },
+  // Una fila con last_login_at y otra sin él: ejercita ambas ramas del
+  // subtítulo en la sección de usuarios de /admin/config.
+  '/api/users-list': { table_missing: false, users: [
+    { id: 'u1', username: 'elias', full_name: 'Elias Bayter', role: 'admin',
+      active: true,  last_login_at: '2026-09-20T14:05:00Z', created_at: '2026-09-01T00:00:00Z' },
+    { id: 'u2', username: 'juan',  full_name: null,          role: 'finca',
+      active: false, last_login_at: null,                   created_at: '2026-09-02T00:00:00Z' },
+  ] },
   '/api/weekly-plan-get':            { plan_row: null,
     snapshot: { fermentation_used_kg: 0, mecanico_used_kg: 0, patios_natural_used_kg: 0, patios_hl_used_kg: 0 },
     capacity: { fermentation_kg: 25000, mecanico_kg: 5000, patios_natural_kg: 20000, patios_hl_kg: 40000 },

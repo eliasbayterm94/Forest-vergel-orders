@@ -81,19 +81,29 @@ Set a sender identity:
 
 ### 3. Generate auth secrets
 
-Password hashes (run for each role, then paste into Netlify env vars):
-
-```bash
-node scripts/hash-password.js "your-forest-password"   # → FOREST_PASSWORD_HASH
-node scripts/hash-password.js "your-finca-password"    # → FINCA_PASSWORD_HASH
-node scripts/hash-password.js "your-admin-password"    # → ADMIN_PASSWORD_HASH
-```
-
-Random JWT signing secret (one-time):
+Random JWT signing secret (one-time), for the session cookie signature:
 
 ```bash
 node scripts/generate-secret.js                        # → JWT_SECRET
 ```
+
+Users and passwords live in the `users` table (migration `0048`), not in
+env vars. After running the migrations, create the first admin from the
+Supabase SQL Editor:
+
+```sql
+INSERT INTO users (username, full_name, password_hash, role)
+VALUES ('elias', 'Elias Bayter',
+        crypt('your-admin-password', gen_salt('bf', 12)), 'admin');
+```
+
+Every other user is created from `/admin/config` once you can log in.
+
+> Until that first user exists, login falls back to the legacy per-role
+> env vars (`FOREST/FINCA/ADMIN_PASSWORD_HASH`), using the role name as the
+> username. That keeps the site reachable regardless of whether the
+> migration or the deploy lands first. The fallback switches itself off as
+> soon as one active user exists.
 
 ### 4. Netlify
 
@@ -114,9 +124,9 @@ All set in the Netlify dashboard.
 | `SUPABASE_URL` | yes | `https://<project>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | service_role key. Server only. |
 | `JWT_SECRET` | yes | ≥32 chars random. `node scripts/generate-secret.js` |
-| `FOREST_PASSWORD_HASH` | yes | bcrypt hash, rounds=12 |
-| `FINCA_PASSWORD_HASH` | yes | bcrypt hash, rounds=12 |
-| `ADMIN_PASSWORD_HASH` | yes | bcrypt hash, rounds=12 |
+| `FOREST_PASSWORD_HASH` | legacy | bcrypt hash, rounds=12. Bootstrap only — see §3. Ignored once a user exists. |
+| `FINCA_PASSWORD_HASH` | legacy | idem |
+| `ADMIN_PASSWORD_HASH` | legacy | idem |
 | `GMAIL_CLIENT_ID` | yes | Reuse from Forest Bills |
 | `GMAIL_CLIENT_SECRET` | yes |  |
 | `GMAIL_REFRESH_TOKEN` | yes |  |
@@ -140,15 +150,30 @@ All set in the Netlify dashboard.
 
 ## Operations
 
-### Rotate a password
+### Users and passwords
 
-```bash
-node scripts/hash-password.js "new-password"
+Day to day, from `/admin/config` → **Usuarios y accesos**: create a user,
+reset someone's password, change their role, deactivate them. Changes take
+effect on the next login — no redeploy.
+
+**Locked out of every admin account?** The break-glass is the Supabase SQL
+Editor:
+
+```sql
+UPDATE users
+   SET password_hash = crypt('new-password', gen_salt('bf', 12))
+ WHERE username = 'elias';
 ```
 
-Paste the new hash into the relevant `*_PASSWORD_HASH` env var. Existing
-sessions remain valid until cookie expiry (7 days). To force-invalidate all
-sessions, also rotate `JWT_SECRET` — that breaks every signed cookie immediately.
+`pgcrypto`'s bcrypt output (`$2a$12$…`) is what `bcryptjs` verifies against
+in `_lib/auth.js`, so the two are interchangeable.
+
+Changing a password does **not** end sessions already open — the cookie
+lasts 7 days. To force everyone out immediately, rotate `JWT_SECRET` in
+Netlify and redeploy; that invalidates every signed cookie at once.
+
+`users-update` refuses any change that would leave zero active admins, so
+the UI can't lock you out of `/admin/config`.
 
 ### Add / remove notification recipients
 

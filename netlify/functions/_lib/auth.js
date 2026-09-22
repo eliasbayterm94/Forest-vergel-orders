@@ -1,9 +1,18 @@
 /**
- * Auth — shared-password-per-role login with HMAC-signed cookie token.
+ * Auth — login por usuario individual con cookie firmada (HMAC).
  *
- * Roles: forest | finca | admin
- * Each role has a bcrypt-hashed password in env vars:
- *   FOREST_PASSWORD_HASH, FINCA_PASSWORD_HASH, ADMIN_PASSWORD_HASH
+ * Usuarios y contraseñas viven en la tabla `users` de Supabase
+ * (migración 0048). El rol — forest | finca | admin — sale de la fila
+ * del usuario, nunca de lo que mande el cliente.
+ *
+ * Cambiar una clave es un UPDATE en la base; no requiere redeploy.
+ *
+ * MODO LEGACY (compatibilidad): mientras no exista ningún usuario
+ * activo — o la migración 0048 no esté aplicada — el login acepta las
+ * claves por rol de las env vars FOREST/FINCA/ADMIN_PASSWORD_HASH,
+ * usando el nombre del rol como usuario. Así el sistema nunca queda
+ * inaccesible por el orden entre migración y deploy. En cuanto se crea
+ * el primer usuario activo, este camino deja de usarse.
  *
  * On successful login we set an HttpOnly cookie containing a token of
  * the form  base64url(payload).base64url(hmac)  signed with JWT_SECRET.
@@ -14,11 +23,18 @@
 
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
+const users = require('./users');
 
 const COOKIE_NAME = 'fvb_session';
 const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 const ROLES = ['forest', 'finca', 'admin'];
+
+// Hash real de una cadena aleatoria descartada. Se compara contra él
+// cuando el usuario no existe, para que un atacante no distinga
+// "usuario inexistente" de "clave incorrecta" por el tiempo de
+// respuesta (bcrypt tarda ~300ms; un return temprano tardaría ~0ms).
+const DUMMY_HASH = '$2a$12$po.p0Ge7D/ab5ReGDGGtqulXvx.QiEbCv5kkAUdTb1n1GOw54A9ge';
 
 function getRoleHash(role) {
   switch (role) {
@@ -29,11 +45,52 @@ function getRoleHash(role) {
   }
 }
 
+/** Login legacy por rol contra las env vars. Ver nota de arriba. */
 async function verifyPassword(role, password) {
   if (!ROLES.includes(role)) return false;
   const hash = getRoleHash(role);
   if (!hash || typeof password !== 'string' || !password) return false;
   return bcrypt.compare(password, hash);
+}
+
+/**
+ * Autentica username + password.
+ *
+ * Devuelve el payload de sesión { uid, username, role, name } o null
+ * si las credenciales no sirven. Nunca revela si el usuario existe.
+ */
+async function authenticate(username, password) {
+  if (typeof username !== 'string' || !username) return null;
+  if (typeof password !== 'string' || !password) return null;
+  const uname = username.trim().toLowerCase();
+
+  const { tableMissing, user } = await users.findActiveUserForLogin(uname);
+
+  if (user) {
+    const okPass = await bcrypt.compare(password, user.password_hash);
+    if (!okPass) return null;
+    await users.touchLastLogin(user.id);
+    return {
+      uid:      user.id,
+      username: user.username,
+      role:     user.role,
+      name:     user.full_name || null,
+    };
+  }
+
+  // Sin usuario: ¿estamos todavía en modo legacy?
+  const legacyOpen = tableMissing || !(await users.hasAnyActiveUser());
+  if (legacyOpen) {
+    if (await verifyPassword(uname, password)) {
+      return { uid: null, username: uname, role: uname, name: null, legacy: true };
+    }
+    return null;
+  }
+
+  // Tabla poblada y el usuario no existe: quemamos el mismo tiempo que
+  // habría costado verificar una clave real.
+  await bcrypt.compare(password, DUMMY_HASH);
+  return null;
 }
 
 // ---- token signing ----
@@ -151,6 +208,6 @@ function requireAuth(rolesOrHandler, maybeHandler) {
 
 module.exports = {
   ROLES, COOKIE_NAME, DEFAULT_TTL_SECONDS,
-  verifyPassword, sign, verify, buildCookie, clearCookie, readCookie,
+  authenticate, verifyPassword, sign, verify, buildCookie, clearCookie, readCookie,
   getSession, requireAuth,
 };

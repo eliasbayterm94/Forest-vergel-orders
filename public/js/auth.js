@@ -15,8 +15,8 @@ export async function loadSession() {
   }
 }
 
-export async function login(role, password) {
-  const res = await api.login(role, password);
+export async function login(username, password) {
+  const res = await api.login(username, password);
   _session = res;
   return res;
 }
