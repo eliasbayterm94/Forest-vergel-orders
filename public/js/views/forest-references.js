@@ -26,7 +26,8 @@ export async function forestReferencesView() {
     el('div', { class: 'flex flex-wrap text-[12px] text-ink-500 gap-x-4 gap-y-1 font-mono' }, [
       r.process_type ? meta('Proceso', r.process_type) : null,
       r.fermentation_hours != null ? meta('Fermentación', `${r.fermentation_hours} h`) : null,
-      !r.process_type && r.fermentation_hours == null
+      r.prefermentation_hours != null ? meta('Prefermentación', `${r.prefermentation_hours} h`) : null,
+      !r.process_type && r.fermentation_hours == null && r.prefermentation_hours == null
         ? el('span', { class: 'text-ink-300 italic', text: 'sin plantilla' })
         : null,
     ]),
@@ -77,6 +78,7 @@ export async function forestReferencesView() {
         name: result.name,
         process_type: result.process_type,
         fermentation_hours: result.fermentation_hours,
+        prefermentation_hours: result.prefermentation_hours,
         notes: result.notes || null,
       });
       const idx = refs.findIndex((x) => x.id === r.reference.id);
@@ -127,6 +129,12 @@ export function openReferenceModal({ initial = null, initialName = '' } = {}) {
       placeholder: 'Opcional',
       class: 'ctrm-input mono',
     });
+    const prefermInput = el('input', {
+      type: 'number', min: '0', step: '0.5',
+      value: initial?.prefermentation_hours != null ? String(initial.prefermentation_hours) : '',
+      placeholder: 'Opcional',
+      class: 'ctrm-input mono',
+    });
     const notesInput = el('textarea', {
       rows: '2', placeholder: 'Notas (opcional)',
       class: 'ctrm-textarea',
@@ -141,6 +149,9 @@ export function openReferenceModal({ initial = null, initialName = '' } = {}) {
       el('label', { class: 'ctrm-label mt-2' }, ['Fermentación (horas)']),
       fermInput,
       el('p', { class: 'ctrm-hint', text: 'Opcional. Se autocompleta en el formulario de pedido cuando se elija esta referencia.' }),
+      el('label', { class: 'ctrm-label mt-2' }, ['Prefermentación (horas)']),
+      prefermInput,
+      el('p', { class: 'ctrm-hint', text: 'Horas antes de la fermentación inicial. Se autocompleta al crear el bache.' }),
       el('label', { class: 'ctrm-label mt-2' }, ['Notas']),
       notesInput,
       el('div', { class: 'flex justify-end gap-2 pt-2' }, [
@@ -155,10 +166,15 @@ export function openReferenceModal({ initial = null, initialName = '' } = {}) {
             if (ferm != null && (!Number.isFinite(ferm) || ferm < 0)) {
               toast('Fermentación inválida', 'warning'); return;
             }
+            const preferm = prefermInput.value === '' ? null : Number(prefermInput.value);
+            if (preferm != null && (!Number.isFinite(preferm) || preferm < 0)) {
+              toast('Prefermentación inválida', 'warning'); return;
+            }
             close({
               name,
               process_type: processSelect.value || null,
               fermentation_hours: ferm,
+              prefermentation_hours: preferm,
               notes: notesInput.value || null,
             });
           },

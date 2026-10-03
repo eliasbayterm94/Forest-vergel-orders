@@ -979,6 +979,9 @@ function buildPassportEvents(lot) {
       if (Number.isFinite(a) && Number.isFinite(b)) realH = Math.round((b - a) / 3600000);
     }
     const pills = [];
+    // Prefermentación: horas antes de que arranque la fermentación.
+    const preH = lot.prefermentation_hours;
+    if (preH != null) pills.push({ label: 'PRE-FERM', value: `${Number(preH)} h` });
     if (planH > 0) pills.push({ label: 'PLANNED', value: `${planH} h` });
     if (realH != null) pills.push({ label: 'ACTUAL', value: `${realH} h` });
     if (planH > 0 && realH != null) {

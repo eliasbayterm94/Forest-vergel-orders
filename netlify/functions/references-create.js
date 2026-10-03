@@ -1,12 +1,13 @@
 'use strict';
 
 const { requireAuth } = require('./_lib/auth');
+const { validatePrefermentationHours } = require('./_lib/prefermentation');
 const { getSupabase } = require('./_lib/supabase');
 const { PROCESS_TYPES } = require('./_lib/schema');
 const { ok, created, badReq, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
- * POST /references-create  { name, process_type?, fermentation_hours?, notes? }
+ * POST /references-create  { name, process_type?, fermentation_hours?, prefermentation_hours?, notes? }
  *
  * Idempotent on `name` (citext). On lookup-only call (just `name`), returns
  * the existing row unchanged. When `process_type` and/or
@@ -36,6 +37,11 @@ exports.handler = requireAuth(async (event) => {
     return badReq('fermentation_hours must be >= 0', 'INVALID_FERMENTATION');
   }
 
+  // Prefermentación de la receta: auto-rellena el formulario del bache.
+  const prefermCheck = validatePrefermentationHours(body.prefermentation_hours);
+  if (!prefermCheck.ok) return badReq(prefermCheck.message, 'INVALID_PREFERMENTATION');
+  const prefermentation_hours = prefermCheck.value;
+
   const notes = (typeof body.notes === 'string') ? body.notes : null;
 
   const sb = getSupabase();
@@ -43,7 +49,7 @@ exports.handler = requireAuth(async (event) => {
   // Look up existing
   const { data: existing, error: lookupErr } = await sb
     .from('coffee_references')
-    .select('id, name, active, notes, process_type, fermentation_hours')
+    .select('id, name, active, notes, process_type, fermentation_hours, prefermentation_hours')
     .eq('name', name).maybeSingle();
   if (lookupErr) return serverErr('Lookup failed', lookupErr.message);
 
@@ -51,28 +57,30 @@ exports.handler = requireAuth(async (event) => {
   if (!refRow) {
     const { data, error } = await sb
       .from('coffee_references')
-      .insert({ name, process_type, fermentation_hours, notes })
-      .select('id, name, active, notes, process_type, fermentation_hours')
+      .insert({ name, process_type, fermentation_hours, prefermentation_hours, notes })
+      .select('id, name, active, notes, process_type, fermentation_hours, prefermentation_hours')
       .single();
     if (error) return serverErr('Insert failed', error.message);
     refRow = data;
-  } else if (process_type !== null || fermentation_hours !== null || notes !== null) {
+  } else if (process_type !== null || fermentation_hours !== null
+             || prefermentation_hours !== null || notes !== null) {
     // Update what was provided (so an existing row's template can be revised).
     const update = {};
     if (process_type !== null) update.process_type = process_type;
     if (fermentation_hours !== null) update.fermentation_hours = fermentation_hours;
+    if (prefermentation_hours !== null) update.prefermentation_hours = prefermentation_hours;
     if (notes !== null) update.notes = notes;
     const { data, error } = await sb
       .from('coffee_references')
       .update(update)
       .eq('id', refRow.id)
-      .select('id, name, active, notes, process_type, fermentation_hours')
+      .select('id, name, active, notes, process_type, fermentation_hours, prefermentation_hours')
       .single();
     if (error) return serverErr('Update failed', error.message);
     refRow = data;
   }
 
-  return existing && !process_type && !fermentation_hours
+  return existing && !process_type && !fermentation_hours && prefermentation_hours === null
     ? ok({ reference: refRow, created: false })
     : created({ reference: refRow, created: !existing });
 });

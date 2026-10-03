@@ -372,6 +372,7 @@ function buildEvents(lot, isLocked) {
     const fTanks = (lot.fermentation_tanks || []).join(' · ');
     const detailLines = [
       `${stageLabel(lot.processing_stage)} · ${lot.kg_input_initial != null ? fmtKg(lot.kg_input_initial) : '—'}`,
+      lot.prefermentation_hours != null ? `Prefermentación: ${lot.prefermentation_hours} h` : null,
       fTypes ? `Tipos: ${fTypes}` : null,
       fTanks ? `Tanques: ${fTanks}` : null,
     ].filter(Boolean);

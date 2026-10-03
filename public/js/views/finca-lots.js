@@ -1116,6 +1116,9 @@ export async function fincaLotsView() {
           if (item?.fermentation_hours != null && fermInput.value === '') {
             fermInput.value = String(item.fermentation_hours);
           }
+          if (item?.prefermentation_hours != null && prefermInput.value === '') {
+            prefermInput.value = String(item.prefermentation_hours);
+          }
           maybeRefreshCandidates();
         },
         onCreate: async (text) => {
@@ -1126,6 +1129,7 @@ export async function fincaLotsView() {
               name,
               process_type: procSelect.value || null,
               fermentation_hours: fermInput.value === '' ? null : Number(fermInput.value),
+              prefermentation_hours: prefermInput.value === '' ? null : Number(prefermInput.value),
             });
             toast(`Referencia "${r.reference.name}" lista`, 'success');
             // Append to local list y refrescar el combo
@@ -1187,6 +1191,13 @@ export async function fincaLotsView() {
       const fermInput = el('input', {
         type: 'number', min: '0', step: '0.5', value: '0',
         placeholder: '0 = entra directo a Secado',
+        class: 'ctrm-input mono',
+      });
+      // Prefermentación: horas ANTES de que arranque la fermentación
+      // inicial. Descriptivo — no mueve el estado del bache.
+      const prefermInput = el('input', {
+        type: 'number', min: '0', step: '0.5',
+        placeholder: 'Opcional',
         class: 'ctrm-input mono',
       });
       // Sección que aparece cuando fermentation_hours === 0
@@ -1440,6 +1451,11 @@ export async function fincaLotsView() {
 
         labelled('Fecha de inicio', startInput),
         labelled('Horas de fermentación *', fermInput),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: 'Horas de prefermentación' }),
+          prefermInput,
+          el('p', { class: 'ctrm-hint', text: 'Horas que se deja prefermentando antes de la fermentación inicial. Opcional: déjalo vacío si no aplica.' }),
+        ]),
         skipSection,
         el('div', {}, [
           el('label', { class: 'ctrm-label' }, [
@@ -1535,6 +1551,7 @@ export async function fincaLotsView() {
                   kg_input_amount: kg,
                   start_date: startInput.value,
                   fermentation_hours: fermHoursNum,
+                  prefermentation_hours: prefermInput.value === '' ? null : Number(prefermInput.value),
                   variety_ids: [...new Set(vCombo.getValues().map((v) => v.id))],
                   fermentation_tanks: tanksCombo.getValues().map((t) => t.name),
                   fermentation_types: fermTypesCombo.getValues().map((t) => t.name),

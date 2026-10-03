@@ -13,7 +13,7 @@ exports.handler = requireAuth(async (event) => {
   const sb = getSupabase();
   const { data, error } = await sb
     .from('coffee_references')
-    .select('id, name, active, notes, process_type, fermentation_hours')
+    .select('id, name, active, notes, process_type, fermentation_hours, prefermentation_hours')
     .eq('active', true)
     .order('name', { ascending: true });
   if (error) return serverErr('Failed to load references', error.message);

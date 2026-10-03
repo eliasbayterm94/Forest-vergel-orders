@@ -569,6 +569,12 @@ export async function editBacheModal(lot) {
       value: lot.fermentation_hours != null ? String(lot.fermentation_hours) : '',
       class: 'ctrm-input mono',
     });
+    // Prefermentación: horas antes de la fermentación inicial.
+    const prefermInput = el('input', {
+      type: 'number', min: '0', step: '0.5', placeholder: 'Opcional',
+      value: lot.prefermentation_hours != null ? String(lot.prefermentation_hours) : '',
+      class: 'ctrm-input mono',
+    });
     const vCombo = createMultiCombobox({
       placeholder: 'Variedades...',
       items: allVarieties,
@@ -631,6 +637,7 @@ export async function editBacheModal(lot) {
       labelled(stageInputLabel, kgInput),
       labelled('Proceso', procSelect),
       labelled('Horas de fermentación', fermInput),
+      labelled('Horas de prefermentación', prefermInput),
 
       el('div', {}, [
         el('label', { class: 'ctrm-label' }, [
@@ -660,6 +667,7 @@ export async function editBacheModal(lot) {
             const kg = kgInput.value === '' ? null : Number(kgInput.value);
             const proc = procSelect.value;
             const ferm = fermInput.value === '' ? null : Number(fermInput.value);
+            const preferm = prefermInput.value === '' ? null : Number(prefermInput.value);
             const varietyIds = vCombo.getValues().map((v) => v.id);
             const infPct = chosenInfusion ? Number(infPctInput.value) : null;
             const notesVal = notesInput.value.trim();
@@ -677,6 +685,7 @@ export async function editBacheModal(lot) {
               kg_input_initial: kg,
               process_type: proc,
               fermentation_hours: ferm,
+              prefermentation_hours: preferm,
               notes: notesVal || null,
               infusion_id:  chosenInfusion ? chosenInfusion.id : null,
               infusion_pct: chosenInfusion ? infPct : null,
