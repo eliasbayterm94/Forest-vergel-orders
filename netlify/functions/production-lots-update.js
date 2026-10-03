@@ -4,7 +4,8 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { validateDryingLocations } = require('./_lib/dryingTypes');
 const { validateFermentationTanks } = require('./_lib/fermentationTanks');
-const { validateFermentationTypes } = require('./_lib/fermentationTypes');
+const { validateFermentationTypes, reconcileSecadoDirecto } = require('./_lib/fermentationTypes');
+const { validatePrefermentationHours } = require('./_lib/prefermentation');
 const { ok, badReq, conflict, notFound, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 const { checkDriedPlausibility } = require('./_lib/plausibility');
@@ -26,7 +27,8 @@ const { checkDriedPlausibility } = require('./_lib/plausibility');
  */
 const ALLOWED = new Set([
   'bache_code', 'start_date', 'kg_input_initial', 'notes',
-  'process_type', 'fermentation_hours', 'fermentation_tanks', 'fermentation_types',
+  'process_type', 'fermentation_hours', 'prefermentation_hours',
+  'fermentation_tanks', 'fermentation_types',
   'fermentation_start_at', 'drying_start_at',
   'drying_start_date', 'drying_locations',
   'ready_date', 'delivered_date',
@@ -148,6 +150,43 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
     if (!result.ok) return badReq(result.message, 'INVALID_FERM_TYPES');
     update.fermentation_types = result.types;
+  }
+  if (update.prefermentation_hours !== undefined) {
+    const r = validatePrefermentationHours(update.prefermentation_hours);
+    if (!r.ok) return badReq(r.message, 'INVALID_PREFERM_HOURS');
+    update.prefermentation_hours = r.value;
+  }
+
+  // Invariante "Secado directo" ⟺ fermentation_hours = 0, evaluado
+  // sobre el estado RESULTANTE: lo que trae el update, y para lo que
+  // no trae, lo que ya tiene la fila. Solo corre si el update toca
+  // alguno de los dos campos — así no reescribimos tipos en ediciones
+  // que no tienen nada que ver.
+  const touchesFerm = update.fermentation_hours !== undefined
+                   || update.fermentation_types !== undefined;
+  if (touchesFerm) {
+    const { data: cur, error: curErr } = await sb
+      .from('production_lots')
+      .select('fermentation_hours, fermentation_types')
+      .eq('id', lot_id).maybeSingle();
+    if (curErr) return serverErr('Lot lookup failed', curErr.message);
+    if (!cur) return notFound('Lot not found');
+
+    const resultingHours = update.fermentation_hours !== undefined
+      ? Number(update.fermentation_hours)
+      : Number(cur.fermentation_hours);
+    const resultingTypes = update.fermentation_types !== undefined
+      ? update.fermentation_types
+      : (cur.fermentation_types || []);
+
+    const rec = reconcileSecadoDirecto(resultingTypes, resultingHours, {
+      typesExplicit: update.fermentation_types !== undefined,
+    });
+    if (!rec.ok) return badReq(rec.message, 'FERM_TYPE_HOURS_MISMATCH');
+
+    // Solo persistimos los tipos si cambiaron respecto de la fila.
+    const before = (cur.fermentation_types || []).join('\u0000');
+    if (rec.types.join('\u0000') !== before) update.fermentation_types = rec.types;
   }
 
   // Plausibility del peso seco: si el update trae kg_dried_output (o

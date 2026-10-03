@@ -1,6 +1,7 @@
 'use strict';
 
 const { requireAuth } = require('./_lib/auth');
+const { validatePrefermentationHours } = require('./_lib/prefermentation');
 const { getSupabase } = require('./_lib/supabase');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 const { PROCESS_TYPES } = require('./_lib/schema');
@@ -48,6 +49,9 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     const fermentation_hours = o.fermentation_hours == null ? 0 : Number(o.fermentation_hours);
     const fermentation_tanks = Array.isArray(o.fermentation_tanks) ? o.fermentation_tanks : [];
     const fermentation_types = Array.isArray(o.fermentation_types) ? o.fermentation_types : [];
+    const prefermCheck = validatePrefermentationHours(o.prefermentation_hours);
+    if (!prefermCheck.ok) errs.push(prefermCheck.message);
+    const prefermentation_hours = prefermCheck.ok ? prefermCheck.value : null;
     const drying_locations   = Array.isArray(o.drying_locations) ? o.drying_locations : [];
     const variety_ids = Array.isArray(o.variety_ids) ? o.variety_ids : [];
     const notes = o.notes == null ? null : String(o.notes);
@@ -97,6 +101,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_input_initial:    kg_input_amount,
       kg_green_expected,
       fermentation_hours,
+      prefermentation_hours,
       fermentation_tanks,
       fermentation_types,
       drying_locations,
@@ -173,6 +178,20 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     if (!r.ok) return badReq(r.message, 'INVALID_FERM_TYPES');
   }
 
+  // Invariante "Secado directo" ⟺ fermentation_hours = 0, por fila.
+  // Los tipos vienen explícitos del formulario masivo, así que una
+  // combinación incoherente es error del usuario y nombra la fila.
+  {
+    const { reconcileSecadoDirecto } = require('./_lib/fermentationTypes');
+    for (const o of cleaned) {
+      const rec = reconcileSecadoDirecto(o.fermentation_types || [], o.fermentation_hours, {
+        typesExplicit: true,
+      });
+      if (!rec.ok) return badReq(`${o.bache_code}: ${rec.message}`, 'FERM_TYPE_HOURS_MISMATCH');
+      o.fermentation_types = rec.types;
+    }
+  }
+
   // Validar drying_locations (de las filas con skip-fermentation)
   const allLocs = [...new Set(cleaned.flatMap((o) => o.drying_locations || []))];
   if (allLocs.length > 0) {
@@ -197,6 +216,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_input_initial: o.kg_input_initial,
       kg_green_expected: o.kg_green_expected,
       fermentation_hours: o.fermentation_hours,
+      prefermentation_hours: o.prefermentation_hours,
       fermentation_tanks: o.fermentation_tanks || [],
       fermentation_types: o.fermentation_types || [],
       fermentation_start_at: nowIso,

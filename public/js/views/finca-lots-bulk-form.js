@@ -118,6 +118,7 @@ export async function fincaLotsBulkFormView() {
     { label: 'Tanques',    cls: 'min-w-[150px]' },
     { label: 'Tipos ferm.', cls: 'min-w-[150px]' },
     { label: 'Ferm. (h)',  cls: 'w-20 text-right' },
+    { label: 'Preferm. (h)', cls: 'w-20 text-right' },
     { label: 'Infusión',   cls: 'min-w-[130px]' },
     { label: '%',          cls: 'w-16 text-right' },
     { label: 'Notas',      cls: 'min-w-[160px]' },
@@ -369,6 +370,12 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
     placeholder: '0',
     title: 'Horas planificadas de fermentación. 0 = entra directo a Secado.',
   });
+  const prefermInput = el('input', {
+    type: 'number', min: '0', step: '0.5',
+    class: 'ctrm-input mono w-full text-[12px] text-right',
+    placeholder: '—',
+    title: 'Horas de prefermentación, antes de la fermentación inicial. Vacío = no aplica.',
+  });
   const infusionInput = el('input', {
     type: 'text', class: 'ctrm-input w-full text-[12px]',
     placeholder: '—', autocomplete: 'off',
@@ -398,6 +405,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
     if (!ref) return;
     if (ref.process_type) processSelect.value = ref.process_type;
     if (ref.fermentation_hours != null && fermInput.value === '') fermInput.value = String(ref.fermentation_hours);
+    if (ref.prefermentation_hours != null && prefermInput.value === '') prefermInput.value = String(ref.prefermentation_hours);
   }
   refInput.addEventListener('change', onRefChange);
   refInput.addEventListener('input',  onRefChange);
@@ -421,6 +429,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
     el('td', { class: cellCls }, [tanksCell]),
     el('td', { class: cellCls }, [fermTypesCell]),
     el('td', { class: cellCls }, [fermInput]),
+    el('td', { class: cellCls }, [prefermInput]),
     el('td', { class: cellCls }, [infusionInput]),
     el('td', { class: cellCls }, [infusionPctInput]),
     el('td', { class: cellCls }, [notesInput]),
@@ -448,6 +457,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       fermTypesCombo.setValues(matched);
     }
     if (p.ferm != null) fermInput.value  = p.ferm;
+    if (p.preferm != null) prefermInput.value = p.preferm;
     if (p.infusion)    infusionInput.value = p.infusion;
     if (p.infusion_pct != null) infusionPctInput.value = p.infusion_pct;
     if (p.notes)       notesInput.value  = p.notes;
@@ -466,6 +476,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       tanks:      tanksCombo.getValues().map((t) => t.name),
       ferm_types: fermTypesCombo.getValues().map((t) => t.name),
       ferm:       fermInput.value,
+      preferm:    prefermInput.value,
       infusion:   infusionInput.value,
       infusion_pct: infusionPctInput.value,
       notes:      notesInput.value,
@@ -512,6 +523,7 @@ function createBulkRow({ refDatalistId, varietyDatalistId, infusionDatalistId, a
       kg_input_amount: kg,
       start_date: dateInput.value,
       fermentation_hours: fermInput.value === '' ? 0 : Number(fermInput.value),
+      prefermentation_hours: prefermInput.value === '' ? null : Number(prefermInput.value),
       fermentation_tanks: rawTankNames,
       fermentation_types: rawFermTypeNames,
       notes: notesInput.value || null,

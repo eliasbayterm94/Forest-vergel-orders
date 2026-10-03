@@ -4,6 +4,7 @@ const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { inputToGreen, INPUT_STAGE_DIVISORS } = require('./_lib/processYields');
 const { PROCESS_TYPES, ORDER_STATUS } = require('./_lib/schema');
+const { validatePrefermentationHours } = require('./_lib/prefermentation');
 const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
@@ -17,6 +18,7 @@ const { created, badReq, conflict, serverErr, methodNotAllowed, parseJson } = re
  *   kg_input_amount        number > 0          (the weight at the chosen stage)
  *   start_date             'YYYY-MM-DD'
  *   fermentation_hours     number >= 0 (optional)
+ *   prefermentation_hours  number >= 0 (optional, null = sin registrar)
  *   variety_ids            [uuid] (required, ≥1)
  *   notes                  string (optional)
  *   initial_assignments    [{ demand_order_id, kg_green_allocated }] (optional)
@@ -58,6 +60,10 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   // fermentation_hours ahora es OBLIGATORIO (default 0). Si llega 0
   // el lote nace directo en Drying (skip fermentation).
   const fermentation_hours = body.fermentation_hours == null ? 0 : Number(body.fermentation_hours);
+  // Prefermentación: horas antes de la fermentación inicial. Opcional,
+  // null = sin registrar. No altera el flujo del bache (ver 0049).
+  const prefermCheck = validatePrefermentationHours(body.prefermentation_hours);
+  const prefermentation_hours = prefermCheck.ok ? prefermCheck.value : null;
   const variety_ids = Array.isArray(body.variety_ids) ? body.variety_ids : [];
   const notes = body.notes == null ? null : String(body.notes);
   const initial_assignments = Array.isArray(body.initial_assignments) ? body.initial_assignments : [];
@@ -82,6 +88,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date || '')) errors.push('start_date must be YYYY-MM-DD');
   if (!Number.isFinite(fermentation_hours) || fermentation_hours < 0)
     errors.push('fermentation_hours must be >= 0');
+  if (!prefermCheck.ok) errors.push(prefermCheck.message);
   if (variety_ids.length === 0) errors.push('al menos una variedad es requerida');
   // Si fermentation_hours === 0 y el caller pasó drying locations, validar formato date
   if (drying_start_date != null && !/^\d{4}-\d{2}-\d{2}$/.test(drying_start_date)) {
@@ -129,13 +136,23 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   // Tipos de fermentación (opcional, multi-select).
   const fermentation_types_raw = body.fermentation_types;
   let fermentation_types_value = [];
+  const { validateFermentationTypes, reconcileSecadoDirecto } = require('./_lib/fermentationTypes');
   if (fermentation_types_raw != null) {
-    const { validateFermentationTypes } = require('./_lib/fermentationTypes');
     let r;
     try { r = await validateFermentationTypes(sb, fermentation_types_raw); }
     catch (e) { return serverErr('Fermentation types lookup failed', e.message); }
     if (!r.ok) return badReq(r.message, 'INVALID_FERM_TYPES');
     fermentation_types_value = r.types;
+  }
+
+  // Invariante: "Secado directo" ⟺ fermentation_hours = 0. Pedirlo con
+  // horas != 0 es error; poner 0 horas lo marca solo (ver 0049).
+  {
+    const rec = reconcileSecadoDirecto(fermentation_types_value, fermentation_hours, {
+      typesExplicit: fermentation_types_raw != null,
+    });
+    if (!rec.ok) return badReq(rec.message, 'FERM_TYPE_HOURS_MISMATCH');
+    fermentation_types_value = rec.types;
   }
 
   // Marquesinas de secado (opcional al crear; útiles cuando
@@ -171,6 +188,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       kg_input_initial: kg_input_amount,
       kg_green_expected,
       fermentation_hours,
+      prefermentation_hours,
       fermentation_tanks: fermentation_tanks_value,
       fermentation_types: fermentation_types_value,
       fermentation_start_at: fermentation_start_at || new Date().toISOString(),
