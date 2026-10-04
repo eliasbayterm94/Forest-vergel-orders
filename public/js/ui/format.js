@@ -54,6 +54,49 @@ const STATUS_PILL = {
 };
 export const statusPillKind = (s) => STATUS_PILL[s] || 'muted';
 
+/**
+ * Días contra una fecha límite, en texto corto y legible.
+ *
+ * El backend manda el número ya calculado (days_to_delivery /
+ * days_to_drying_start en demand-orders-list): positivo = faltan,
+ * 0 = es hoy, negativo = se pasó hace tantos días.
+ *
+ *   12  → 'faltan 12 d'
+ *    1  → 'falta 1 d'
+ *    0  → 'es hoy'
+ *   -3  → 'vencido 3 d'
+ */
+export function fmtDaysLeft(days) {
+  if (days == null || !Number.isFinite(Number(days))) return '—';
+  const n = Math.trunc(Number(days));
+  if (n === 0) return 'es hoy';
+  if (n > 0) return `${n === 1 ? 'falta' : 'faltan'} ${n} d`;
+  return `vencido ${Math.abs(n)} d`;
+}
+
+/** Clase de color para el texto de fmtDaysLeft. */
+export function daysLeftClass(days) {
+  if (days == null || !Number.isFinite(Number(days))) return 'text-ink-300';
+  const n = Number(days);
+  if (n < 0)  return 'text-crit font-semibold';
+  if (n <= 7) return 'text-warn font-semibold';
+  if (n <= 14) return 'text-warn';
+  return 'text-ink-500';
+}
+
+/**
+ * Ajuste de kg pendiente de que la finca lo resuelva. Devuelve null si
+ * el pedido no tiene solicitud. Ver migración 0050.
+ */
+export function fmtPendingDelta(deltaKg) {
+  if (deltaKg == null) return null;
+  const n = Number(deltaKg);
+  if (!Number.isFinite(n) || n === 0) return null;
+  const sign = n > 0 ? '+' : '−';
+  // fmtKg ya trae el sufijo " kg", así que acá formateamos el número solo.
+  return `${sign}${NF_KG.format(Math.round(Math.abs(n)))} kg pendiente`;
+}
+
 export const URGENCY_LABEL = {
   past:   'Vencido',
   red:    'Crítico',

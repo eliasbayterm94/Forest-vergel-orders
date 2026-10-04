@@ -4,6 +4,7 @@ import { openModal, confirmModal } from '../ui/modal.js';
 import { createCombobox, createMultiCombobox } from '../ui/combobox.js';
 import { fmtKg, fmtDate, statusLabel, statusPillKind, URGENCY_LABEL, relDate } from '../ui/format.js';
 import { api } from '../api.js';
+import { openAdjustKgModal } from './_kg-change.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { navigate, currentQuery, updateHashQuery } from '../router.js';
 import { emptyStateCard } from '../ui/empty.js';
@@ -186,6 +187,7 @@ export async function forestDashboardView() {
   const EDITABLE_STATES = new Set(['Pending', 'Accepted', 'PartiallyAccepted', 'InProduction']);
   const actionsFor = (o) => EDITABLE_STATES.has(o.status) ? [
     { label: 'Editar',  variant: 'soft',   onClick: () => openEditOrder(o) },
+    { label: 'Ajustar kg', variant: 'soft', onClick: () => openAdjustKg(o) },
     { label: 'Cancelar', variant: 'danger', onClick: () => openCancelOrder(o) },
   ] : null;
   const rowFor = (o) => orderRow(o, {
@@ -310,6 +312,25 @@ export async function forestDashboardView() {
   const view = chrome(root);
 
   // ─── Edit modal ──────────────────────────────────────────────────
+  // Ajuste de cantidad. En pedidos Pending se aplica directo; en los
+  // ya aceptados viaja como solicitud que la finca confirma, porque
+  // producción trabaja contra kg_green_accepted (ver migración 0050).
+  async function openAdjustKg(order) {
+    const result = await openAdjustKgModal(order);
+    if (!result) return;
+    try {
+      const r = await api.orderRequestKgChange({
+        order_id: order.id,
+        delta_kg: result.delta_kg,
+        reason:   result.reason,
+      });
+      toast(r.message || 'Ajuste registrado', 'success', 6000);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch (e) {
+      toast(e.message || 'No se pudo registrar el ajuste', 'error', 6000);
+    }
+  }
+
   async function openEditOrder(order) {
     const result = await openOrderEditModal(order, allReferences, allVarieties);
     if (!result) return;

@@ -37,6 +37,7 @@ function iconEl(name) {
 // ─── Nav config ───────────────────────────────────────────────────────
 const FOREST_NAV = [
   { path: '/forest/dashboard',  label: 'Tablero',      icon: 'dashboard' },
+  { path: '/forest/historial',  label: 'Historial',    icon: 'inbox' },
   { path: '/forest/demand',     label: 'Nuevo pedido', icon: 'plus' },
   { path: '/forest/external',   label: 'Externos',     icon: 'external' },
   { path: '/forest/references', label: 'Referencias',  icon: 'book' },

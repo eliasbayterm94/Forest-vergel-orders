@@ -21,7 +21,7 @@ exports.handler = requireAuth(async (event) => {
   const sb = getSupabase();
   const q = event.queryStringParameters || {};
 
-  let query = sb.from('demand_orders').select(`
+  const BASE_COLS = `
     id, order_code, reference_id, kg_green_required, kg_green_accepted,
     max_delivery_date, physical_aspect, process_type, fermentation_hours,
     comments, status, override_15_day, rejection_reason,
@@ -31,16 +31,29 @@ exports.handler = requireAuth(async (event) => {
     created_by, created_at, updated_at,
     accepted_at, rejected_at, in_production_at, completed_at, cancelled_at,
     coffee_references ( id, name ),
-    demand_order_varieties ( coffee_varieties ( id, name ) )
-  `);
+    demand_order_varieties ( coffee_varieties ( id, name ) )`;
 
-  if (q.status)        query = query.in('status', q.status.split(',').map((s) => s.trim()).filter(Boolean));
-  if (q.reference_id)  query = query.eq('reference_id', q.reference_id);
-  if (q.process_type)  query = query.eq('process_type', q.process_type);
+  // Columnas del ajuste de kg (migración 0050). Si la migración no está
+  // aplicada todavía, reintentamos sin ellas: esta lista es la vista
+  // central de la app para los dos roles, y no puede caerse por el
+  // orden entre el deploy y la migración. Mismo patrón que
+  // getProcessConfig en _lib/supabase con la migración 0016.
+  const DELTA_COLS = `,
+    kg_green_pending_delta, pending_delta_reason,
+    pending_delta_requested_at, pending_delta_requested_by`;
 
-  query = query.order('max_delivery_date', { ascending: true });
+  const runQuery = (cols) => {
+    let query = sb.from('demand_orders').select(cols);
+    if (q.status)        query = query.in('status', q.status.split(',').map((s) => s.trim()).filter(Boolean));
+    if (q.reference_id)  query = query.eq('reference_id', q.reference_id);
+    if (q.process_type)  query = query.eq('process_type', q.process_type);
+    return query.order('max_delivery_date', { ascending: true });
+  };
 
-  const { data, error } = await query;
+  let { data, error } = await runQuery(BASE_COLS + DELTA_COLS);
+  if (error && /pending_delta|kg_green_pending_delta/.test(error.message || '')) {
+    ({ data, error } = await runQuery(BASE_COLS));
+  }
   if (error) return serverErr('Failed to load demand orders', error.message);
 
   let dryingDays, processingDays;
@@ -54,6 +67,11 @@ exports.handler = requireAuth(async (event) => {
     const latest = latestDryingStartDate(o.max_delivery_date, o.process_type, dryingDays, processingDays);
     const deliveryDelta = daysBetween(today, o.max_delivery_date);
     const deliveryUrgency = deliveryDelta < 0 ? 'past' : (deliveryDelta <= 7 ? 'red' : (deliveryDelta <= 14 ? 'yellow' : 'normal'));
+    // Dos plazos distintos, y el de secado siempre vence antes:
+    //   days_to_delivery     → la promesa al cliente (Forest)
+    //   days_to_drying_start → el disparo operativo (finca)
+    // Negativo = vencido hace tantos días.
+    const dryingDelta = latest ? daysBetween(today, latest) : null;
     return {
       ...o,
       reference_name: o.coffee_references && o.coffee_references.name,
@@ -66,6 +84,8 @@ exports.handler = requireAuth(async (event) => {
       latest_drying_start_date: latest,
       drying_urgency: urgencyOf(latest, today),
       delivery_urgency: deliveryUrgency,
+      days_to_delivery: deliveryDelta,
+      days_to_drying_start: dryingDelta,
       coffee_references: undefined,
       demand_order_varieties: undefined,
     };

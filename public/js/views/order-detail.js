@@ -14,6 +14,7 @@ import { toast } from '../ui/toast.js';
 import { openModal, confirmModal } from '../ui/modal.js';
 import { fmtKg, fmtDate, fmtIntensity, statusLabel, statusPillKind, relDate } from '../ui/format.js';
 import { api } from '../api.js';
+import { openResolveKgModal } from './_kg-change.js';
 import { chrome, pageTitle } from './_chrome.js';
 import { currentQuery, navigate } from '../router.js';
 
@@ -140,7 +141,36 @@ export async function orderDetailView({ session }) {
         }, ['Editar'])
       : null;
 
+    // Ajuste de kg pendiente (migración 0050). La finca lo resuelve;
+    // Forest solo lo ve. Banner arriba para que no pase inadvertido.
+    const pendingDelta = o.kg_green_pending_delta == null
+      ? null : Number(o.kg_green_pending_delta);
+    const canResolveDelta = pendingDelta != null
+      && session && (session.role === 'finca' || session.role === 'admin');
+    const deltaBanner = pendingDelta == null ? null : el('div', {
+      class: 'ctrm-card ctrm-card-pad mb-3 flex items-center justify-between gap-3 flex-wrap',
+      style: 'background:#fffbeb;border-color:#fcd34d;',
+    }, [
+      el('div', { class: 'min-w-0' }, [
+        el('p', { class: 'font-display font-semibold text-[13px]', style: 'color:#92400e;',
+          text: `Forest pidió ${pendingDelta > 0 ? 'añadir' : 'quitar'} ${fmtKg(Math.abs(pendingDelta))}` }),
+        el('p', { class: 'text-[11px] text-ink-500', text: o.pending_delta_reason
+          || 'Sin motivo indicado.' }),
+        el('p', { class: 'text-[11px] text-ink-500', text: canResolveDelta
+          ? 'Mientras no lo resuelvas, producción trabaja contra la cantidad actual.'
+          : 'Pendiente de que la finca lo confirme.' }),
+      ]),
+      canResolveDelta
+        ? el('button', {
+            class: 'ctrm-btn ctrm-btn-primary ctrm-btn-sm shrink-0',
+            type: 'button',
+            onClick: () => onResolveDelta(o),
+          }, ['Revisar ajuste'])
+        : null,
+    ]);
+
     root.append(el('div', {}, [
+      deltaBanner,
       // ── Breadcrumb ──
       el('div', { class: 'mb-2' }, [
         el('button', {
@@ -330,6 +360,24 @@ export async function orderDetailView({ session }) {
       toast('Pedido cerrado', 'success');
       reload();
     } catch (e) { toast(e.message || 'Error al cerrar pedido', 'error', 6000); }
+  }
+
+  // La finca acepta o rechaza el ajuste de kg que pidió Forest.
+  // Al aceptar, required y accepted se mueven juntos en el backend
+  // (ver _lib/orderKgChange) y producción cambia de objetivo.
+  async function onResolveDelta(o) {
+    const decision = await openResolveKgModal(o);
+    if (!decision) return;
+    try {
+      const r = await api.orderResolveKgChange({ order_id: o.id, accept: decision.accept });
+      toast(r.message || 'Ajuste resuelto', decision.accept ? 'success' : 'info', 6000);
+      reload();
+    } catch (e) {
+      toast(e.message || 'No se pudo resolver el ajuste', 'error', 7000);
+      // DELTA_NO_LONGER_VALID descarta la solicitud en el backend:
+      // refrescamos para que el banner desaparezca.
+      if (e.code === 'DELTA_NO_LONGER_VALID' || e.code === 'NO_PENDING_DELTA') reload();
+    }
   }
 
   function navigateToEdit(o) {

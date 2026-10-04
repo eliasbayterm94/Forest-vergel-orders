@@ -15,7 +15,8 @@ const INTENSITIES = ['media', 'alta', 'muy_alta'];
  * Body: { order_id, fields: {...}, override_15_day?, release_assignments? }
  *
  * Editable fields (whitelist; all optional):
- *   reference_id, kg_green_required, max_delivery_date, physical_aspect,
+ *   reference_id, kg_green_required (solo en Pending — ver abajo),
+ *   max_delivery_date, physical_aspect,
  *   process_type, fermentation_hours, comments,
  *   order_type, client_name, regions, contract_code,
  *   variety_ids (array — replaces existing demand_order_varieties)
@@ -54,7 +55,7 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   // Load + validate the order is editable.
   const { data: order, error: loadErr } = await sb
     .from('demand_orders')
-    .select('id, status, reference_id, process_type, kg_green_accepted, max_delivery_date')
+    .select('id, status, reference_id, process_type, kg_green_required, kg_green_accepted, max_delivery_date')
     .eq('id', order_id).maybeSingle();
   if (loadErr) return serverErr('Lookup failed', loadErr.message);
   if (!order) return notFound('Order not found');
@@ -74,7 +75,21 @@ exports.handler = requireAuth(['forest', 'admin'], async (event) => {
   if (fields.kg_green_required !== undefined) {
     const n = Number(fields.kg_green_required);
     if (!Number.isFinite(n) || n <= 0) errors.push('kg_green_required must be > 0');
-    else update.kg_green_required = n;
+    else if (n !== Number(order.kg_green_required) && order.status !== ORDER_STATUS.Pending) {
+      // Mover kg_green_required solo no sirve de nada y además rompe
+      // chk_status_consistency en pedidos Accepted: producción trabaja
+      // contra kg_green_accepted, que este endpoint no toca. El ajuste
+      // de cantidad con aprobación de la finca vive en
+      // /demand-orders-request-kg-change (ver migración 0050).
+      return conflict(
+        'La finca ya aceptó este pedido, así que la cantidad no se cambia por edición: '
+        + 'usa "Ajustar kg" para pedir el cambio y que la finca lo confirme.',
+        'KG_CHANGE_NEEDS_REQUEST',
+        { current_kg_green_required: Number(order.kg_green_required), attempted: n },
+      );
+    } else if (n !== Number(order.kg_green_required)) {
+      update.kg_green_required = n;
+    }
   }
 
   let newMaxDate = order.max_delivery_date;
