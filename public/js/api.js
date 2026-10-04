@@ -95,6 +95,8 @@ export const api = {
   orderAccept:   (payload) => request('POST', '/api/demand-orders-accept', { body: payload }),
   orderReject:   (payload) => request('POST', '/api/demand-orders-reject', { body: payload }),
   orderUpdatePo: (payload) => request('POST', '/api/demand-orders-update-po', { body: payload }),
+  orderRequestKgChange: (payload) => request('POST', '/api/demand-orders-request-kg-change', { body: payload }),
+  orderResolveKgChange: (payload) => request('POST', '/api/demand-orders-resolve-kg-change', { body: payload }),
 
   lotsList:        (query) => request('GET',  '/api/production-lots-list', { query }),
   lotCreate:       (payload) => request('POST', '/api/production-lots-create', { body: payload }),

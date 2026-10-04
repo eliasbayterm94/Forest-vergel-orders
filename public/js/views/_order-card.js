@@ -15,7 +15,8 @@
 //   └───────────────────────────────────────────────────────┘
 
 import { el } from '../ui/el.js';
-import { fmtKg, fmtDate, fmtIntensity, statusLabel, statusPillKind, relDate } from '../ui/format.js';
+import { fmtKg, fmtDate, fmtIntensity, statusLabel, statusPillKind, relDate,
+         fmtDaysLeft, daysLeftClass, fmtPendingDelta } from '../ui/format.js';
 import { actionMenu } from '../ui/action-menu.js';
 import { openPopover } from '../ui/popover.js';
 import { navigate } from '../router.js';
@@ -208,6 +209,7 @@ export function renderOrderCard(o, opts = {}) {
           }),
           el('span', { class: 'font-display font-semibold text-navy text-[13px] truncate', text: o.reference_name || '—' }),
           o.order_type ? el('span', { class: 'ctrm-pill dark text-[10px]', text: o.order_type }) : null,
+          pendingDeltaPill(o),
           requestInfoButton(o),
         ]),
         kebab,
@@ -279,6 +281,10 @@ export function renderOrderCard(o, opts = {}) {
 
 // Devuelve el "hint" pequeño a la derecha del stepper. Usa el
 // drying_urgency / delivery_urgency que ya calculan los endpoints.
+// Pista de plazo. Para pedidos vivos muestra los días explícitos
+// contra la fecha de entrega (days_to_delivery lo manda
+// demand-orders-list): positivo faltan, negativo vencido. Antes solo
+// decía "Entrega en X" sin distinguir atrasos.
 function urgencyHint(o) {
   const status = o.status;
   if (status === 'Completed' && o.completed_at) {
@@ -289,9 +295,29 @@ function urgencyHint(o) {
   }
   if (status === 'Rejected') return 'Rechazado';
   if (o.max_delivery_date) {
-    return `Entrega ${relDate(o.max_delivery_date)}`;
+    const d = o.days_to_delivery;
+    if (d == null) return `Entrega ${relDate(o.max_delivery_date)}`;
+    return el('span', {}, [
+      `Entrega ${fmtDate(o.max_delivery_date)} · `,
+      el('strong', { class: daysLeftClass(d), text: fmtDaysLeft(d) }),
+    ]);
   }
   return statusLabel(status);
+}
+
+// Pill del ajuste de kg que Forest pidió y la finca no ha resuelto.
+// Visible para los dos roles: es justo el dato que hay que coordinar.
+function pendingDeltaPill(o) {
+  const label = fmtPendingDelta(o.kg_green_pending_delta);
+  if (!label) return null;
+  return el('span', {
+    class: 'ctrm-pill text-[10px]',
+    style: 'background:#fef3c7;color:#92400e;border-color:#fcd34d;',
+    title: o.pending_delta_reason
+      ? `Ajuste solicitado: ${o.pending_delta_reason}`
+      : 'Ajuste de kg solicitado por Forest, pendiente de que la finca lo acepte',
+    text: `⇅ ${label}`,
+  });
 }
 
 // Para la vista TABLA: devuelve un array de celdas para sortable-table.

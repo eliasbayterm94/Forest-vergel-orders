@@ -13,12 +13,14 @@ const { ok, serverErr, methodNotAllowed } = require('./_lib/respond');
  *   pending_orders        - pedidos en status Pending (a revisar por finca)
  *   urgent_orders         - pedidos in-flight con drying/delivery rojo o vencido
  *   ready_lots_unshipped  - lotes Ready que no estan en ningun shipment
+ *   pending_kg_changes    - pedidos con un ajuste de kg que Forest pidio
+ *                           y la finca no ha resuelto (ver migracion 0050)
  */
 exports.handler = requireAuth(async (event) => {
   if (event.httpMethod !== 'GET') return methodNotAllowed(['GET']);
   const sb = getSupabase();
 
-  const [pendingR, ordersR, lotsR, shipsR] = await Promise.all([
+  const [pendingR, ordersR, lotsR, shipsR, kgChangeR] = await Promise.all([
     sb.from('demand_orders').select('id', { count: 'exact', head: true }).eq('status', 'Pending'),
     // urgentes: usamos el endpoint general de orders, que ya etiqueta
     // urgency en cliente. Aqui un proxy: in-flight con max_delivery_date
@@ -28,6 +30,8 @@ exports.handler = requireAuth(async (event) => {
       .in('status', ['Accepted', 'PartiallyAccepted', 'InProduction']),
     sb.from('production_lots').select('id, status').eq('status', 'Ready'),
     sb.from('shipment_lots').select('production_lot_id'),
+    sb.from('demand_orders').select('id', { count: 'exact', head: true })
+      .not('kg_green_pending_delta', 'is', null),
   ]);
 
   if (pendingR.error) return serverErr('pending count failed', pendingR.error.message);
@@ -43,6 +47,10 @@ exports.handler = requireAuth(async (event) => {
     return days < 5;  // <5d = rojo o vencido
   }).length;
 
+  // Si la migracion 0050 no esta aplicada, el badge queda en 0 en vez
+  // de tumbar todo el chrome.
+  const pendingKgChanges = kgChangeR && !kgChangeR.error ? (kgChangeR.count || 0) : 0;
+
   const shipped = new Set((shipsR.data || []).map((s) => s.production_lot_id));
   const readyUnshipped = (lotsR.data || []).filter((l) => !shipped.has(l.id)).length;
 
@@ -50,5 +58,6 @@ exports.handler = requireAuth(async (event) => {
     pending_orders:       pendingR.count || 0,
     urgent_orders:        urgent,
     ready_lots_unshipped: readyUnshipped,
+    pending_kg_changes:   pendingKgChanges,
   });
 });

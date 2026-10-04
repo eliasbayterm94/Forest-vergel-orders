@@ -22,6 +22,7 @@ minimal email noise.
 | `/login`             | any   | Login |
 | `/forest/dashboard`  | forest, admin | Tablero Forest |
 | `/forest/demand`     | forest, admin | Nuevo pedido (con regla de 15 días) |
+| `/forest/historial`  | forest, admin | Historial de pedidos: estado, cobertura y despacho en tabla |
 | `/forest/external`   | forest, admin | Rechazos / parciales → PO externo |
 | `/forest/references` | forest, admin | Referencias y variedades |
 | `/finca/dashboard`   | finca, admin  | Tablero El Vergel |
@@ -175,6 +176,31 @@ Netlify and redeploy; that invalidates every signed cookie at once.
 `users-update` refuses any change that would leave zero active admins, so
 the UI can't lock you out of `/admin/config`.
 
+### Change an order's quantity (add / remove kg)
+
+Editing `kg_green_required` directly is only possible while the order is
+`Pending`. Once the farm has accepted it, the quantity is a commitment between
+two parties, so it moves through an amendment:
+
+1. **Forest** opens the order's menu → **Ajustar kg**, enters `+200` or `-150`
+   and (optionally) a reason. Nothing moves yet: the request is parked in
+   `demand_orders.kg_green_pending_delta`.
+2. **El Vergel** sees a banner on the order detail (and a `⇅` pill on the card,
+   the queue and the history table) and accepts or rejects it.
+3. On accept, `kg_green_required` and `kg_green_accepted` move **together** in a
+   single update, so `chk_status_consistency` never breaks and the order's status
+   is untouched. Production's target changes immediately.
+4. On reject, the request is cleared and nothing changes.
+
+Guard rails, all in `_lib/orderKgChange.js`:
+
+- A reduction below the kg already dispatched is refused — that coffee has shipped.
+- A reduction to zero or less is refused; cancelling an order is a different action.
+- The amendment is re-validated at accept time, not just when requested: if kg
+  shipped in between, the stale request is discarded with an explanation.
+- `demand-orders-update` refuses a kg change on a non-`Pending` order
+  (`KG_CHANGE_NEEDS_REQUEST`) so the old back door stays shut.
+
 ### Add / remove notification recipients
 
 Edit `EMAIL_RECIPIENTS_DEMAND_CREATOR / FARM / ADMIN`. No redeploy needed.
@@ -226,6 +252,10 @@ Set `EMAIL_DRY_RUN=true`. The system keeps running and the audit trail keeps gro
 - **ISO 8601 weeks** (Monday-first).
 - **Status state machines** enforced at the DB layer via triggers; mirrored in handler code for clean error messages.
 - **`lot_order_assignments` trigger** blocks reference / process mismatches and over-allocation per order.
+- **Production works against `kg_green_accepted`, never `kg_green_required`.** The required figure is what Forest
+  asked for; the accepted figure is the farm's commitment, and it is what `orderCompletion` and the queue measure
+  against. Changing one without the other silently desynchronises the two sides — which is why quantity changes
+  go through the amendment flow below instead of a plain edit.
 - **RLS deny-all to anon.** Only the service_role key (server) reads or writes.
 - **All emails go through `email_log`** before Gmail API is called — full audit even in dry-run.
 
