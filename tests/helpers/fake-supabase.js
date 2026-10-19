@@ -5,6 +5,7 @@
  * query-builder que usan las Netlify Functions bajo test:
  *
  *   .from(t).select(cols[, {count, head}]).eq().in().is().neq()
+ *           .lte().gte().lt().gt().not(col,'is',null)
  *           .order().limit().single()/.maybeSingle()
  *   .from(t).insert(rows)[.select()[.single()]]
  *   .from(t).update(patch).eq(...)[.select()[.single()/.maybeSingle()]]
@@ -31,6 +32,16 @@ function createFakeSupabase(tables = {}) {
   }
   const insertFailures = new Map();   // table → message (one-shot)
   const updateFailures = new Map();
+
+  // null/undefined nunca satisface una comparacion de rango, igual que
+  // en SQL. Numeros se comparan como numeros; lo demas como texto.
+  function cmp(a, b) {
+    if (a == null) return NaN;
+    const na = Number(a), nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na < nb ? -1 : na > nb ? 1 : 0;
+    const sa = String(a), sb = String(b);
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
 
   function getVal(row, key) {
     if (!key.includes('.')) return row[key];
@@ -65,6 +76,20 @@ function createFakeSupabase(tables = {}) {
     neq(k, v) { this.filters.push((r) => String(getVal(r, k)) !== String(v)); return this; }
     in(k, arr) { const set = new Set((arr || []).map(String)); this.filters.push((r) => set.has(String(getVal(r, k)))); return this; }
     is(k, v)  { this.filters.push((r) => getVal(r, k) == v); return this; }   // == para null/undefined
+
+    // Comparadores de rango. Comparan numeros como numeros y el resto
+    // como texto, que es lo que hace PostgREST con fechas ISO.
+    lte(k, v) { this.filters.push((r) => cmp(getVal(r, k), v) <= 0); return this; }
+    gte(k, v) { this.filters.push((r) => cmp(getVal(r, k), v) >= 0); return this; }
+    lt(k, v)  { this.filters.push((r) => cmp(getVal(r, k), v) <  0); return this; }
+    gt(k, v)  { this.filters.push((r) => cmp(getVal(r, k), v) >  0); return this; }
+
+    // .not('col', 'is', null) -> la fila tiene valor en esa columna.
+    not(k, op, v) {
+      if (String(op) === 'is') this.filters.push((r) => !(getVal(r, k) == v));
+      else this.filters.push((r) => String(getVal(r, k)) !== String(v));
+      return this;
+    }
 
     order(k, opts = {}) { this._order.push({ k, asc: opts.ascending !== false }); return this; }
     limit(n) { this._limit = n; return this; }

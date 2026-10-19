@@ -8,7 +8,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes, usersRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes, usersRes, costRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
     api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
@@ -16,6 +16,7 @@ export async function adminConfigView() {
     api.fermentationTypesList({ include_inactive: 'true' }).catch(() => ({ fermentation_types: [] })),
     api.operatorsList({ include_inactive: 'true' }).catch(() => ({ operators: [] })),
     api.usersList({ include_inactive: 'true' }).catch(() => ({ users: [] })),
+    api.costingParamsList().catch(() => ({ costing_parameters: [], in_force: null })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
@@ -24,6 +25,8 @@ export async function adminConfigView() {
   let fermentationTypes = (ftypesRes && ftypesRes.fermentation_types) || [];
   let operators = (opsRes && opsRes.operators) || [];
   let users = (usersRes && usersRes.users) || [];
+  let costingParams = (costRes && costRes.costing_parameters) || [];
+  let costingInForce = (costRes && costRes.in_force) || null;
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -116,6 +119,18 @@ export async function adminConfigView() {
           }
           redraw();
         } catch (e) { toast(e.message, 'error'); }
+      }),
+      costingSection(costingParams, costingInForce, async (payload) => {
+        try {
+          const r = await api.costingParamsCreate(payload);
+          costingParams = [r.costing_parameters, ...costingParams];
+          const d = String(r.costing_parameters.effective_from).slice(0, 10);
+          if (!costingInForce || d <= new Date().toISOString().slice(0, 10)) {
+            costingInForce = r.costing_parameters;
+          }
+          toast(`Tarifas vigentes desde ${d} guardadas`, 'success');
+          redraw();
+        } catch (e) { toast(e.message, 'error', 7000); }
       }),
       usersSection(users, async (action, payload) => {
         try {
@@ -500,6 +515,109 @@ function fermentationTypesSection(types, onAction) {
     rows.length === 0
       ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay tipos. Agrega uno arriba.' })
       : null,
+  ]);
+}
+
+// ─── Costing tariffs (versioned) ────────────────────────────────────
+// T1 y T2 por fecha de vigencia. Una versión nueva aplica a las salidas
+// en seco desde su fecha y NUNCA toca lo que ya salió: los snapshots
+// copian las tarifas. Ver migración 0052.
+//
+// No hay porcentajes por etapa de ingreso a propósito: T1 es plano
+// sobre kg netos que entran. El denominador del presupuesto debe
+// medirse igual (kg netos, cualquier etapa) o el cierre mensual
+// arrastra un sesgo permanente.
+const NF_COP_CFG = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
+const copCfg = (n) => (n == null ? '—' : `$ ${NF_COP_CFG.format(Math.round(Number(n)))}`);
+
+function costingSection(versions, inForce, onCreate) {
+  const dateInput = el('input', { type: 'date', class: 'ctrm-input' });
+  const t1Input = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: 'COP / kg neto' });
+  const t2Input = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: 'COP / kg neto' });
+  const mandateInput = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono', placeholder: 'Opcional' });
+  const agriInput = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono', placeholder: 'Opcional' });
+  const budgetInput = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono', placeholder: 'Opcional' });
+  const budgetOwnInput = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono', placeholder: 'Opcional' });
+
+  // Ayuda viva: si pone mandato, agrícola y presupuesto, calcula las
+  // tarifas que se derivarían, para contrastarlas con lo que escribió.
+  const derived = el('p', { class: 'text-[11px] text-ink-500' });
+  function recalc() {
+    const m = Number(mandateInput.value), a = Number(agriInput.value);
+    const b = Number(budgetInput.value), bo = Number(budgetOwnInput.value);
+    const parts = [];
+    if (m > 0 && a >= 0 && b > 0) parts.push(`T1 sugerido: ${copCfg((m - a) / b)}`);
+    if (a > 0 && bo > 0) parts.push(`T2 sugerido: ${copCfg(a / bo)}`);
+    derived.textContent = parts.length
+      ? `${parts.join(' · ')} — compáralo con lo que escribiste arriba.`
+      : 'Si llenas mandato, costo agrícola y kg presupuestados, acá aparecen las tarifas sugeridas.';
+  }
+  for (const i of [mandateInput, agriInput, budgetInput, budgetOwnInput]) {
+    i.addEventListener('input', recalc);
+  }
+  recalc();
+
+  const addBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Guardar versión']);
+  addBtn.addEventListener('click', () => {
+    if (!dateInput.value) { toast('Indica desde cuándo rige', 'warning'); return; }
+    const t1 = Number(t1Input.value), t2 = Number(t2Input.value);
+    if (!(t1 >= 0) || t1Input.value === '') { toast('T1 debe ser un número >= 0', 'warning'); return; }
+    if (!(t2 >= 0) || t2Input.value === '') { toast('T2 debe ser un número >= 0', 'warning'); return; }
+    const opt = (inp) => (inp.value === '' ? null : Number(inp.value));
+    onCreate({
+      effective_from: dateInput.value,
+      t1_per_kg_net: t1,
+      t2_per_kg_own_net: t2,
+      annual_mandate_cop: opt(mandateInput),
+      annual_agricultural_cop: opt(agriInput),
+      budget_kg_net: opt(budgetInput),
+      budget_kg_own_net: opt(budgetOwnInput),
+    });
+    dateInput.value = ''; t1Input.value = ''; t2Input.value = '';
+    mandateInput.value = ''; agriInput.value = ''; budgetInput.value = ''; budgetOwnInput.value = '';
+    recalc();
+  });
+
+  const rows = (versions || []).map((v) => {
+    const isForce = inForce && inForce.id === v.id;
+    return el('div', { class: `grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2 py-1.5 border-t border-sand text-[12px]` }, [
+      el('span', { class: 'font-mono', text: String(v.effective_from).slice(0, 10) }),
+      el('span', { class: 'font-mono text-right', text: `T1 ${copCfg(v.t1_per_kg_net)}` }),
+      el('span', { class: 'font-mono text-right', text: `T2 ${copCfg(v.t2_per_kg_own_net)}` }),
+      isForce
+        ? el('span', { class: 'ctrm-pill ok text-[10px]', text: 'vigente' })
+        : el('span', { class: 'text-[10px] text-ink-300', text: '—' }),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Tarifas de costeo' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'T1 (procesamiento) y T2 (producción propia), en COP por kg NETO que entra. '
+          + 'Una versión nueva aplica desde su fecha hacia adelante y no modifica ningún lote ya costeado. '
+          + 'T1 se cobra plano, sin importar la etapa de ingreso.' }),
+    el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-2' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Rige desde' }), dateInput]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'T1 · procesamiento' }), t1Input]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'T2 · producción propia' }), t2Input]),
+    ]),
+    el('details', { class: 'text-[12px]' }, [
+      el('summary', { class: 'cursor-pointer text-ink-500', text: 'De dónde salieron las tarifas (opcional, queda en el registro)' }),
+      el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2' }, [
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'Mandato anual (COP)' }), mandateInput]),
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'Costo agrícola anual (COP)' }), agriInput]),
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'kg netos presupuestados' }), budgetInput]),
+        el('div', {}, [el('label', { class: 'ctrm-label', text: 'kg netos propios presupuestados' }), budgetOwnInput]),
+      ]),
+      el('p', { class: 'ctrm-hint mt-1',
+        text: 'Los kg presupuestados deben contar TODO lo que entra (cereza, despulpado y seco), neto de flotes — igual que se cobra T1.' }),
+      derived,
+    ]),
+    addBtn,
+    rows.length > 0
+      ? el('div', { class: 'pt-2' }, [el('p', { class: 'ctrm-label mb-1', text: 'Versiones' }), ...rows])
+      : el('p', { class: 'text-[12px] text-ink-300 italic py-2 text-center',
+          text: 'Sin tarifas definidas. Hasta que exista una versión, los lotes no se pueden costear.' }),
   ]);
 }
 

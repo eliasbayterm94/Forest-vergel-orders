@@ -62,6 +62,11 @@ export async function fincaLotsView() {
   const infResP  = api.infusions().catch(() => ({ infusions: [] }));
   const tanksResP = api.fermentationTanksList({}).catch(() => ({ fermentation_tanks: [] }));
   const ftypesResP = api.fermentationTypesList({}).catch(() => ({ fermentation_types: [] }));
+  // Costeo (migraciones 0051/0052). Si no están aplicadas, estas
+  // llamadas devuelven vacío y el campo de origen simplemente no
+  // ofrece opciones — crear baches sigue funcionando igual.
+  const poolsResP  = api.costPoolsList({}).catch(() => ({ pools: [] }));
+  const recsResP   = api.receptionsList({}).catch(() => ({ receptions: [] }));
 
   const [refsRes, varsRes, lotsRes, infRes, tanksRes, ftypesRes] = await Promise.all([refsResP, varsResP, lotsResP, infResP, tanksResP, ftypesResP]);
   let lots = lotsRes.lots.filter((l) => l.status !== 'Ready');
@@ -69,6 +74,9 @@ export async function fincaLotsView() {
   const allVarieties = varsRes.varieties;
   const allTanks = (tanksRes && tanksRes.fermentation_tanks) || [];
   const allFermTypes = (ftypesRes && ftypesRes.fermentation_types) || [];
+  const [poolsRes, recsRes] = await Promise.all([poolsResP, recsResP]);
+  const allPools = (poolsRes && poolsRes.pools) || [];
+  const allRecs  = (recsRes && recsRes.receptions) || [];
   let allInfusions = (infRes && infRes.infusions) || [];
 
   // Estado expand/collapse por lote. Por default colapsado en mobile,
@@ -1193,6 +1201,29 @@ export async function fincaLotsView() {
         placeholder: '0 = entra directo a Secado',
         class: 'ctrm-input mono',
       });
+      // ¿De dónde sale la materia? Un solo menú: en el caso normal es
+      // un clic, no una decisión. Alimenta el costeo (migración 0051);
+      // si no hay nada configurado, el bache se crea igual.
+      const originSelect = el('select', { class: 'ctrm-select' }, [
+        el('option', { value: '', selected: true }, ['— Sin registrar —']),
+        el('option', { value: 'own' }, ['Propio de la finca']),
+        ...allPools.map((p) => el('option', { value: `pool:${p.pool_key}` },
+          [`Pool ${p.pool_key}`])),
+        ...allRecs.filter((r) => r.amount_paid_cop != null && !r.pool_key)
+          .slice(0, 30)
+          .map((r) => el('option', { value: `rec:${r.id}` },
+            [`${r.reception_code} · ${r.received_date}`])),
+        el('option', { value: 'byproduct' }, ['Flotes (subproducto, costo cero)']),
+      ]);
+      const originKgInput = el('input', {
+        type: 'number', min: '0', step: '0.01', placeholder: 'kg netos consumidos',
+        class: 'ctrm-input mono',
+      });
+      // Por defecto consume lo mismo que pesó el bache: lo normal.
+      const syncOriginKg = () => {
+        if (originKgInput.value === '' && kgInput.value !== '') originKgInput.value = kgInput.value;
+      };
+
       // Prefermentación: horas ANTES de que arranque la fermentación
       // inicial. Descriptivo — no mueve el estado del bache.
       const prefermInput = el('input', {
@@ -1241,6 +1272,7 @@ export async function fincaLotsView() {
           dryingStartTimeInput,
         ]),
       ]);
+      kgInput.addEventListener('input', syncOriginKg);
       fermInput.addEventListener('input', () => {
         const v = Number(fermInput.value);
         if (Number.isFinite(v) && v === 0) {
@@ -1456,6 +1488,11 @@ export async function fincaLotsView() {
           prefermInput,
           el('p', { class: 'ctrm-hint', text: 'Horas que se deja prefermentando antes de la fermentación inicial. Opcional: déjalo vacío si no aplica.' }),
         ]),
+        el('div', {}, [
+          el('label', { class: 'ctrm-label', text: '¿De dónde sale la materia?' }),
+          el('div', { class: 'grid grid-cols-[1fr_140px] gap-2' }, [originSelect, originKgInput]),
+          el('p', { class: 'ctrm-hint', text: 'Para el costeo. Si lo dejas sin registrar, el bache se crea igual pero no se podrá costear hasta que lo completes.' }),
+        ]),
         skipSection,
         el('div', {}, [
           el('label', { class: 'ctrm-label' }, [
@@ -1564,6 +1601,36 @@ export async function fincaLotsView() {
                 }));
                 const lotInfo = r && r.lot;
                 const code = (lotInfo && (lotInfo.bache_code || lotInfo.lot_code)) || bacheCode;
+
+                // Fuente de materia en una llamada aparte, a propósito:
+                // así la creación del bache no cambia en nada y un fallo
+                // acá no pierde el bache — queda listable en "lotes sin
+                // fuente" y se completa después.
+                const originVal = originSelect.value;
+                if (originVal && lotInfo && lotInfo.id) {
+                  const originKg = Number(originKgInput.value) || kg;
+                  const payload = {
+                    production_lot_id: lotInfo.id,
+                    kg: originKg,
+                    entry_stage: chosenStage,
+                  };
+                  if (originVal === 'own') payload.cost_basis = 'own';
+                  else if (originVal === 'byproduct') payload.cost_basis = 'byproduct';
+                  else if (originVal.startsWith('pool:')) {
+                    payload.cost_basis = 'purchase_pool';
+                    payload.pool_key = originVal.slice(5);
+                  } else if (originVal.startsWith('rec:')) {
+                    payload.cost_basis = 'purchase_identified';
+                    payload.reception_id = originVal.slice(4);
+                  }
+                  try {
+                    const sr = await api.lotSourcesCreate(payload);
+                    if (sr && sr.warning) toast(sr.warning, 'warning', 9000);
+                  } catch (e) {
+                    toast(`Bache ${code} creado, pero no se registró el origen de la materia: ${e.message}. `
+                      + 'Complétalo desde el bache.', 'warning', 9000);
+                  }
+                }
                 const assignedCount = ((r && r.assignments) || []).length;
                 toast(`Lote ${code} creado${assignedCount ? ` · ${assignedCount} pedido(s) asignado(s)` : ''}`, 'success');
                 close({ ok: true });

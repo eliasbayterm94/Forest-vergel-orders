@@ -23,10 +23,12 @@ minimal email noise.
 | `/forest/dashboard`  | forest, admin | Tablero Forest |
 | `/forest/demand`     | forest, admin | Nuevo pedido (con regla de 15 días) |
 | `/forest/historial`  | forest, admin | Historial de pedidos: estado, cobertura y despacho en tabla |
+| `/forest/costeo`     | forest, admin | Costo por kg seco, cierre mensual vs. mandato, factor real |
 | `/forest/external`   | forest, admin | Rechazos / parciales → PO externo |
 | `/forest/references` | forest, admin | Referencias y variedades |
 | `/finca/dashboard`   | finca, admin  | Tablero El Vergel |
 | `/finca/inbox`       | finca, admin  | Pedidos entrantes + capacidad |
+| `/finca/recepciones` | finca, admin  | Materia prima que entra: proveedor, kg, precio, flotes |
 | `/finca/lots`        | finca, admin  | Lotes y asignaciones |
 
 ## Project layout
@@ -201,6 +203,44 @@ Guard rails, all in `_lib/orderKgChange.js`:
 - `demand-orders-update` refuses a kg change on a non-`Pending` order
   (`KG_CHANGE_NEEDS_REQUEST`) so the old back door stays shut.
 
+### Lot costing
+
+Day to day there are three touch points:
+
+| Who | Where | How often |
+|---|---|---|
+| Ops (admin) | `/admin/config` → **Tarifas de costeo** | Once a quarter |
+| Farm | `/finca/recepciones` | As coffee arrives |
+| Farm | Create batch → *¿De dónde sale la materia?* | One extra field |
+| Ops (admin) | `/forest/costeo` → monthly close | Once a month |
+
+The farm never types money: it records kg and the invoice price, and the cost is derived.
+
+**The formula** (`_lib/lotCosting.js`, pure and tested):
+
+```
+cost per kg of NET input = purchase price | T2 (own) | 0 (by-product)
+                         + T1  (flat, any entry stage)
+total cost      = Σ kg × (entry cost + T1)        ← frozen at dry exit
+cost per kg dry = total cost ÷ kg dried out
+```
+
+**Cost pools.** Material nobody can trace lot-by-lot (regional cherry) joins a pool under a
+`pool_key` and is drawn at a perpetual weighted average. Consume the pool fully and the total
+charged equals the total paid exactly. A reception keyed in late only moves the average forward —
+it never re-costs a draw that already happened. A draw against an empty pool is NOT blocked: it is
+charged at the last known average and the pool shows the shortfall, because blocking a batch over
+an un-keyed invoice is how people stop using the system.
+
+**Floaters.** Recorded per reception as weighed or estimated — floaters sent straight to the
+re-pulper can only be estimated, and reports keep the two apart. The break-even discount equals the
+floater rate exactly: discount the same percentage that floated and cost per net kg is unchanged.
+`/finca/recepciones` shows that comparison per delivery, which turns "% floaters" into a
+negotiating number.
+
+**Before the first lot can be costed**, a tariff version must exist in `/admin/config`. Until then
+batches close normally and the response says `no_tariff`.
+
 ### Add / remove notification recipients
 
 Edit `EMAIL_RECIPIENTS_DEMAND_CREATOR / FARM / ADMIN`. No redeploy needed.
@@ -258,6 +298,20 @@ Set `EMAIL_DRY_RUN=true`. The system keeps running and the audit trail keeps gro
   go through the amendment flow below instead of a plain edit.
 - **RLS deny-all to anon.** Only the service_role key (server) reads or writes.
 - **All emails go through `email_log`** before Gmail API is called — full audit even in dry-run.
+- **A lot's cost freezes at its dry exit and never moves.** `lot_cost_snapshots` is immutable by
+  trigger (only the void columns may change, DELETE is refused) and copies the tariff rates in, so
+  neither a tariff revision nor a later dried-weight correction can reach it. A corrected weight
+  lands in the monthly mandate difference instead.
+- **T1 is charged FLAT on net kg entering, whatever the entry stage.** A kg entering already dry
+  yields ~5.7x more finished coffee than a kg of cherry, so a flat charge self-dilutes per kg of
+  finished product — and, decisively, it makes the monthly close independent of the entry-stage mix:
+  only total volume moves it. The budget denominator must be stated the same way.
+- **NET, never gross.** Separated by-product (floaters) carries zero cost; the usable coffee absorbs
+  the whole amount paid. Its processing is already inside T1 because the budget denominator excludes it.
+- **Blends inherit cost, they are never re-costed.** Applying T1 again would double-count the month.
+- **Costing never breaks the operation.** Closing a batch, undoing a stage or splitting a lot
+  succeeds whether or not tariffs exist, the material source was recorded, or the migrations are
+  applied; the response says why it was not costed.
 
 ## Out of MVP scope (flagged for future)
 

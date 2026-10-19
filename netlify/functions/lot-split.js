@@ -163,5 +163,23 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
     .from('production_lots').update(parentUpdate).eq('id', parent.id);
   if (upErr) return serverErr('Parent update failed', upErr.message);
 
-  return ok({ parent: { id: parent.id, ...parentUpdate }, child });
+  // Costeo: si el padre ya estaba costeado, el costo se REPARTE con el
+  // mismo ratio — una división mueve masa, no procesa café, así que el
+  // costo por kg es idéntico en los dos lados. El snapshot original se
+  // anula y quedan dos nuevos apuntando a él, así el rastro es claro.
+  // En try/catch: dividir un bache no puede fallar por el costeo.
+  let costing = null;
+  try {
+    const { splitLotSnapshot } = require('./_lib/costSnapshot');
+    costing = await splitLotSnapshot(sb, {
+      parentId: parent.id,
+      childId: child.id,
+      ratio,
+      actor: (session && (session.username || session.role)) || null,
+    });
+  } catch (e) {
+    costing = { ok: false, skipped: 'error', message: e.message };
+  }
+
+  return ok({ parent: { id: parent.id, ...parentUpdate }, child, costing });
 });
