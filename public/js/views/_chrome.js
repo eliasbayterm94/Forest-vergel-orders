@@ -40,6 +40,7 @@ const FOREST_NAV = [
   { path: '/forest/historial',  label: 'Historial',    icon: 'inbox' },
   { path: '/forest/demand',     label: 'Nuevo pedido', icon: 'plus' },
   { path: '/forest/external',   label: 'Externos',     icon: 'external' },
+  { path: '/forest/costeo',     label: 'Costeo',       icon: 'chart' },
   { path: '/forest/references', label: 'Referencias',  icon: 'book' },
   { path: '/reports',           label: 'Reportes',     icon: 'chart' },
 ];
@@ -48,6 +49,7 @@ const FINCA_NAV = [
   { path: '/finca/dashboard', label: 'Tablero',           icon: 'dashboard' },
   { path: '/finca/inbox',     label: 'Pedidos entrantes', icon: 'inbox' },
   { path: '/finca/cola',      label: 'Cola de pedidos',   icon: 'calendar' },
+  { path: '/finca/recepciones', label: 'Recepciones',     icon: 'inbox' },
   { path: '/finca/lots',      label: 'Producción',        icon: 'box' },
   { path: '/finca/tablero',   label: 'Tablero Control',   icon: 'dashboard' },
   { path: '/finca/punto-final', label: 'Punto Final',     icon: 'box' },

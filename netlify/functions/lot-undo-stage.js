@@ -39,7 +39,7 @@ const ALLOWED_KINDS = new Set([
   'ready-from-drying', 'ready-from-resting',
 ]);
 
-exports.handler = requireAuth(['finca', 'admin'], async (event) => {
+exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
@@ -118,7 +118,8 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     if (!preserveDried) upd.kg_dried_output = null;
     const { error } = await sb.from('production_lots').update(upd).eq('id', lot_id);
     if (error) return serverErr('Undo failed', error.message);
-    return ok({ undone: 'ready-from-drying' });
+    const costing = await voidCostIfAny(sb, lot_id, 'ready-from-drying', session);
+    return ok({ undone: 'ready-from-drying', costing });
   }
 
   if (event_kind === 'ready-from-resting') {
@@ -139,8 +140,28 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     if (!preserveDried) upd.kg_dried_output = null;
     const { error } = await sb.from('production_lots').update(upd).eq('id', lot_id);
     if (error) return serverErr('Undo failed', error.message);
-    return ok({ undone: 'ready-from-resting' });
+    const costing = await voidCostIfAny(sb, lot_id, 'ready-from-resting', session);
+    return ok({ undone: 'ready-from-resting', costing });
   }
 
   return badReq('event_kind no implementado', 'NOT_IMPLEMENTED');
 });
+
+/**
+ * Deshacer la salida en seco anula el costo congelado del bache — los
+ * snapshots nunca se borran, se anulan. En try/catch a propósito:
+ * deshacer la etapa no puede fallar porque el costeo no esté
+ * configurado o la migración 0052 no esté aplicada.
+ */
+async function voidCostIfAny(sb, lot_id, kind, session) {
+  try {
+    const { voidLotSnapshot } = require('./_lib/costSnapshot');
+    return await voidLotSnapshot(sb, {
+      lotId: lot_id,
+      reason: `Se deshizo la salida en seco (${kind})`,
+      actor: (session && (session.username || session.role)) || null,
+    });
+  } catch (e) {
+    return { ok: false, skipped: 'error', message: e.message };
+  }
+}

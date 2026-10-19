@@ -40,7 +40,7 @@ const VALID_TRANSITIONS = {
   Ready:          ['Delivered'],
 };
 
-exports.handler = requireAuth(['finca', 'admin'], async (event) => {
+exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
   let body;
   try { body = parseJson(event); } catch (e) { return badReq(e.message, e.code); }
@@ -323,12 +323,30 @@ exports.handler = requireAuth(['finca', 'admin'], async (event) => {
     }
   }
 
+  // Costeo: al salir en seco se congela el costo del bache. Va en
+  // try/catch y NUNCA tumba el cierre — si falta la tarifa o la fuente
+  // de materia, el bache se cierra igual y la respuesta dice por qué no
+  // se costeó. La operación manda sobre la contabilidad.
+  let costing = null;
+  if (targetStatus === LOT_STATUS.Ready) {
+    try {
+      const { snapshotLotAtDryExit } = require('./_lib/costSnapshot');
+      costing = await snapshotLotAtDryExit(sb, {
+        lotId: lot_id,
+        readyDate: update.ready_date || null,
+        actor: (session && (session.username || session.role)) || null,
+      });
+    } catch (e) {
+      costing = { ok: false, skipped: 'error', message: e.message };
+    }
+  }
+
   // Cascade: when first lot moves toward production for an Accepted/PartiallyAccepted
   // order, transition that order to InProduction (one-way). We do this on any
   // status change to keep logic simple.
   await maybePromoteOrdersToInProduction(sb, lot_id);
 
-  return ok({ lot: updated, completions });
+  return ok({ lot: updated, completions, costing });
 });
 
 async function maybePromoteOrdersToInProduction(sb, lot_id) {

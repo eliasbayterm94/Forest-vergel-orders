@@ -157,4 +157,27 @@ export const api = {
   shipmentLineCancel: (payload) => request('POST', '/api/shipment-line-cancel', { body: payload }),
 
   digestTrigger: () => request('POST', '/api/weekly-digest-trigger'),
+
+  // ── Costeo de lotes (migraciones 0051/0052) ──────────────────
+  suppliersList:   (query)   => request('GET',  '/api/suppliers-list',   { query }),
+  suppliersCreate: (payload) => request('POST', '/api/suppliers-create', { body: payload }),
+  suppliersUpdate: (payload) => request('POST', '/api/suppliers-update', { body: payload }),
+
+  costingParamsList:   ()        => request('GET',  '/api/costing-parameters-list'),
+  costingParamsCreate: (payload) => request('POST', '/api/costing-parameters-create', { body: payload }),
+
+  receptionsList:   (query)   => request('GET',  '/api/cherry-receptions-list',   { query }),
+  receptionsCreate: (payload) => request('POST', '/api/cherry-receptions-create', { body: payload }),
+
+  byproductCreate: (payload) => request('POST', '/api/lot-byproducts-create', { body: payload }),
+
+  costPoolsList: (query) => request('GET', '/api/cost-pools-list', { query }),
+
+  lotSourcesList:   (query)   => request('GET',  '/api/lot-input-sources-list',   { query }),
+  lotSourcesCreate: (payload) => request('POST', '/api/lot-input-sources-create', { body: payload }),
+
+  monthlyClosureCompute: (query)   => request('GET',  '/api/monthly-closure-compute', { query }),
+  monthlyClosureSave:    (payload) => request('POST', '/api/monthly-closure-save',    { body: payload }),
+  monthlyClosuresList:   (query)   => request('GET',  '/api/monthly-closures-list',   { query }),
+  lotCostsReport:        (query)   => request('GET',  '/api/lot-costs-report',        { query }),
 };
