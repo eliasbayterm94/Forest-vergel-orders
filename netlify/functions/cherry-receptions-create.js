@@ -3,6 +3,7 @@
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
 const { receptionNetKg, byproductRate, receptionAmountPaid } = require('./_lib/costPool');
+const { isMissingColumn } = require('./_lib/costingData');
 const { created, badReq, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
@@ -239,16 +240,16 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 });
 
 /**
- * True when the insert failed only because migration 0053 has not been
- * applied yet. Matched on the column names rather than SQLSTATE alone,
- * so a genuinely different missing column is not swallowed.
+ * The weighing and quality columns, as one list. Delegates to the
+ * shared predicate so there is a single definition of "this column is
+ * not there yet".
  */
-exports.isMissingWeighingColumn = isMissingWeighingColumn;
+const WEIGHING_COLS = [
+  'kg_scale_gross', 'sacks_count', 'tare_per_sack_kg',
+  'cherry_to_pulped_ratio', 'brix_pct', 'ph',
+];
 function isMissingWeighingColumn(error) {
-  if (!error) return false;
-  const m = error.message || '';
-  if (!/does not exist|could not find/i.test(m) && error.code !== '42703' && error.code !== 'PGRST204') {
-    return false;
-  }
-  return /kg_scale_gross|sacks_count|tare_per_sack_kg|cherry_to_pulped_ratio|brix_pct|\bph\b/.test(m);
+  return isMissingColumn(error, WEIGHING_COLS);
 }
+
+exports.isMissingWeighingColumn = isMissingWeighingColumn;

@@ -143,6 +143,67 @@ test('proveedores: un admin si puede crear uno propio', async () => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// FRANQUICIA DE FLOTES POR PROVEEDOR (migracion 0054)
+// ══════════════════════════════════════════════════════════════
+
+test('franquicia: se guarda como fraccion al crear', async () => {
+  setFake(fixture());
+  const r = parseRes(await supCreate(asAdmin({
+    name: 'Regional Huila', kind: 'third_party', floater_franchise_pct: 0.05,
+  })));
+  assert.equal(r.status, 201);
+  assert.equal(Number(r.body.supplier.floater_franchise_pct), 0.05);
+});
+
+test('franquicia: se edita y se puede borrar', async () => {
+  const fake = fixture();
+  setFake(fake);
+  const up = parseRes(await supUpdate(asAdmin({
+    id: SUP_MZ, fields: { floater_franchise_pct: 0.05 },
+  })));
+  assert.equal(up.status, 200);
+  assert.equal(Number(up.body.supplier.floater_franchise_pct), 0.05);
+
+  // Vacio = sin franquicia, y entonces el descuento de equilibrio
+  // iguala el % de flotes.
+  const clear = parseRes(await supUpdate(asAdmin({
+    id: SUP_MZ, fields: { floater_franchise_pct: null },
+  })));
+  assert.equal(clear.body.supplier.floater_franchise_pct, null);
+});
+
+test('franquicia: solo acepta una fraccion entre 0 y 1', async () => {
+  setFake(fixture());
+  // 5 en vez de 0.05 es el error de 100x que hay que atrapar.
+  for (const bad of [5, -0.1, 1.5]) {
+    const r = parseRes(await supUpdate(asAdmin({ id: SUP_MZ, fields: { floater_franchise_pct: bad } })));
+    assert.equal(r.status, 400, `deberia rechazar ${bad}`);
+    assert.equal(r.body.code, 'INVALID_FRANCHISE');
+  }
+  const atCreate = parseRes(await supCreate(asAdmin({ name: 'X', kind: 'third_party', floater_franchise_pct: 5 })));
+  assert.equal(atCreate.body.code, 'INVALID_FRANCHISE');
+});
+
+test('franquicia: el TIPO sigue siendo inmutable', async () => {
+  // La franquicia se edita, el tipo no: ese reescribiria el costeo.
+  setFake(fixture());
+  const r = parseRes(await supUpdate(asAdmin({
+    id: SUP_MZ, fields: { kind: 'own', floater_franchise_pct: 0.05 },
+  })));
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'SUPPLIER_KIND_IMMUTABLE');
+});
+
+test('franquicia: la lista la expone', async () => {
+  setFake(createFakeSupabase({
+    suppliers: [{ id: SUP_MZ, name: 'Manzanares', kind: 'third_party', region: 'Caldas',
+                  active: true, floater_franchise_pct: 0.05 }],
+  }));
+  const r = parseRes(await supList(getAs('finca')));
+  assert.equal(Number(r.body.suppliers[0].floater_franchise_pct), 0.05);
+});
+
+// ══════════════════════════════════════════════════════════════
 // PESAJE Y CALIDAD DE LA RECEPCION (migracion 0053)
 // ══════════════════════════════════════════════════════════════
 
@@ -578,4 +639,29 @@ test('0053 pendiente: NO se traga otros errores', () => {
   ]) {
     assert.equal(isMissingWeighingColumn(e), false, `NO deberia reintentar: ${e && e.message}`);
   }
+});
+
+test('0054 pendiente: el predicado compartido cubre la franquicia', () => {
+  // suppliers-list y -create usan el mismo predicado. Si no repliegan,
+  // la pantalla de recepciones se queda sin proveedores y no se puede
+  // registrar NADA, que es peor que no tener la franquicia.
+  const { isMissingColumn } = require('../netlify/functions/_lib/costingData');
+  assert.equal(isMissingColumn(
+    { code: '42703', message: 'column "floater_franchise_pct" of relation "suppliers" does not exist' },
+    ['floater_franchise_pct'],
+  ), true);
+  assert.equal(isMissingColumn(
+    { code: 'PGRST204', message: "Could not find the 'floater_franchise_pct' column of 'suppliers' in the schema cache" },
+    ['floater_franchise_pct'],
+  ), true);
+  // La tabla entera faltando es otra cosa: la maneja isMissingTable.
+  assert.equal(isMissingColumn(
+    { code: '42P01', message: 'relation "suppliers" does not exist' },
+    ['floater_franchise_pct'],
+  ), false);
+  // Y no se traga el CHECK de rango.
+  assert.equal(isMissingColumn(
+    { code: '23514', message: 'violates check constraint "chk_supplier_floater_franchise"' },
+    ['floater_franchise_pct'],
+  ), false);
 });

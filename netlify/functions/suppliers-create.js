@@ -2,6 +2,7 @@
 
 const { requireAuth } = require('./_lib/auth');
 const { getSupabase } = require('./_lib/supabase');
+const { isMissingColumn } = require('./_lib/costingData');
 const { created, ok, badReq, json, serverErr, methodNotAllowed, parseJson } = require('./_lib/respond');
 
 /**
@@ -42,6 +43,16 @@ exports.handler = requireAuth(['admin', 'finca'], async (event, _ctx, session) =
   }
 
   const region = body && body.region ? String(body.region).trim().slice(0, 80) || null : null;
+
+  // Negotiated floater franchise: only what exceeds it gets discounted.
+  // Suggestion aid only — it never enters the cost of a reception.
+  let floater_franchise_pct = null;
+  if (body && body.floater_franchise_pct != null && body.floater_franchise_pct !== '') {
+    floater_franchise_pct = Number(body.floater_franchise_pct);
+    if (!Number.isFinite(floater_franchise_pct) || floater_franchise_pct < 0 || floater_franchise_pct > 1) {
+      return badReq('floater_franchise_pct debe ser una fracción entre 0 y 1 (0.05 = 5%)', 'INVALID_FRANCHISE');
+    }
+  }
   const notes  = body && body.notes  ? String(body.notes).trim().slice(0, 500) || null : null;
 
   const sb = getSupabase();
@@ -65,10 +76,18 @@ exports.handler = requireAuth(['admin', 'finca'], async (event, _ctx, session) =
     return ok({ supplier: existing, created: false });
   }
 
-  const { data, error } = await sb
+  const core = { name, kind, region, notes, active: true };
+  const CORE_COLS = 'id, name, kind, region, active, notes';
+
+  let { data, error } = await sb
     .from('suppliers')
-    .insert({ name, kind, region, notes, active: true })
-    .select('id, name, kind, region, active, notes').single();
+    .insert({ ...core, floater_franchise_pct })
+    .select(`${CORE_COLS}, floater_franchise_pct`).single();
+  // Migration 0054 pending: register the supplier anyway. Blocking it
+  // would block the reception that needed it.
+  if (error && isMissingColumn(error, ['floater_franchise_pct'])) {
+    ({ data, error } = await sb.from('suppliers').insert(core).select(CORE_COLS).single());
+  }
   if (error) return serverErr('Insert failed', error.message);
   return created({ supplier: data, created: true });
 });

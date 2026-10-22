@@ -82,8 +82,13 @@ const CANNED = {
       inherited_blend_count: 1, real_factor: 0.2, avg_cost_per_kg_dried: 27650 },
     existing: null, snapshots: [] },
   '/api/suppliers-list': { suppliers: [
-    { id: 's1', name: 'El Vergel', kind: 'own', region: null, active: true },
-    { id: 's2', name: 'Manzanares', kind: 'third_party', region: 'Caldas', active: true },
+    { id: 's1', name: 'El Vergel', kind: 'own', region: null, active: true,
+      floater_franchise_pct: null },
+    // Con franquicia: la recepcion debe sugerir descuento = flotes - 5%.
+    { id: 's2', name: 'Manzanares', kind: 'third_party', region: 'Caldas', active: true,
+      floater_franchise_pct: 0.05 },
+    // Inactivo y sin la columna de la 0054, como vuelve si falta migrar.
+    { id: 's3', name: 'Viejo', kind: 'third_party', region: null, active: false },
   ] },
   '/api/cost-pools-list': { pools: [
     { pool_key: 'regional', kg_on_hand: 920, cop_on_hand: 2850000, avg_cost_per_kg: 3097.83,
@@ -186,3 +191,46 @@ for (const { file, fn, session } of VIEW_CASES) {
     assert.ok(node instanceof dom.window.Node, `${fn} should return a DOM Node`);
   });
 }
+
+// ── Contenido, no solo "no explotó" ────────────────────────────────
+// El smoke de arriba solo verifica que la vista devuelva un nodo. Estas
+// dos revisan que lo nuevo se pinte de verdad.
+
+test('admin-config · la sección de proveedores pinta la franquicia', async () => {
+  const mod = await import(viewUrl('admin-config.js'));
+  const node = await mod.adminConfigView({ session: SESSIONS.admin });
+  const text = node.textContent || '';
+  assert.match(text, /Proveedores/);
+  assert.match(text, /Franq/, 'debe mostrarse la columna de franquicia');
+  // El tipo se muestra como etiqueta, no editable: cambiarlo
+  // reescribiría el costeo de todas sus recepciones pasadas.
+  assert.match(text, /Tercero/);
+
+  // Los nombres viven en el value de un input, no en el textContent.
+  const vals = [...node.querySelectorAll('input')].map((i) => i.value);
+  assert.ok(vals.includes('Manzanares'), 'el proveedor debe aparecer editable');
+  assert.ok(vals.includes('Caldas'), 'la región debe aparecer editable');
+
+  // 0.05 se guarda como fracción pero se edita como 5 (porcentaje):
+  // nadie negocia en fracciones, y 0.05 donde iba 5 es un error de 100x.
+  assert.ok(vals.includes('5'), `la franquicia debe editarse como 5, no 0.05 — vi: ${vals.join(',')}`);
+});
+
+test('finca-recepciones · pinta la cadena de pesaje y el selector kg/%', async () => {
+  const mod = await import(viewUrl('finca-recepciones.js'));
+  const node = await mod.fincaRecepcionesView({ session: SESSIONS.finca });
+  const text = node.textContent || '';
+  for (const label of ['kg bruto (balanza)', 'No. lonas', 'kg por lona', 'kg neto de café']) {
+    assert.ok(text.includes(label), `falta el campo "${label}"`);
+  }
+  assert.match(text, /Calidad de la entrega/, 'falta el bloque de calidad');
+
+  // La tara arranca en el estándar de 0.35.
+  const vals = [...node.querySelectorAll('input')].map((i) => i.value);
+  assert.ok(vals.includes('0.35'), `la tara debe venir en 0.35 — vi: ${vals.join(',')}`);
+
+  // Los flotes se pueden digitar en kg o en %.
+  const units = [...node.querySelectorAll('select')]
+    .flatMap((sel) => [...sel.querySelectorAll('option')].map((o) => o.value));
+  assert.ok(units.includes('pct'), 'falta la opción de digitar flotes en %');
+});
