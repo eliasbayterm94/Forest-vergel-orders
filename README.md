@@ -28,7 +28,7 @@ minimal email noise.
 | `/forest/references` | forest, admin | Referencias y variedades |
 | `/finca/dashboard`   | finca, admin  | Tablero El Vergel |
 | `/finca/inbox`       | finca, admin  | Pedidos entrantes + capacidad |
-| `/finca/recepciones` | finca, admin  | Materia prima que entra: proveedor, kg, precio, flotes |
+| `/finca/recepciones` | finca, admin  | Materia prima que entra: proveedor, pesaje, precio, flotes, calidad |
 | `/finca/lots`        | finca, admin  | Lotes y asignaciones |
 
 ## Project layout
@@ -232,11 +232,30 @@ it never re-costs a draw that already happened. A draw against an empty pool is 
 charged at the last known average and the pool shows the shortfall, because blocking a batch over
 an un-keyed invoice is how people stop using the system.
 
+**The weighing chain.** "Net" means two different things, so the reception records all of it:
+
+```
+kg_scale_gross                      5092.00   what the scale read
+− sacks_count × tare_per_sack_kg  −   32.90   94 sacks × 0.35
+= kg_gross                          5059.10   actual coffee  <-- the payment rides on this
+− byproduct (floaters)            −  495.79
+= cost-bearing net                  4563.31   what carries the cost
+```
+
+`kg_gross` is the weight of coffee, and `amount_paid_cop = kg_gross × price × (1 − discount)`.
+The screen computes it from the scale reading and the sack count, and the database rejects a chain
+that does not add up, because digitising the scale reading as the coffee weight spreads the cost
+over the sacks and understates cost per kg with nothing failing. The tare rate is stored per
+reception, so changing the standard sack weight later never rewrites a past delivery. Receptions
+entered without the weighing detail still work — `kg_gross` is then typed directly.
+
 **Floaters.** Recorded per reception as weighed or estimated — floaters sent straight to the
 re-pulper can only be estimated, and reports keep the two apart. The break-even discount equals the
 floater rate exactly: discount the same percentage that floated and cost per net kg is unchanged.
-`/finca/recepciones` shows that comparison per delivery, which turns "% floaters" into a
-negotiating number.
+`/finca/recepciones` shows that comparison per delivery, in pesos as well as points, which turns
+"% floaters" into a negotiating number. A discount with a franchise (paying only for floaters above
+some threshold) costs the gross value of the delivery times the smaller of the floater rate and the
+threshold, every single time — the screen names that amount.
 
 **Before the first lot can be costed**, a tariff version must exist in `/admin/config`. Until then
 batches close normally and the response says `no_tariff`.
