@@ -14,9 +14,14 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 import { withBusy } from '../ui/busy.js';
 import { sortableTable } from '../ui/sortable-table.js';
+import { openModal } from '../ui/modal.js';
+import { getSession } from '../auth.js';
 import { fmtKg, fmtDate } from '../ui/format.js';
 
 const STAGES = [['cereza', 'Cereza'], ['despulpado', 'Despulpado'], ['seco', 'Seco']];
+// Standard empty sack. Sent with every reception that records the
+// weighing detail, so changing it later never rewrites a past delivery.
+const DEFAULT_TARE = 0.35;
 
 const NF_COP = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
 const cop = (n) => (n == null ? '—' : `$ ${NF_COP.format(Math.round(Number(n)))}`);
@@ -35,15 +40,108 @@ export async function fincaRecepcionesView() {
 
   const root = el('div', {});
 
-  const supSelect = el('select', { class: 'ctrm-select' }, [
-    el('option', { value: '' }, ['Elige proveedor…']),
-    ...suppliers.map((s) => el('option', { value: s.id },
-      [`${s.name}${s.kind === 'own' ? ' (la finca)' : ''}`])),
+  const supSelect = el('select', { class: 'ctrm-select' }, []);
+  function paintSuppliers(selectId) {
+    clear(supSelect);
+    supSelect.append(el('option', { value: '' }, ['Elige proveedor…']));
+    for (const s of suppliers) {
+      supSelect.append(el('option', { value: s.id },
+        [`${s.name}${s.kind === 'own' ? ' (la finca)' : ''}`]));
+    }
+    if (selectId) supSelect.value = selectId;
+  }
+  paintSuppliers();
+
+  // Cherry shows up from a supplier nobody set up yet, and the person at
+  // the scale cannot wait for an admin. Creating it here keeps the
+  // reception from being written on paper.
+  const newSupBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-ghost text-[11px] whitespace-nowrap', type: 'button',
+    title: 'Dar de alta un proveedor nuevo',
+  }, ['+ Nuevo']);
+  newSupBtn.addEventListener('click', async () => {
+    const sup = await newSupplierModal();
+    if (!sup) return;
+    const known = suppliers.find((x) => x.id === sup.id);
+    if (!known) {
+      suppliers.push(sup);
+      suppliers.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+    }
+    paintSuppliers(sup.id);
+    syncOwn();
+  });
+
+  const supplierField = el('div', {}, [
+    el('label', { class: 'ctrm-label', text: 'Proveedor' }),
+    el('div', { class: 'flex gap-2 items-center' }, [
+      el('div', { class: 'flex-1 min-w-0' }, [supSelect]),
+      newSupBtn,
+    ]),
   ]);
   const dateInput = el('input', { type: 'date', class: 'ctrm-input', value: todayYmd() });
   const stageSelect = el('select', { class: 'ctrm-select' },
     STAGES.map(([v, l]) => el('option', { value: v, selected: v === 'cereza' }, [l])));
+  // The weighing chain: scale reading, sacks, and the coffee weight
+  // that comes out. kg_gross (the coffee) is what the payment rides
+  // on, so it is computed here and never typed by hand when the detail
+  // is present — digitising the scale reading as the coffee weight
+  // would spread the cost over the sacks with nothing failing.
+  const scaleInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: '0' });
+  const sacksInput = el('input', { type: 'number', min: '0', step: '1', class: 'ctrm-input mono', placeholder: '0' });
+  const tareInput = el('input', { type: 'number', min: '0', max: '5', step: '0.001', class: 'ctrm-input mono', value: String(DEFAULT_TARE) });
   const grossInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: '0' });
+  const netNote = el('p', { class: 'text-[11px] text-ink-500 mt-1' });
+
+  function tareKg() {
+    const sacks = Number(sacksInput.value);
+    const tare = Number(tareInput.value);
+    if (!Number.isFinite(sacks) || sacks < 0) return null;
+    if (!Number.isFinite(tare) || tare < 0) return null;
+    return Math.round(sacks * tare * 100) / 100;
+  }
+  // Present only when BOTH scale and sacks are given: a half-filled
+  // chain cannot be verified, so it is not sent at all.
+  function hasWeighing() {
+    return scaleInput.value !== '' && sacksInput.value !== ''
+      && Number(scaleInput.value) > 0 && Number(sacksInput.value) >= 0;
+  }
+  function syncNet() {
+    if (!hasWeighing()) {
+      grossInput.removeAttribute('readonly');
+      grossInput.classList.remove('bg-cream');
+      clear(netNote);
+      netNote.append(document.createTextNode('Sin detalle de pesaje: escribe directo los kg de café.'));
+      refresh();
+      return;
+    }
+    const t = tareKg();
+    const net = Math.round((Number(scaleInput.value) - (t || 0)) * 100) / 100;
+    grossInput.value = net > 0 ? net.toFixed(2) : '';
+    grossInput.setAttribute('readonly', 'true');
+    grossInput.classList.add('bg-cream');
+    clear(netNote);
+    netNote.append(document.createTextNode(
+      `${fmtKg(Number(scaleInput.value))} en balanza − ${sacksInput.value} lonas × ${tareInput.value} kg (${fmtKg(t || 0)}) = ${fmtKg(net)}`));
+    refresh();
+  }
+  for (const i of [scaleInput, sacksInput, tareInput]) i.addEventListener('input', syncNet);
+
+  // Quality readings from the delivery. Traceability only — none of
+  // this enters the cost.
+  const convInput = el('input', { type: 'number', min: '0', max: '1', step: '0.001', class: 'ctrm-input mono', placeholder: 'ej: 0.544' });
+  const brixInput = el('input', { type: 'number', min: '0', max: '100', step: '0.1', class: 'ctrm-input mono', placeholder: 'ej: 16.0' });
+  const phInput = el('input', { type: 'number', min: '0', max: '14', step: '0.01', class: 'ctrm-input mono', placeholder: 'ej: 5.31' });
+  const convNote = el('p', { class: 'text-[11px] text-ink-500 mt-1' });
+  convInput.addEventListener('input', () => {
+    clear(convNote);
+    const v = Number(convInput.value);
+    if (convInput.value === '') return;
+    if (!(v > 0) || v > 1) {
+      convNote.append(document.createTextNode('Va entre 0 y 1: 54.4% se escribe 0.544.'));
+      return;
+    }
+    convNote.append(document.createTextNode(`${(v * 100).toFixed(1)}% de cereza a despulpado.`));
+  });
   const priceInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: 'COP por kg' });
   const discInput = el('input', { type: 'number', min: '0', max: '100', step: '0.1', class: 'ctrm-input mono', placeholder: '0' });
   const bpInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: '0 si no hubo' });
@@ -112,8 +210,12 @@ export async function fincaRecepcionesView() {
         row('Costo por kg neto', cop(perNet), 'font-semibold text-navy'),
       );
       if (price != null && perNet != null && perNet > price) {
-        preview.append(el('p', { class: 'text-[11px] text-ink-500',
-          text: `Los flotes encarecen el café bueno: de ${cop(price)} a ${cop(perNet)} por kg.` }));
+        preview.append(
+          el('p', { class: 'text-[11px] text-ink-500',
+            text: `Los flotes encarecen el café bueno: de ${cop(price)} a ${cop(perNet)} por kg.` }),
+          row('Sobre lo pactado', `+${cop(perNet - price)} /kg  (${((perNet / price - 1) * 100).toFixed(1)}%)`,
+            'text-crit font-semibold'),
+        );
       }
     } else {
       preview.append(
@@ -130,8 +232,13 @@ export async function fincaRecepcionesView() {
       if (Math.abs(short) < 0.0005) {
         preview.append(alertBox('ok', `Descuento ${pct(disc)} vs flotes ${pct(bpRate)}: quedaste parejo.`));
       } else if (short > 0) {
+        // The gap in pesos is the number worth negotiating on: the
+        // shortfall applies to the whole gross value of the delivery.
+        const overpay = gross * price * short;
         preview.append(alertBox('warn',
-          `Flotes ${pct(bpRate)} y descuento ${pct(disc)}: te faltaron ${(short * 100).toFixed(1)} puntos para quedar parejo.`));
+          `Flotes ${pct(bpRate)} y descuento ${pct(disc)}: te faltaron ${(short * 100).toFixed(1)} puntos.`
+          + ` Para quedar parejo el descuento tendría que ser ${pct(bpRate)}.`
+          + ` Esos puntos valen ${cop(overpay)} en esta entrega.`));
       } else {
         preview.append(alertBox('ok',
           `Descuento ${pct(disc)} vs flotes ${pct(bpRate)}: ganaste ${(-short * 100).toFixed(1)} puntos.`));
@@ -168,6 +275,20 @@ export async function fincaRecepcionesView() {
       kg_gross: gross,
       pool_key: pool_key || null,
     };
+    // All three or none: the server re-checks the arithmetic, and a
+    // partial chain would fail that check.
+    if (hasWeighing()) {
+      payload.kg_scale_gross = Number(scaleInput.value);
+      payload.sacks_count = Number(sacksInput.value);
+      payload.tare_per_sack_kg = Number(tareInput.value);
+    }
+    const conv = convInput.value === '' ? null : Number(convInput.value);
+    if (conv != null) {
+      if (!(conv > 0) || conv > 1) { toast('La conversión va entre 0 y 1 (0.544 = 54.4%)', 'warning'); return; }
+      payload.cherry_to_pulped_ratio = conv;
+    }
+    if (brixInput.value !== '') payload.brix_pct = Number(brixInput.value);
+    if (phInput.value !== '') payload.ph = Number(phInput.value);
     if (!isOwn) {
       payload.price_per_kg = Number(priceInput.value);
       payload.discount_pct = (Number(discInput.value) || 0) / 100;
@@ -179,7 +300,12 @@ export async function fincaRecepcionesView() {
     try {
       const r = await withBusy(saveBtn, 'Guardando…', () => api.receptionsCreate(payload));
       toast(`Recepción ${r.reception.reception_code} registrada · ${fmtKg(r.reception.kg_net)} netos`, 'success', 5000);
-      grossInput.value = ''; priceInput.value = ''; discInput.value = ''; bpInput.value = '';
+      if (r.warning) toast(r.warning, 'warning', 9000);
+      for (const i of [scaleInput, sacksInput, grossInput, priceInput, discInput, bpInput, convInput, brixInput, phInput]) {
+        i.value = '';
+      }
+      tareInput.value = String(DEFAULT_TARE);
+      syncNet();
       await reload();
     } catch (e) {
       toast(e.message || 'No se pudo registrar', 'error', 6000);
@@ -203,11 +329,20 @@ export async function fincaRecepcionesView() {
         el('section', { class: 'ctrm-card ctrm-card-pad space-y-3' }, [
           el('p', { class: 'eyebrow text-[10px]', text: 'Llegó café' }),
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
-            labelled('Proveedor', supSelect),
+            supplierField,
             labelled('Fecha', dateInput),
             labelled('Entra como', stageSelect),
-            labelled('kg que llegaron', grossInput),
           ]),
+          el('div', { class: 'grid grid-cols-2 sm:grid-cols-4 gap-3' }, [
+            labelled('kg bruto (balanza)', scaleInput),
+            labelled('No. lonas', sacksInput),
+            labelled('kg por lona', tareInput),
+            el('div', {}, [
+              el('label', { class: 'ctrm-label', text: 'kg neto de café' }),
+              grossInput,
+            ]),
+          ]),
+          netNote,
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [priceWrap, discWrap]),
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
             el('div', {}, [
@@ -219,6 +354,14 @@ export async function fincaRecepcionesView() {
             ]),
             el('div', {}, [labelled('Pool de costo', poolSelect), poolNewInput]),
           ]),
+          el('details', { class: 'border-t border-sand pt-2' }, [
+            el('summary', { class: 'eyebrow text-[10px] cursor-pointer', text: 'Calidad de la entrega (opcional)' }),
+            el('div', { class: 'grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2' }, [
+              el('div', {}, [labelled('Conversión cereza → despulpado', convInput), convNote]),
+              labelled('Brix %', brixInput),
+              labelled('pH', phInput),
+            ]),
+          ]),
           saveBtn,
         ]),
         el('div', { class: 'space-y-3' }, [preview, poolsPanel(pools)]),
@@ -229,6 +372,7 @@ export async function fincaRecepcionesView() {
   }
 
   syncOwn();
+  syncNet();
   redraw();
 
   return chrome(el('div', {}, [
@@ -362,4 +506,61 @@ function alertBox(kind, text) {
 function todayYmd() {
   // Bogotá no tiene horario de verano, así que el offset es fijo.
   return new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Create a supplier without leaving the reception.
+ *
+ * The farm may only register third parties: 'kind' decides how every
+ * lot fed by this supplier gets costed ('own' at the T2 agricultural
+ * rate, a third party at the price actually paid), so mislabelling one
+ * would quietly cost purchased cherry as if it were the farm's. The
+ * server enforces it too — this only keeps the choice off the screen.
+ */
+function newSupplierModal() {
+  const session = getSession();
+  const isAdmin = !!(session && session.role === 'admin');
+
+  return openModal(({ close }) => {
+    const nameInput = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'ej: Finca La Esperanza', maxlength: '120' });
+    const regionInput = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'ej: Manzanares, Caldas', maxlength: '80' });
+    const kindSelect = el('select', { class: 'ctrm-select' }, [
+      el('option', { value: 'third_party', selected: true }, ['Tercero (le compramos)']),
+      el('option', { value: 'own' }, ['Propio (es nuestra finca)']),
+    ]);
+    const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Crear proveedor']);
+
+    saveBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      if (!name) { toast('Escribe el nombre del proveedor', 'warning'); return; }
+      const payload = {
+        name,
+        kind: isAdmin ? kindSelect.value : 'third_party',
+        region: regionInput.value.trim() || null,
+      };
+      try {
+        const r = await withBusy(saveBtn, 'Creando…', () => api.suppliersCreate(payload));
+        toast(r.created ? `Proveedor ${r.supplier.name} creado` : `${r.supplier.name} ya existía, lo seleccioné`,
+          'success', 4000);
+        close(r.supplier);
+      } catch (e) {
+        toast(e.message || 'No se pudo crear el proveedor', 'error', 6000);
+      }
+    });
+
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
+
+    return el('div', { class: 'space-y-3' }, [
+      labelled('Nombre', nameInput),
+      labelled('Región (opcional)', regionInput),
+      isAdmin
+        ? labelled('Tipo', kindSelect)
+        : el('p', { class: 'text-[11px] text-ink-500',
+            text: 'Se crea como tercero. Un proveedor propio (la finca) solo lo puede crear un admin, porque cambia cómo se costea el café.' }),
+      el('div', { class: 'flex justify-end gap-2 pt-1' }, [
+        el('button', { class: 'ctrm-btn', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        saveBtn,
+      ]),
+    ]);
+  }, { title: 'Nuevo proveedor' });
 }

@@ -9,9 +9,18 @@ const { created, badReq, serverErr, methodNotAllowed, parseJson } = require('./_
  * POST /cherry-receptions-create  (finca, admin)
  * Body: {
  *   supplier_id, received_date, entry_stage, kg_gross,
+ *   kg_scale_gross?, sacks_count?, tare_per_sack_kg?,
+ *   cherry_to_pulped_ratio?, brix_pct?, ph?,
  *   price_per_kg?, discount_pct?, pool_key?, notes?,
  *   byproduct?: { kg, measurement, measured_stage?, kind?, notes? }
  * }
+ *
+ * kg_gross is the weight of COFFEE and the base the payment is
+ * computed on. When the weighing detail comes too, kg_gross must equal
+ * kg_scale_gross − sacks_count × tare_per_sack_kg: the screen does
+ * that arithmetic, and this re-checks it, because digitising the scale
+ * reading as the coffee weight would spread the cost over the sacks
+ * and understate cost per kg with nothing failing.
  *
  * One call for the whole "coffee arrived" screen: the delivery and the
  * floaters separated from it. Keeping them together means the net kg —
@@ -29,6 +38,9 @@ const { created, badReq, serverErr, methodNotAllowed, parseJson } = require('./_
  */
 const STAGES = new Set(['cereza', 'despulpado', 'seco']);
 const MEASUREMENTS = new Set(['weighed', 'estimated']);
+// Standard empty sack. Stored per reception, so changing the standard
+// later cannot rewrite the arithmetic of a delivery already recorded.
+const DEFAULT_TARE_PER_SACK_KG = 0.35;
 
 exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -48,6 +60,54 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
 
   const kg_gross = Number(body && body.kg_gross);
   if (!Number.isFinite(kg_gross) || kg_gross <= 0) errors.push('kg_gross debe ser > 0');
+
+  // Weighing detail: optional, but all-or-nothing, because a chain
+  // missing a link cannot be verified.
+  const optNum = (v) => (v == null || v === '' ? null : Number(v));
+  const kg_scale_gross = optNum(body && body.kg_scale_gross);
+  const sacks_count = optNum(body && body.sacks_count);
+  let tare_per_sack_kg = optNum(body && body.tare_per_sack_kg);
+
+  const weighingParts = [kg_scale_gross, sacks_count].filter((v) => v != null).length;
+  if (weighingParts === 1) {
+    errors.push('Para el detalle de pesaje hacen falta kg_scale_gross y sacks_count juntos');
+  }
+  if (kg_scale_gross != null && (!Number.isFinite(kg_scale_gross) || kg_scale_gross <= 0)) {
+    errors.push('kg_scale_gross debe ser > 0');
+  }
+  if (sacks_count != null && (!Number.isInteger(sacks_count) || sacks_count < 0)) {
+    errors.push('sacks_count debe ser un entero >= 0');
+  }
+  if (weighingParts === 2) {
+    if (tare_per_sack_kg == null) tare_per_sack_kg = DEFAULT_TARE_PER_SACK_KG;
+    if (!Number.isFinite(tare_per_sack_kg) || tare_per_sack_kg < 0 || tare_per_sack_kg > 5) {
+      errors.push('tare_per_sack_kg debe estar entre 0 y 5');
+    } else {
+      const expected = Math.round((kg_scale_gross - sacks_count * tare_per_sack_kg) * 100) / 100;
+      if (expected <= 0) {
+        errors.push('La tara de las lonas se come toda la entrega: revisa lonas o peso en balanza');
+      } else if (Math.abs(expected - kg_gross) > 0.01) {
+        errors.push(`Los kg de café deben ser ${expected.toFixed(2)} (balanza ${kg_scale_gross} − ${sacks_count} lonas × ${tare_per_sack_kg})`);
+      }
+    }
+  } else {
+    tare_per_sack_kg = null;
+  }
+
+  // Quality readings. Pure traceability: none of this enters the cost.
+  const cherry_to_pulped_ratio = optNum(body && body.cherry_to_pulped_ratio);
+  if (cherry_to_pulped_ratio != null
+      && (!Number.isFinite(cherry_to_pulped_ratio) || cherry_to_pulped_ratio <= 0 || cherry_to_pulped_ratio > 1)) {
+    errors.push('cherry_to_pulped_ratio debe ser una fracción entre 0 y 1 (0.544 = 54.4%)');
+  }
+  const brix_pct = optNum(body && body.brix_pct);
+  if (brix_pct != null && (!Number.isFinite(brix_pct) || brix_pct < 0 || brix_pct > 100)) {
+    errors.push('brix_pct debe estar entre 0 y 100');
+  }
+  const ph = optNum(body && body.ph);
+  if (ph != null && (!Number.isFinite(ph) || ph < 0 || ph > 14)) {
+    errors.push('ph debe estar entre 0 y 14');
+  }
 
   let price_per_kg = null;
   if (body && body.price_per_kg != null && body.price_per_kg !== '') {
@@ -90,15 +150,31 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   const sb = getSupabase();
   const actor = (session && (session.username || session.role)) || null;
 
-  const { data: reception, error: insErr } = await sb
-    .from('cherry_receptions')
-    .insert({
-      supplier_id, received_date, entry_stage, kg_gross,
-      price_per_kg, discount_pct, pool_key,
-      notes: body.notes ? String(body.notes).trim().slice(0, 1000) || null : null,
-      created_by: actor,
-    })
-    .select('*').single();
+  const core = {
+    supplier_id, received_date, entry_stage, kg_gross,
+    price_per_kg, discount_pct, pool_key,
+    notes: body.notes ? String(body.notes).trim().slice(0, 1000) || null : null,
+    created_by: actor,
+  };
+  // Weighing and quality live in migration 0053. Migrations here are
+  // applied by hand, so if the code lands first the reception must
+  // still be saveable: the retry drops the new fields rather than
+  // losing the delivery. It reports what it could not store.
+  const extended = {
+    ...core,
+    kg_scale_gross, sacks_count, tare_per_sack_kg,
+    cherry_to_pulped_ratio, brix_pct, ph,
+  };
+
+  let { data: reception, error: insErr } = await sb
+    .from('cherry_receptions').insert(extended).select('*').single();
+
+  let weighing_not_stored = false;
+  if (insErr && isMissingWeighingColumn(insErr)) {
+    weighing_not_stored = true;
+    ({ data: reception, error: insErr } = await sb
+      .from('cherry_receptions').insert(core).select('*').single());
+  }
 
   if (insErr) {
     const m = insErr.message || '';
@@ -144,7 +220,7 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
   }
 
   const bps = byproduct ? [byproduct] : [];
-  return created({
+  const out = {
     reception: {
       ...reception,
       amount_paid_cop: receptionAmountPaid(reception),
@@ -152,5 +228,27 @@ exports.handler = requireAuth(['finca', 'admin'], async (event, _ctx, session) =
       byproducts: bps,
       byproduct_summary: byproductRate(reception, bps),
     },
-  });
+  };
+  // The delivery and its payment are correct either way; only the
+  // weighing and lab detail was dropped, and the screen says so.
+  if (weighing_not_stored) {
+    out.warning = 'La recepción quedó guardada, pero el detalle de pesaje y calidad no: falta aplicar la migración 0053.';
+    out.warning_code = 'WEIGHING_COLUMNS_MISSING';
+  }
+  return created(out);
 });
+
+/**
+ * True when the insert failed only because migration 0053 has not been
+ * applied yet. Matched on the column names rather than SQLSTATE alone,
+ * so a genuinely different missing column is not swallowed.
+ */
+exports.isMissingWeighingColumn = isMissingWeighingColumn;
+function isMissingWeighingColumn(error) {
+  if (!error) return false;
+  const m = error.message || '';
+  if (!/does not exist|could not find/i.test(m) && error.code !== '42703' && error.code !== 'PGRST204') {
+    return false;
+  }
+  return /kg_scale_gross|sacks_count|tare_per_sack_kg|cherry_to_pulped_ratio|brix_pct|\bph\b/.test(m);
+}

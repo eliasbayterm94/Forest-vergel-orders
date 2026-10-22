@@ -61,19 +61,30 @@ async function byproductsByReception(sb, receptionIds) {
  * Receptions enriched with derived net kg and the floater/discount
  * comparison. `filters` accepts { pool_key, supplier_id, from, to }.
  */
-async function listReceptions(sb, filters = {}) {
-  let q = sb.from('cherry_receptions')
-    .select(`id, reception_code, supplier_id, received_date, entry_stage,
+const RECEPTION_CORE_COLS = `id, reception_code, supplier_id, received_date, entry_stage,
              kg_gross, price_per_kg, discount_pct, amount_paid_cop, pool_key,
-             notes, created_by, created_at`)
-    .order('received_date', { ascending: false });
+             notes, created_by, created_at`;
+// Added by migration 0053. Migrations here are applied by hand, so the
+// read falls back to the core columns rather than failing the screen.
+const RECEPTION_WEIGHING_COLS = `, kg_scale_gross, sacks_count, tare_per_sack_kg,
+             cherry_to_pulped_ratio, brix_pct, ph`;
 
-  if (filters.pool_key)   q = q.eq('pool_key', filters.pool_key);
-  if (filters.supplier_id) q = q.eq('supplier_id', filters.supplier_id);
-  if (filters.from)       q = q.gte('received_date', filters.from);
-  if (filters.to)         q = q.lte('received_date', filters.to);
+async function listReceptions(sb, filters = {}) {
+  const build = (cols) => {
+    let q = sb.from('cherry_receptions')
+      .select(cols)
+      .order('received_date', { ascending: false });
+    if (filters.pool_key)    q = q.eq('pool_key', filters.pool_key);
+    if (filters.supplier_id) q = q.eq('supplier_id', filters.supplier_id);
+    if (filters.from)        q = q.gte('received_date', filters.from);
+    if (filters.to)          q = q.lte('received_date', filters.to);
+    return q;
+  };
 
-  const { data, error } = await q;
+  let { data, error } = await build(RECEPTION_CORE_COLS + RECEPTION_WEIGHING_COLS);
+  if (error && /kg_scale_gross|sacks_count|tare_per_sack_kg|cherry_to_pulped_ratio|brix_pct/.test(error.message || '')) {
+    ({ data, error } = await build(RECEPTION_CORE_COLS));
+  }
   if (error) {
     if (isMissingTable(error)) return { receptions: [], table_missing: true };
     throw new Error(`Receptions lookup failed: ${error.message}`);

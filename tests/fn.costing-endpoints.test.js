@@ -96,9 +96,158 @@ test('proveedores: el TIPO no se puede cambiar', async () => {
   assert.equal(r.body.code, 'SUPPLIER_KIND_IMMUTABLE');
 });
 
-test('proveedores: un rol no-admin no puede crear', async () => {
+test('proveedores: la finca NO puede crear uno propio', async () => {
+  // 'own' manda el costeo a la tarifa T2 en vez del precio pagado, asi
+  // que marcar mal un proveedor costearia cereza comprada como propia.
   setFake(fixture());
-  assert.equal(parseRes(await supCreate(asFinca({ name: 'Y', kind: 'own' }))).status, 403);
+  const r = parseRes(await supCreate(asFinca({ name: 'Y', kind: 'own' })));
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'OWN_KIND_REQUIRES_ADMIN');
+});
+
+test('proveedores: la finca SI puede crear un tercero', async () => {
+  // Llega cereza de alguien que nadie dio de alta y la persona en la
+  // balanza no puede esperar a un admin.
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await supCreate(asFinca({ name: 'Finca La Esperanza', kind: 'third_party', region: 'Huila' })));
+  assert.equal(r.status, 201);
+  assert.equal(r.body.created, true);
+  assert.equal(r.body.supplier.kind, 'third_party');
+  assert.equal(r.body.supplier.region, 'Huila');
+});
+
+test('proveedores: la finca no puede reactivar uno propio', async () => {
+  setFake(fixture({
+    suppliers: [
+      { id: SUP_OWN, name: 'El Vergel', kind: 'own', region: null, active: false },
+    ],
+  }));
+  const r = parseRes(await supCreate(asFinca({ name: 'El Vergel', kind: 'third_party' })));
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'OWN_KIND_REQUIRES_ADMIN');
+});
+
+test('proveedores: la finca reactiva un tercero apagado', async () => {
+  setFake(fixture());
+  const r = parseRes(await supCreate(asFinca({ name: 'Viejo', kind: 'third_party' })));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.supplier.active, true);
+});
+
+test('proveedores: un admin si puede crear uno propio', async () => {
+  setFake(fixture());
+  const r = parseRes(await supCreate(asAdmin({ name: 'Finca Dos', kind: 'own' })));
+  assert.equal(r.status, 201);
+  assert.equal(r.body.supplier.kind, 'own');
+});
+
+// ══════════════════════════════════════════════════════════════
+// PESAJE Y CALIDAD DE LA RECEPCION (migracion 0053)
+// ══════════════════════════════════════════════════════════════
+
+test('pesaje: el caso real del correo del 14-10', async () => {
+  // 5092 en balanza, 94 lonas x 0.35 = 32.90 -> 5059.10 kg de cafe.
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_scale_gross: 5092, sacks_count: 94, tare_per_sack_kg: 0.35,
+    kg_gross: 5059.10, price_per_kg: 3900, discount_pct: 0.048,
+    cherry_to_pulped_ratio: 0.544, brix_pct: 16, ph: 5.31,
+    pool_key: 'regional',
+    byproduct: { kg: 495.79, measurement: 'estimated' },
+  })));
+  assert.equal(r.status, 201);
+  const rec = r.body.reception;
+  assert.equal(Number(rec.kg_scale_gross), 5092);
+  assert.equal(Number(rec.sacks_count), 94);
+  assert.equal(Number(rec.cherry_to_pulped_ratio), 0.544);
+  assert.equal(Number(rec.brix_pct), 16);
+  assert.equal(Number(rec.ph), 5.31);
+  // El pago va sobre los kg de cafe, menos el descuento.
+  assert.equal(rec.amount_paid_cop, 18783426.48);
+  // Y el neto que carga el costo descuenta los flotes.
+  assert.equal(Number(rec.kg_net), 4563.31);
+});
+
+test('pesaje: rechaza una cadena que no cuadra', async () => {
+  // Digitar la balanza como kg de cafe reparte el costo sobre las lonas
+  // y subestima el costo por kg sin que nada falle.
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_scale_gross: 5092, sacks_count: 94, tare_per_sack_kg: 0.35,
+    kg_gross: 5092, price_per_kg: 3900,
+  })));
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'VALIDATION_ERROR');
+  assert.match(r.body.error, /5059\.10/);
+});
+
+test('pesaje: la tara por lona se asume 0.35 si no la mandan', async () => {
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_scale_gross: 1000, sacks_count: 20, kg_gross: 993,
+    price_per_kg: 3900,
+  })));
+  assert.equal(r.status, 201);
+  assert.equal(Number(r.body.reception.tare_per_sack_kg), 0.35);
+});
+
+test('pesaje: media cadena no se acepta', async () => {
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_scale_gross: 5092, kg_gross: 5059.10, price_per_kg: 3900,
+  })));
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /sacks_count/);
+});
+
+test('pesaje: sin detalle de pesaje la recepcion sigue funcionando', async () => {
+  // Lo de siempre: entrada rapida, solo kg de cafe.
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_gross: 1000, price_per_kg: 3900,
+  })));
+  assert.equal(r.status, 201);
+  assert.equal(r.body.reception.kg_scale_gross, null);
+  assert.equal(r.body.reception.tare_per_sack_kg, null);
+});
+
+test('pesaje: la tara no puede comerse la entrega', async () => {
+  setFake(fixture());
+  const r = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_scale_gross: 10, sacks_count: 100, tare_per_sack_kg: 0.35, kg_gross: 1,
+    price_per_kg: 3900,
+  })));
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /tara/i);
+});
+
+test('calidad: la conversion se exige como fraccion 0..1', async () => {
+  setFake(fixture());
+  const bad = parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_gross: 1000, price_per_kg: 3900, cherry_to_pulped_ratio: 54.4,
+  })));
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /fracción/);
+});
+
+test('calidad: brix y pH validan rango', async () => {
+  setFake(fixture());
+  assert.match(parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_gross: 1000, price_per_kg: 3900, ph: 20,
+  }))).body.error, /ph/);
+  assert.match(parseRes(await recCreate(asFinca({
+    supplier_id: SUP_MZ, received_date: '2026-10-14', entry_stage: 'cereza',
+    kg_gross: 1000, price_per_kg: 3900, brix_pct: 150,
+  }))).body.error, /brix/);
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -391,4 +540,42 @@ test('red de seguridad: lotes sin fuente de materia se pueden listar', async () 
   await srcCreate(asFinca({ production_lot_id: LOT, cost_basis: 'own', kg: 1000, entry_stage: 'cereza' }));
   r = parseRes(await srcList(getAs('admin', { missing: 'true' })));
   assert.equal(r.body.lots_without_source.length, 0);
+});
+
+// ══════════════════════════════════════════════════════════════
+// RED DE SEGURIDAD: migracion 0053 sin aplicar
+// ══════════════════════════════════════════════════════════════
+//
+// Las migraciones se aplican a mano, asi que el codigo puede llegar a
+// produccion antes del SQL. El predicado decide si el insert se
+// reintenta sin las columnas nuevas (la entrega se guarda, se pierde
+// solo el detalle) o si el error es otro y debe propagarse.
+//
+// Se prueba el predicado directo porque el fake de Supabase no simula
+// una columna inexistente en un insert.
+
+const { isMissingWeighingColumn } = require('../netlify/functions/cherry-receptions-create');
+
+test('0053 pendiente: reconoce las formas reales del error de PostgREST', () => {
+  for (const e of [
+    { code: '42703', message: 'column "kg_scale_gross" of relation "cherry_receptions" does not exist' },
+    { code: 'PGRST204', message: "Could not find the 'sacks_count' column of 'cherry_receptions' in the schema cache" },
+    { message: 'column cherry_receptions.cherry_to_pulped_ratio does not exist' },
+    { code: '42703', message: 'column "brix_pct" does not exist' },
+    { code: '42703', message: 'column "tare_per_sack_kg" does not exist' },
+  ]) {
+    assert.equal(isMissingWeighingColumn(e), true, `deberia reintentar: ${e.message}`);
+  }
+});
+
+test('0053 pendiente: NO se traga otros errores', () => {
+  for (const e of [
+    null,
+    { code: '23514', message: 'violates check constraint "chk_reception_weighing_adds_up"' },
+    { code: '42703', message: 'column "kg_verde" does not exist' },
+    { code: '23503', message: 'insert or update violates foreign key constraint' },
+    { code: '42P01', message: 'relation "cherry_receptions" does not exist' },
+  ]) {
+    assert.equal(isMissingWeighingColumn(e), false, `NO deberia reintentar: ${e && e.message}`);
+  }
 });
