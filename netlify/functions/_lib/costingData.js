@@ -12,6 +12,29 @@
 const { computePoolState, receptionNetKg, byproductRate, receptionAmountPaid } = require('./costPool');
 
 /** A missing table means the costing migrations are not applied yet. */
+/**
+ * True when a query failed only because one of `names` is not a column
+ * yet — i.e. a migration here has not been applied. Matched on the
+ * column names, not on SQLSTATE alone, so a genuinely different
+ * missing column is never swallowed.
+ *
+ * Migrations in this project are applied by hand in the SQL editor, so
+ * code can reach production before its SQL. Every read or write that
+ * touches a freshly added column pairs with this and retries without
+ * it: the operation goes through, only the new detail is missing.
+ */
+function isMissingColumn(error, names) {
+  if (!error) return false;
+  const m = error.message || '';
+  const code = error.code;
+  if (code !== '42703' && code !== 'PGRST204' && !/does not exist|could not find/i.test(m)) {
+    return false;
+  }
+  // A missing TABLE is a different situation, handled by isMissingTable.
+  if (code === '42P01' || code === 'PGRST205') return false;
+  return names.some((n) => new RegExp(`\\b${n}\\b`).test(m));
+}
+
 function isMissingTable(error) {
   if (!error) return false;
   if (error.code === '42P01' || error.code === 'PGRST205') return true;
@@ -180,6 +203,7 @@ async function getLiveSnapshot(sb, lotId) {
 }
 
 module.exports = {
+  isMissingColumn,
   isMissingTable,
   getParamsInForce,
   byproductsByReception,

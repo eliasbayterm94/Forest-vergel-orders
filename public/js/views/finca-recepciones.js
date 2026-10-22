@@ -122,7 +122,7 @@ export async function fincaRecepcionesView() {
     clear(netNote);
     netNote.append(document.createTextNode(
       `${fmtKg(Number(scaleInput.value))} en balanza − ${sacksInput.value} lonas × ${tareInput.value} kg (${fmtKg(t || 0)}) = ${fmtKg(net)}`));
-    refresh();
+    syncBp();
   }
   for (const i of [scaleInput, sacksInput, tareInput]) i.addEventListener('input', syncNet);
 
@@ -144,7 +144,46 @@ export async function fincaRecepcionesView() {
   });
   const priceInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: 'COP por kg' });
   const discInput = el('input', { type: 'number', min: '0', max: '100', step: '0.1', class: 'ctrm-input mono', placeholder: '0' });
+  // The lab reports a percentage ("prueba de flotes: 9.8%"), the scale
+  // reports kg. Both are accepted and kg is what gets stored, because
+  // kg is the physical quantity the by-product lot inherits.
   const bpInput = el('input', { type: 'number', min: '0', step: '0.01', class: 'ctrm-input mono', placeholder: '0 si no hubo' });
+  const bpUnit = el('select', { class: 'ctrm-select w-20' }, [
+    el('option', { value: 'kg', selected: true }, ['kg']),
+    el('option', { value: 'pct' }, ['%']),
+  ]);
+  const bpNote = el('p', { class: 'text-[11px] text-ink-500' });
+
+  // Floater kg, whichever unit was typed. Rounded to 2 decimals so the
+  // stored figure matches what the note showed.
+  function bpKg() {
+    const v = Number(bpInput.value);
+    if (!Number.isFinite(v) || v <= 0) return 0;
+    if (bpUnit.value !== 'pct') return Math.round(v * 100) / 100;
+    const gross = Number(grossInput.value) || 0;
+    return Math.round(gross * (v / 100) * 100) / 100;
+  }
+  function syncBp() {
+    clear(bpNote);
+    const v = Number(bpInput.value);
+    const gross = Number(grossInput.value) || 0;
+    if (!Number.isFinite(v) || v <= 0) { refresh(); return; }
+    if (bpUnit.value === 'pct') {
+      if (!(gross > 0)) {
+        bpNote.append(document.createTextNode('Escribe primero los kg de café para convertir el %.'));
+      } else {
+        bpNote.append(document.createTextNode(`${v}% de ${fmtKg(gross)} = ${fmtKg(bpKg())}`));
+      }
+    } else if (gross > 0) {
+      bpNote.append(document.createTextNode(`${fmtKg(v)} sobre ${fmtKg(gross)} = ${(v / gross * 100).toFixed(1)}%`));
+    }
+    refresh();
+  }
+  bpUnit.addEventListener('change', () => {
+    bpInput.setAttribute('placeholder', bpUnit.value === 'pct' ? 'ej: 9.8' : '0 si no hubo');
+    bpInput.setAttribute('step', bpUnit.value === 'pct' ? '0.1' : '0.01');
+    syncBp();
+  });
 
   const bpWeighed = el('input', { type: 'radio', name: 'bpm', value: 'weighed', checked: true, class: 'mr-1' });
   const bpEstim = el('input', { type: 'radio', name: 'bpm', value: 'estimated', class: 'mr-1' });
@@ -167,7 +206,49 @@ export async function fincaRecepcionesView() {
   // Café propio no lleva precio: la regla la impone la base de datos,
   // acá solo se oculta para que nadie lo intente.
   const priceWrap = el('div', {}, [labelled('Precio por kg', priceInput)]);
-  const discWrap = el('div', {}, [labelled('Descuento %', discInput)]);
+  const discHint = el('div', { class: 'mt-1' });
+  const discWrap = el('div', {}, [labelled('Descuento %', discInput), discHint]);
+
+  function currentSupplier() { return suppliers.find((x) => x.id === supSelect.value) || null; }
+  function franchise() {
+    const sup = currentSupplier();
+    const v = sup && sup.floater_franchise_pct;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  // The discount the farm should ask for, given this supplier's agreed
+  // franchise. Nobody should be doing this subtraction in their head at
+  // the scale.
+  function syncDiscHint() {
+    clear(discHint);
+    const gross = Number(grossInput.value) || 0;
+    const bp = bpKg();
+    if (!(gross > 0) || !(bp > 0) || priceInput.value === '') return;
+
+    const bpRate = bp / gross;
+    const f = franchise();
+    const suggested = Math.max(0, bpRate - f);
+    const typed = (Number(discInput.value) || 0) / 100;
+    const already = Math.abs(typed - suggested) < 0.00005;
+
+    const label = f > 0
+      ? `Sugerido ${pct(suggested)} — flotes ${pct(bpRate)} menos franquicia ${pct(f)}`
+      : `Sugerido ${pct(suggested)} — igual al % de flotes, así el costo no se mueve`;
+
+    if (already) {
+      discHint.append(el('p', { class: 'text-[11px] text-ink-500', text: `✓ ${label}` }));
+      return;
+    }
+    const use = el('button', {
+      class: 'ctrm-btn ctrm-btn-ghost text-[11px] w-full', type: 'button',
+    }, [`Usar ${pct(suggested)}`]);
+    use.addEventListener('click', () => {
+      discInput.value = (suggested * 100).toFixed(1);
+      refresh();
+    });
+    discHint.append(el('p', { class: 'text-[11px] text-ink-500 mb-1', text: label }), use);
+  }
   function syncOwn() {
     const s = suppliers.find((x) => x.id === supSelect.value);
     const isOwn = s && s.kind === 'own';
@@ -185,10 +266,11 @@ export async function fincaRecepcionesView() {
     const gross = Number(grossInput.value) || 0;
     const price = priceInput.value === '' ? null : Number(priceInput.value);
     const disc = (Number(discInput.value) || 0) / 100;
-    const bp = Number(bpInput.value) || 0;
+    const bp = bpKg();
     const net = Math.max(0, gross - bp);
 
     clear(preview);
+    syncDiscHint();
     if (!(gross > 0)) {
       preview.append(el('p', { class: 'text-[12px] text-ink-300 italic',
         text: 'Escribe los kg que llegaron para ver el resumen.' }));
@@ -235,17 +317,21 @@ export async function fincaRecepcionesView() {
         // The gap in pesos is the number worth negotiating on: the
         // shortfall applies to the whole gross value of the delivery.
         const overpay = gross * price * short;
+        const f = franchise();
+        const why = f > 0 && Math.abs(short - Math.min(bpRate, f)) < 0.0005
+          ? ` Es la franquicia de ${pct(f)} que tienes pactada con este proveedor.`
+          : ` Para quedar parejo el descuento tendría que ser ${pct(bpRate)}.`;
         preview.append(alertBox('warn',
-          `Flotes ${pct(bpRate)} y descuento ${pct(disc)}: te faltaron ${(short * 100).toFixed(1)} puntos.`
-          + ` Para quedar parejo el descuento tendría que ser ${pct(bpRate)}.`
-          + ` Esos puntos valen ${cop(overpay)} en esta entrega.`));
+          `Flotes ${pct(bpRate)} y descuento ${pct(disc)}: te faltaron ${(short * 100).toFixed(1)} puntos,`
+          + ` que valen ${cop(overpay)} en esta entrega.` + why));
       } else {
         preview.append(alertBox('ok',
           `Descuento ${pct(disc)} vs flotes ${pct(bpRate)}: ganaste ${(-short * 100).toFixed(1)} puntos.`));
       }
     }
   }
-  for (const i of [grossInput, priceInput, discInput, bpInput]) i.addEventListener('input', refresh);
+  for (const i of [grossInput, priceInput, discInput]) i.addEventListener('input', refresh);
+  bpInput.addEventListener('input', syncBp);
 
   const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary w-full', type: 'button' }, ['Registrar recepción']);
   saveBtn.addEventListener('click', async () => {
@@ -259,7 +345,7 @@ export async function fincaRecepcionesView() {
       toast('Una compra a un tercero necesita precio por kg', 'warning'); return;
     }
 
-    const bp = Number(bpInput.value) || 0;
+    const bp = bpKg();
     if (bp >= gross) { toast('Los flotes no pueden ser todo lo que llegó', 'warning'); return; }
 
     let pool_key = poolSelect.value;
@@ -346,7 +432,12 @@ export async function fincaRecepcionesView() {
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [priceWrap, discWrap]),
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
             el('div', {}, [
-              labelled('Flotes separados (kg)', bpInput),
+              el('label', { class: 'ctrm-label', text: 'Flotes separados' }),
+              el('div', { class: 'flex gap-2' }, [
+                el('div', { class: 'flex-1 min-w-0' }, [bpInput]),
+                bpUnit,
+              ]),
+              bpNote,
               el('div', { class: 'flex gap-3 mt-1 text-[11px] text-ink-500' }, [
                 el('label', { class: 'inline-flex items-center' }, [bpWeighed, 'Pesados']),
                 el('label', { class: 'inline-flex items-center' }, [bpEstim, 'Estimados']),

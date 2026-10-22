@@ -29,6 +29,7 @@ minimal email noise.
 | `/finca/dashboard`   | finca, admin  | Tablero El Vergel |
 | `/finca/inbox`       | finca, admin  | Pedidos entrantes + capacidad |
 | `/finca/recepciones` | finca, admin  | Materia prima que entra: proveedor, pesaje, precio, flotes, calidad |
+| `/admin/config` → Proveedores | admin | Quién entrega, y la franquicia de flotes pactada con cada uno |
 | `/finca/lots`        | finca, admin  | Lotes y asignaciones |
 
 ## Project layout
@@ -252,10 +253,26 @@ entered without the weighing detail still work — `kg_gross` is then typed dire
 **Floaters.** Recorded per reception as weighed or estimated — floaters sent straight to the
 re-pulper can only be estimated, and reports keep the two apart. The break-even discount equals the
 floater rate exactly: discount the same percentage that floated and cost per net kg is unchanged.
+Floaters are typed in kg or as a percentage — the lab reports "9.8%", the scale reports kg — and
+kg is what gets stored, because kg is the quantity the by-product lot inherits.
+
 `/finca/recepciones` shows that comparison per delivery, in pesos as well as points, which turns
-"% floaters" into a negotiating number. A discount with a franchise (paying only for floaters above
-some threshold) costs the gross value of the delivery times the smaller of the floater rate and the
-threshold, every single time — the screen names that amount.
+"% floaters" into a negotiating number.
+
+**The floater franchise** (`suppliers.floater_franchise_pct`, set in `/admin/config` → Proveedores)
+is the negotiated term where only floaters above a threshold get discounted. The reception then
+suggests `discount = max(0, floater_rate − franchise)` instead of someone subtracting in their head
+at the scale, and names what the franchise costs:
+
+```
+shortfall = floater_rate − discount = min(floater_rate, franchise)
+cost      = kg_gross × price × shortfall
+```
+
+Whenever floaters exceed the franchise that is exactly the franchise's own percentage of the
+delivery's gross value — 986,517 COP on a 5,059 kg delivery at 3,900 with a 5% franchise. It is not
+an accident of a bad lot. The franchise is a negotiation aid only: **it never enters a cost.** What
+a reception costs is still, and only, what was paid over the net kg.
 
 **Before the first lot can be costed**, a tariff version must exist in `/admin/config`. Until then
 batches close normally and the response says `no_tariff`.

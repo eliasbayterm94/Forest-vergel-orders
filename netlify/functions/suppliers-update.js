@@ -12,7 +12,7 @@ const { ok, badReq, notFound, conflict, serverErr, methodNotAllowed, parseJson }
  * would change how every past reception should have been costed, and
  * snapshots are frozen. Create a new supplier instead.
  */
-const ALLOWED = new Set(['name', 'region', 'active', 'notes']);
+const ALLOWED = new Set(['name', 'region', 'active', 'notes', 'floater_franchise_pct']);
 
 exports.handler = requireAuth(['admin'], async (event) => {
   if (event.httpMethod !== 'POST') return methodNotAllowed(['POST']);
@@ -35,6 +35,15 @@ exports.handler = requireAuth(['admin'], async (event) => {
   for (const k of Object.keys(fields)) {
     if (!ALLOWED.has(k)) continue;
     if (k === 'active') { update.active = !!fields.active; continue; }
+    if (k === 'floater_franchise_pct') {
+      const v = fields.floater_franchise_pct;
+      if (v == null || v === '') { update.floater_franchise_pct = null; continue; }
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        return badReq('floater_franchise_pct debe ser una fracción entre 0 y 1 (0.05 = 5%)', 'INVALID_FRANCHISE');
+      }
+      update.floater_franchise_pct = n; continue;
+    }
     if (k === 'name') {
       const n = String(fields.name || '').trim();
       if (!n) return badReq('name no puede quedar vacío', 'NAME_REQUIRED');
@@ -48,7 +57,7 @@ exports.handler = requireAuth(['admin'], async (event) => {
   const sb = getSupabase();
   const { data, error } = await sb
     .from('suppliers').update(update).eq('id', id)
-    .select('id, name, kind, region, active, notes').maybeSingle();
+    .select('id, name, kind, region, active, notes, floater_franchise_pct').maybeSingle();
   if (error) return serverErr('Update failed', error.message);
   if (!data) return notFound('Proveedor no encontrado');
   return ok({ supplier: data });

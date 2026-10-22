@@ -8,7 +8,7 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 
 export async function adminConfigView() {
-  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes, usersRes, costRes] = await Promise.all([
+  const [cfgRes, leadRes, dtRes, ftRes, ftypesRes, opsRes, usersRes, costRes, supRes] = await Promise.all([
     api.productionConfigGet(),
     api.processLeadTimes(),
     api.dryingTypesList({ include_inactive: 'true' }).catch(() => ({ drying_types: [] })),
@@ -17,6 +17,7 @@ export async function adminConfigView() {
     api.operatorsList({ include_inactive: 'true' }).catch(() => ({ operators: [] })),
     api.usersList({ include_inactive: 'true' }).catch(() => ({ users: [] })),
     api.costingParamsList().catch(() => ({ costing_parameters: [], in_force: null })),
+    api.suppliersList({ include_inactive: 'true' }).catch(() => ({ suppliers: [] })),
   ]);
   let config = cfgRes.config || { weekly_cherry_capacity_kg: 60000 };
   let leadTimes = leadRes.process_lead_times || [];
@@ -27,6 +28,7 @@ export async function adminConfigView() {
   let users = (usersRes && usersRes.users) || [];
   let costingParams = (costRes && costRes.costing_parameters) || [];
   let costingInForce = (costRes && costRes.in_force) || null;
+  let suppliers = (supRes && supRes.suppliers) || [];
 
   // Asegurar orden estable de procesos
   const ORDER = { Natural: 0, Honey: 1, Lavado: 2 };
@@ -120,6 +122,23 @@ export async function adminConfigView() {
           redraw();
         } catch (e) { toast(e.message, 'error'); }
       }),
+      suppliersSection(suppliers, async (action, payload) => {
+        try {
+          if (action === 'create') {
+            const r = await api.suppliersCreate(payload);
+            const found = suppliers.find((x) => x.id === r.supplier.id);
+            if (found) Object.assign(found, r.supplier);
+            else suppliers.push(r.supplier);
+            suppliers.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+            toast(r.created ? `Proveedor "${r.supplier.name}" creado` : `"${r.supplier.name}" ya existía`, 'success');
+          } else if (action === 'update') {
+            const r = await api.suppliersUpdate(payload);
+            suppliers = suppliers.map((x) => x.id === r.supplier.id ? r.supplier : x);
+            toast(`"${r.supplier.name}" actualizado`, 'success');
+          }
+          redraw();
+        } catch (e) { toast(e.message, 'error', 7000); }
+      }),
       costingSection(costingParams, costingInForce, async (payload) => {
         try {
           const r = await api.costingParamsCreate(payload);
@@ -162,6 +181,107 @@ function describeChanges(fields) {
   if (fields.processing_days != null) parts.push(`proc=${fields.processing_days}d`);
   if (fields.dried_to_green_divisor != null) parts.push(`divisor=${fields.dried_to_green_divisor}`);
   return parts.length > 0 ? parts.join(' · ') : 'actualizado';
+}
+
+// ─── Proveedores ────────────────────────────────────────────────────
+// Quién entrega materia prima, y la franquicia de flotes pactada con
+// cada uno. El TIPO no se edita: cambiar own <-> third_party
+// reescribiría el costeo de todas sus recepciones pasadas, y los
+// snapshots están congelados. Por eso el servidor lo rechaza.
+function suppliersSection(suppliers, onAction) {
+  const nameInput = el('input', { type: 'text', placeholder: 'Ej: Finca La Esperanza', class: 'ctrm-input', maxlength: '120' });
+  const regionInput = el('input', { type: 'text', placeholder: 'Ej: Manzanares, Caldas', class: 'ctrm-input', maxlength: '80' });
+  const kindSelect = el('select', { class: 'ctrm-select' }, [
+    el('option', { value: 'third_party', selected: true }, ['Tercero']),
+    el('option', { value: 'own' }, ['Propio']),
+  ]);
+  const addBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-primary', type: 'button',
+    onClick: async () => {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      await onAction('create', {
+        name, kind: kindSelect.value, region: regionInput.value.trim() || undefined,
+      });
+      nameInput.value = ''; regionInput.value = '';
+    },
+  }, ['+ Agregar']);
+
+  const rows = (suppliers || []).map((sup) => {
+    const renameInput = el('input', { type: 'text', value: sup.name, class: 'ctrm-input text-[12px]' });
+    const regionEdit = el('input', { type: 'text', value: sup.region || '', placeholder: '—', class: 'ctrm-input text-[12px]' });
+    // Stored as a fraction, shown as a percentage: nobody negotiates in
+    // fractions, and 0.05 typed where 5 was meant is a 100x error.
+    const franchiseEdit = el('input', {
+      type: 'number', min: '0', max: '100', step: '0.1', class: 'ctrm-input mono text-[12px]',
+      value: sup.floater_franchise_pct == null ? '' : String(Math.round(Number(sup.floater_franchise_pct) * 1000) / 10),
+      placeholder: '0',
+      title: 'Solo se descuenta lo que pase de este %. Vacío o 0 = sin franquicia.',
+    });
+    return el('div', {
+      class: `grid grid-cols-[1fr_1fr_5rem_4.5rem_auto_auto] items-center gap-2 py-2 border-t border-sand ${sup.active ? '' : 'opacity-60'}`,
+    }, [
+      renameInput,
+      regionEdit,
+      franchiseEdit,
+      el('span', { class: 'text-[11px] text-ink-500', text: sup.kind === 'own' ? 'Propio' : 'Tercero' }),
+      el('button', {
+        class: 'ctrm-btn ctrm-btn-soft ctrm-btn-xs', type: 'button',
+        onClick: () => {
+          const raw = franchiseEdit.value.trim();
+          if (raw !== '') {
+            const n = Number(raw);
+            if (!Number.isFinite(n) || n < 0 || n > 100) {
+              toast('La franquicia va entre 0 y 100 %', 'warning'); return;
+            }
+          }
+          onAction('update', {
+            id: sup.id,
+            fields: {
+              name: renameInput.value.trim(),
+              region: regionEdit.value.trim() || null,
+              floater_franchise_pct: raw === '' ? null : Number(raw) / 100,
+            },
+          });
+        },
+      }, ['Guardar']),
+      el('button', {
+        class: `ctrm-btn ctrm-btn-soft ctrm-btn-xs ${sup.active ? 'text-crit' : 'text-ok'}`,
+        type: 'button',
+        onClick: () => onAction('update', { id: sup.id, fields: { active: !sup.active } }),
+      }, [sup.active ? 'Desactivar' : 'Reactivar']),
+    ]);
+  });
+
+  return el('section', { class: 'ctrm-card ctrm-card-pad mt-4 space-y-3' }, [
+    el('p', { class: 'eyebrow text-[10px]', text: 'Proveedores' }),
+    el('p', { class: 'text-[12px] text-ink-500',
+      text: 'Quién entrega materia prima. "Propio" se costea con la tarifa T2 y no lleva precio de compra; '
+          + '"Tercero" se costea al precio pagado. El tipo no se puede cambiar después.' }),
+    el('p', { class: 'text-[11px] text-ink-500',
+      text: 'Franquicia de flotes: solo se descuenta lo que pase de ese %. Con 5 %, unos flotes del 9,8 % '
+          + 'dan un descuento sugerido de 4,8 % — y esos 5 puntos que absorbes salen en la recepción, en pesos.' }),
+    el('div', { class: 'grid grid-cols-[1fr_1fr_8rem_auto] gap-2 items-end pb-2 border-b border-sand' }, [
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Nombre' }), nameInput]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Región (opcional)' }), regionInput]),
+      el('div', {}, [el('label', { class: 'ctrm-label', text: 'Tipo' }), kindSelect]),
+      addBtn,
+    ]),
+    rows.length > 0
+      ? el('div', { class: 'grid grid-cols-[1fr_1fr_5rem_4.5rem_auto_auto] gap-2 text-[10px] uppercase tracking-eyebrow text-ink-500 pt-2' }, [
+          el('span', { text: 'Nombre' }),
+          el('span', { text: 'Región' }),
+          el('span', { text: 'Franq. %' }),
+          el('span', { text: 'Tipo' }),
+          el('span', {}, []),
+          el('span', {}, []),
+        ])
+      : null,
+    ...rows,
+    rows.length === 0
+      ? el('p', { class: 'text-[12px] text-ink-300 italic py-3 text-center', text: 'Aún no hay proveedores. Agrega uno arriba.' })
+      : null,
+  ]);
 }
 
 // ─── Capacity section ───────────────────────────────────────────────
