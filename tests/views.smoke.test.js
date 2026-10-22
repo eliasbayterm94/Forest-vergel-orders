@@ -233,4 +233,7 @@ test('finca-recepciones · pinta la cadena de pesaje y el selector kg/%', async 
   const units = [...node.querySelectorAll('select')]
     .flatMap((sel) => [...sel.querySelectorAll('option')].map((o) => o.value));
   assert.ok(units.includes('pct'), 'falta la opción de digitar flotes en %');
+
+  // Y cada recepción registrada ofrece abrir el borrador de correo.
+  assert.match(text, /Correo/, 'falta el botón de borrador de correo');
 });

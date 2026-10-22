@@ -16,6 +16,7 @@ import { withBusy } from '../ui/busy.js';
 import { sortableTable } from '../ui/sortable-table.js';
 import { openModal } from '../ui/modal.js';
 import { getSession } from '../auth.js';
+import { receptionMailtoUrl } from '../ui/reception-email.js';
 import { fmtKg, fmtDate } from '../ui/format.js';
 
 const STAGES = [['cereza', 'Cereza'], ['despulpado', 'Despulpado'], ['seco', 'Seco']];
@@ -457,7 +458,7 @@ export async function fincaRecepcionesView() {
         ]),
         el('div', { class: 'space-y-3' }, [preview, poolsPanel(pools)]),
       ]),
-      receptionsTable(receptions),
+      receptionsTable(receptions, suppliers),
     );
     refresh();
   }
@@ -498,7 +499,7 @@ function poolsPanel(pools) {
   ]);
 }
 
-function receptionsTable(receptions) {
+function receptionsTable(receptions, suppliers) {
   if (!receptions || receptions.length === 0) {
     return el('div', { class: 'ctrm-card ctrm-card-pad mt-4 text-center' }, [
       el('p', { class: 'text-[12px] text-ink-300 italic', text: 'Todavía no hay recepciones registradas.' }),
@@ -525,6 +526,7 @@ function receptionsTable(receptions) {
       { label: 'Pagado', sortGetter: (r) => Number(r.amount_paid_cop || 0), cls: 'text-right' },
       { label: '$/kg neto', sortGetter: (r) => costPerNet(r) ?? -1, cls: 'text-right' },
       { label: 'Pool', sortGetter: (r) => r.pool_key || '' },
+      { label: '' },
     ],
     items: receptions,
     defaultSort: { index: 1, dir: 'desc' },
@@ -559,6 +561,7 @@ function receptionsTable(receptions) {
         cell('$/kg neto', 'px-2 py-2 text-right font-mono',
           perNet == null ? '—' : el('span', { class: short > 0.0005 ? 'text-warn font-semibold' : '' }, [cop(perNet)])),
         cell('Pool', 'px-2 py-2 font-mono text-[11px]', r.pool_key || 'identificado'),
+        cell('', 'px-2 py-2 text-right', mailDraftButton(r, suppliers)),
       ]);
     },
   });
@@ -654,4 +657,33 @@ function newSupplierModal() {
       ]),
     ]);
   }, { title: 'Nuevo proveedor' });
+}
+
+/**
+ * Abre un borrador de correo con los datos de la recepción.
+ *
+ * No envía: compone en el cliente de correo de quien lo aprieta, como
+ * él mismo. El correo real lo manda la persona que pesó el café — el
+ * precio se confirma con alguien y a veces hay que explicar un
+ * percance, y un correo que sale solo no deja espacio para eso.
+ *
+ * Tampoco pasa por el Gmail del sistema: ese envía desde una sola
+ * cuenta fija, y el correo quedaría firmado por quien no pesó.
+ */
+function mailDraftButton(reception, suppliers) {
+  const sup = (suppliers || []).find((x) => x.id === reception.supplier_id) || null;
+  const btn = el('button', {
+    class: 'ctrm-btn ctrm-btn-ghost ctrm-btn-xs whitespace-nowrap',
+    type: 'button',
+    title: 'Abre un borrador de correo con los datos de esta recepción. No lo envía.',
+  }, ['✉ Correo']);
+  btn.addEventListener('click', () => {
+    const url = receptionMailtoUrl(reception, sup);
+    // Si el equipo no tiene cliente de correo configurado, mailto: no
+    // hace nada visible. Se avisa en vez de dejarlo en silencio.
+    const opened = window.open(url, '_self');
+    if (!opened) window.location.href = url;
+    toast('Borrador abierto en tu correo. Revísalo, agrega los destinatarios y envíalo.', 'info', 6000);
+  });
+  return btn;
 }

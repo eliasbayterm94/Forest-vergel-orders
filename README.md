@@ -274,6 +274,20 @@ delivery's gross value — 986,517 COP on a 5,059 kg delivery at 3,900 with a 5%
 an accident of a bad lot. The franchise is a negotiation aid only: **it never enters a cost.** What
 a reception costs is still, and only, what was paid over the net kg.
 
+**The reception email.** Every delivery ends in an email to the team — what arrived, the lab
+numbers, the price and the discount. `/finca/recepciones` builds that email from the reception and
+opens it as a **draft** in the sender's own mail client (`mailto:`); it never sends.
+
+Deliberately a draft, and deliberately not through `gmail.js`. The real email comes from whoever
+weighed the coffee: the price gets confirmed with someone, sometimes an incident needs explaining,
+and an email that leaves on its own has no room for that. `gmail.js` also sends from one fixed
+account, so the note would be signed by someone who was not at the scale.
+
+Lines whose data is missing are omitted rather than printed with a dash — "Brix: —" reads as if the
+lab failed. An estimated floater weight is labelled as estimated, so it is never read as measured.
+No recipients are embedded: the list changes, and putting it in the frontend would hand addresses
+to everyone who opens the screen.
+
 **Before the first lot can be costed**, a tariff version must exist in `/admin/config`. Until then
 batches close normally and the response says `no_tariff`.
 
