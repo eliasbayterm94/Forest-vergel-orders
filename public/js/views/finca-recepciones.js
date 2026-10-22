@@ -14,6 +14,8 @@ import { chrome, pageTitle } from './_chrome.js';
 import { toast } from '../ui/toast.js';
 import { withBusy } from '../ui/busy.js';
 import { sortableTable } from '../ui/sortable-table.js';
+import { openModal } from '../ui/modal.js';
+import { getSession } from '../auth.js';
 import { fmtKg, fmtDate } from '../ui/format.js';
 
 const STAGES = [['cereza', 'Cereza'], ['despulpado', 'Despulpado'], ['seco', 'Seco']];
@@ -35,10 +37,43 @@ export async function fincaRecepcionesView() {
 
   const root = el('div', {});
 
-  const supSelect = el('select', { class: 'ctrm-select' }, [
-    el('option', { value: '' }, ['Elige proveedor…']),
-    ...suppliers.map((s) => el('option', { value: s.id },
-      [`${s.name}${s.kind === 'own' ? ' (la finca)' : ''}`])),
+  const supSelect = el('select', { class: 'ctrm-select' }, []);
+  function paintSuppliers(selectId) {
+    clear(supSelect);
+    supSelect.append(el('option', { value: '' }, ['Elige proveedor…']));
+    for (const s of suppliers) {
+      supSelect.append(el('option', { value: s.id },
+        [`${s.name}${s.kind === 'own' ? ' (la finca)' : ''}`]));
+    }
+    if (selectId) supSelect.value = selectId;
+  }
+  paintSuppliers();
+
+  // Cherry shows up from a supplier nobody set up yet, and the person at
+  // the scale cannot wait for an admin. Creating it here keeps the
+  // reception from being written on paper.
+  const newSupBtn = el('button', {
+    class: 'ctrm-btn ctrm-btn-ghost text-[11px] whitespace-nowrap', type: 'button',
+    title: 'Dar de alta un proveedor nuevo',
+  }, ['+ Nuevo']);
+  newSupBtn.addEventListener('click', async () => {
+    const sup = await newSupplierModal();
+    if (!sup) return;
+    const known = suppliers.find((x) => x.id === sup.id);
+    if (!known) {
+      suppliers.push(sup);
+      suppliers.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+    }
+    paintSuppliers(sup.id);
+    syncOwn();
+  });
+
+  const supplierField = el('div', {}, [
+    el('label', { class: 'ctrm-label', text: 'Proveedor' }),
+    el('div', { class: 'flex gap-2 items-center' }, [
+      el('div', { class: 'flex-1 min-w-0' }, [supSelect]),
+      newSupBtn,
+    ]),
   ]);
   const dateInput = el('input', { type: 'date', class: 'ctrm-input', value: todayYmd() });
   const stageSelect = el('select', { class: 'ctrm-select' },
@@ -203,7 +238,7 @@ export async function fincaRecepcionesView() {
         el('section', { class: 'ctrm-card ctrm-card-pad space-y-3' }, [
           el('p', { class: 'eyebrow text-[10px]', text: 'Llegó café' }),
           el('div', { class: 'grid grid-cols-1 sm:grid-cols-2 gap-3' }, [
-            labelled('Proveedor', supSelect),
+            supplierField,
             labelled('Fecha', dateInput),
             labelled('Entra como', stageSelect),
             labelled('kg que llegaron', grossInput),
@@ -362,4 +397,61 @@ function alertBox(kind, text) {
 function todayYmd() {
   // Bogotá no tiene horario de verano, así que el offset es fijo.
   return new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Create a supplier without leaving the reception.
+ *
+ * The farm may only register third parties: 'kind' decides how every
+ * lot fed by this supplier gets costed ('own' at the T2 agricultural
+ * rate, a third party at the price actually paid), so mislabelling one
+ * would quietly cost purchased cherry as if it were the farm's. The
+ * server enforces it too — this only keeps the choice off the screen.
+ */
+function newSupplierModal() {
+  const session = getSession();
+  const isAdmin = !!(session && session.role === 'admin');
+
+  return openModal(({ close }) => {
+    const nameInput = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'ej: Finca La Esperanza', maxlength: '120' });
+    const regionInput = el('input', { type: 'text', class: 'ctrm-input', placeholder: 'ej: Manzanares, Caldas', maxlength: '80' });
+    const kindSelect = el('select', { class: 'ctrm-select' }, [
+      el('option', { value: 'third_party', selected: true }, ['Tercero (le compramos)']),
+      el('option', { value: 'own' }, ['Propio (es nuestra finca)']),
+    ]);
+    const saveBtn = el('button', { class: 'ctrm-btn ctrm-btn-primary', type: 'button' }, ['Crear proveedor']);
+
+    saveBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      if (!name) { toast('Escribe el nombre del proveedor', 'warning'); return; }
+      const payload = {
+        name,
+        kind: isAdmin ? kindSelect.value : 'third_party',
+        region: regionInput.value.trim() || null,
+      };
+      try {
+        const r = await withBusy(saveBtn, 'Creando…', () => api.suppliersCreate(payload));
+        toast(r.created ? `Proveedor ${r.supplier.name} creado` : `${r.supplier.name} ya existía, lo seleccioné`,
+          'success', 4000);
+        close(r.supplier);
+      } catch (e) {
+        toast(e.message || 'No se pudo crear el proveedor', 'error', 6000);
+      }
+    });
+
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
+
+    return el('div', { class: 'space-y-3' }, [
+      labelled('Nombre', nameInput),
+      labelled('Región (opcional)', regionInput),
+      isAdmin
+        ? labelled('Tipo', kindSelect)
+        : el('p', { class: 'text-[11px] text-ink-500',
+            text: 'Se crea como tercero. Un proveedor propio (la finca) solo lo puede crear un admin, porque cambia cómo se costea el café.' }),
+      el('div', { class: 'flex justify-end gap-2 pt-1' }, [
+        el('button', { class: 'ctrm-btn', type: 'button', onClick: () => close(null) }, ['Cancelar']),
+        saveBtn,
+      ]),
+    ]);
+  }, { title: 'Nuevo proveedor' });
 }

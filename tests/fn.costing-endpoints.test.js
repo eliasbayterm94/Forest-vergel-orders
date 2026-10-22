@@ -96,9 +96,50 @@ test('proveedores: el TIPO no se puede cambiar', async () => {
   assert.equal(r.body.code, 'SUPPLIER_KIND_IMMUTABLE');
 });
 
-test('proveedores: un rol no-admin no puede crear', async () => {
+test('proveedores: la finca NO puede crear uno propio', async () => {
+  // 'own' manda el costeo a la tarifa T2 en vez del precio pagado, asi
+  // que marcar mal un proveedor costearia cereza comprada como propia.
   setFake(fixture());
-  assert.equal(parseRes(await supCreate(asFinca({ name: 'Y', kind: 'own' }))).status, 403);
+  const r = parseRes(await supCreate(asFinca({ name: 'Y', kind: 'own' })));
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'OWN_KIND_REQUIRES_ADMIN');
+});
+
+test('proveedores: la finca SI puede crear un tercero', async () => {
+  // Llega cereza de alguien que nadie dio de alta y la persona en la
+  // balanza no puede esperar a un admin.
+  const fake = fixture();
+  setFake(fake);
+  const r = parseRes(await supCreate(asFinca({ name: 'Finca La Esperanza', kind: 'third_party', region: 'Huila' })));
+  assert.equal(r.status, 201);
+  assert.equal(r.body.created, true);
+  assert.equal(r.body.supplier.kind, 'third_party');
+  assert.equal(r.body.supplier.region, 'Huila');
+});
+
+test('proveedores: la finca no puede reactivar uno propio', async () => {
+  setFake(fixture({
+    suppliers: [
+      { id: SUP_OWN, name: 'El Vergel', kind: 'own', region: null, active: false },
+    ],
+  }));
+  const r = parseRes(await supCreate(asFinca({ name: 'El Vergel', kind: 'third_party' })));
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'OWN_KIND_REQUIRES_ADMIN');
+});
+
+test('proveedores: la finca reactiva un tercero apagado', async () => {
+  setFake(fixture());
+  const r = parseRes(await supCreate(asFinca({ name: 'Viejo', kind: 'third_party' })));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.supplier.active, true);
+});
+
+test('proveedores: un admin si puede crear uno propio', async () => {
+  setFake(fixture());
+  const r = parseRes(await supCreate(asAdmin({ name: 'Finca Dos', kind: 'own' })));
+  assert.equal(r.status, 201);
+  assert.equal(r.body.supplier.kind, 'own');
 });
 
 // ══════════════════════════════════════════════════════════════
